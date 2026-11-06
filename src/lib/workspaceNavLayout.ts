@@ -112,7 +112,8 @@ export function workspaceAsideClass(
     docked &&
       cn(
         // Docked rail: selalu dibatasi viewport. Pada <xl gunakan sticky, pada xl gunakan fixed (top+bottom) agar pasti tidak melewati layar.
-        'min-h-0 overflow-hidden xl:flex xl:flex-col',
+        // Let the panel shadow fade outside the rail; the inner panel still clips its content.
+        'min-h-0 overflow-visible xl:flex xl:flex-col',
         // <xl: stick di bawah topbar (h-12) dan batasi tinggi sesuai offset itu
         'max-xl:sticky max-xl:top-12 max-xl:max-h-[calc(var(--app-vh,100vh)-3rem+10px)]',
         // xl: tinggi eksplisit (+ WORKSPACE_NAV_PANEL_HEIGHT_BOOST_PX) — kelas harus literal agar Tailwind JIT mengenali

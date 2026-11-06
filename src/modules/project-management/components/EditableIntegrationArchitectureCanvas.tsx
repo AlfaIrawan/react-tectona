@@ -1,3 +1,4 @@
+import { reconnectDiagramEdge } from '@/modules/project-management/lib/diagramConnections'
 import { canvasDocumentSnapshot } from '@/modules/project-management/lib/canvasDocumentSnapshot'
 import {
   useCallback,
@@ -15,7 +16,6 @@ import {
   ReactFlowProvider,
   addEdge,
   MarkerType,
-  updateEdge,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -464,7 +464,7 @@ function EditableIntegrationArchitectureCanvasInner({
     (oldEdge: Edge, connection: Connection) => {
       markCustomized()
       setEdges((current) =>
-        updateEdge(oldEdge, connection, current).map((edge) => (
+        reconnectDiagramEdge(oldEdge, connection, current).map((edge) => (
           edge.id === oldEdge.id ? { ...edge, selected: true } : edge
         )),
       )

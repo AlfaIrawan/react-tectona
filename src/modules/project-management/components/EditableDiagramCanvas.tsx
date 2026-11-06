@@ -4,7 +4,6 @@ import {
   ReactFlowProvider,
   addEdge,
   MarkerType,
-  updateEdge,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -15,6 +14,7 @@ import {
   type OnSelectionChangeFunc,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { reconnectDiagramEdge, hasManualConnectionHandles } from '@/modules/project-management/lib/diagramConnections'
 import { canvasDocumentSnapshot } from '@/modules/project-management/lib/canvasDocumentSnapshot'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -655,6 +655,7 @@ function readNodeGeometry(nodes: Node<ArchimateNodeData>[], nodeId: string): Nod
 
 function withFacingHandles(nodes: Node<ArchimateNodeData>[], edges: Edge[]): Edge[] {
   return edges.map((edge) => {
+    if (hasManualConnectionHandles(edge)) return edge
     const from = readNodeGeometry(nodes, edge.source)
     const to = readNodeGeometry(nodes, edge.target)
     if (!from || !to) return edge
@@ -1375,6 +1376,7 @@ function EditableDiagramCanvasInner({
     (connection: Connection) => setEdges((current) => withFacingHandles(nodes, addEdge({
       ...connection,
       ...umlConnectionStyle(format, format === 'bpmn' ? bpmnFlowType : umlRelation),
+      data: { ...umlConnectionStyle(format, format === 'bpmn' ? bpmnFlowType : umlRelation).data, manualConnectionHandles: true },
     }, current))),
     [bpmnFlowType, format, nodes, setEdges, umlRelation],
   )
@@ -1382,7 +1384,7 @@ function EditableDiagramCanvasInner({
   const onEdgeUpdate = useCallback(
     (oldEdge: Edge, connection: Connection) => {
       setEdges((current) => {
-        const next = updateEdge(oldEdge, connection, current).map((edge) => (
+        const next = reconnectDiagramEdge(oldEdge, connection, current).map((edge) => (
           edge.id === oldEdge.id ? { ...edge, selected: true } : edge
         ))
         if (connection.sourceHandle && connection.targetHandle) return next
@@ -1686,7 +1688,7 @@ function EditableDiagramCanvasInner({
   const clearSelectedEdgeWaypoints = useCallback(() => {
     if (!selectedEdgeId) return
     setEdges((current) => withFacingHandles(nodes, current.map((edge) => (
-      edge.id === selectedEdgeId ? { ...edge, sourceHandle: undefined, targetHandle: undefined } : edge
+      edge.id === selectedEdgeId ? { ...edge, sourceHandle: undefined, targetHandle: undefined, data: { ...edge.data, manualConnectionHandles: false } } : edge
     ))))
   }, [nodes, selectedEdgeId, setEdges])
 

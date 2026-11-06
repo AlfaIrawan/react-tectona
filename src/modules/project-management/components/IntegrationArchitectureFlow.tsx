@@ -1,6 +1,8 @@
-import { memo, useCallback, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Hand, ImagePlus, Type } from 'lucide-react'
 import {
+  getSmoothStepPath,
+  useStore,
   ConnectionLineType,
   ConnectionMode,
   ControlButton,
@@ -20,6 +22,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from 'reactflow'
+import { connectionClientPoint } from '@/modules/project-management/lib/diagramConnections'
 import { CanvasViewportGrid, CanvasViewportRulers } from '@/modules/project-management/components/CanvasViewportRulers'
 import { AnchoredSmoothStepEdge } from '@/modules/project-management/components/AnchoredSmoothStepEdge'
 import { ErdCrowfootEdge } from '@/modules/project-management/components/ErdCrowfootEdge'
@@ -35,13 +38,9 @@ const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
 const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
 const EDGE_UPDATE_DRAG_THRESHOLD_PX = 8
 
-function DiagramConnectionLine({ fromX, fromY, toX, toY }: ConnectionLineComponentProps) {
-  const horizontal = Math.abs(toX - fromX) >= Math.abs(toY - fromY)
-  const bendX = fromX + (toX - fromX) / 2
-  const bendY = fromY + (toY - fromY) / 2
-  const path = horizontal
-    ? `M ${fromX},${fromY} L ${bendX},${fromY} L ${bendX},${toY} L ${toX},${toY}`
-    : `M ${fromX},${fromY} L ${fromX},${bendY} L ${toX},${bendY} L ${toX},${toY}`
+function DiagramConnectionLine({ fromX, fromY, toX, toY, fromPosition, toPosition }: ConnectionLineComponentProps) {
+  const [path] = getSmoothStepPath({ sourceX: fromX, sourceY: fromY, targetX: toX, targetY: toY,
+    sourcePosition: fromPosition, targetPosition: toPosition, borderRadius: 0, offset: 8 })
 
   return (
     <g>
@@ -149,6 +148,9 @@ function IntegrationArchitectureFlowInner({
   onInsertImage,
   onMoveEnd,
 }: IntegrationArchitectureFlowProps) {
+  const store = useStoreApi()
+  const zoom = useStore((state) => state.transform[2]) || 1
+  const cancelledRef = useRef(false)
   const pendingEdgeUpdateRef = useRef<{
     original: Edge
     x: number
@@ -167,16 +169,19 @@ function IntegrationArchitectureFlowInner({
     }, 0)
   }, [])
 
-  const handleEdgeUpdateStart = useCallback((event: MouseEvent, edge: Edge) => {
+  const handleEdgeUpdateStart = useCallback((event: MouseEvent | globalThis.MouseEvent | TouchEvent, edge: Edge) => {
+    cancelledRef.current = false
     reconnectingEdgeRef.current = true
+    const point = connectionClientPoint(event)
     pendingEdgeUpdateRef.current = {
       original: edge,
-      x: event.clientX,
-      y: event.clientY,
+      x: point.x,
+      y: point.y,
     }
   }, [])
 
   const handleEdgeUpdate = useCallback((oldEdge: Edge, connection: Connection) => {
+    if (cancelledRef.current) return
     const pending = pendingEdgeUpdateRef.current
     if (pending) {
       pendingEdgeUpdateRef.current = { ...pending, oldEdge, connection }
@@ -185,11 +190,11 @@ function IntegrationArchitectureFlowInner({
     onEdgeUpdate?.(oldEdge, connection)
   }, [onEdgeUpdate])
 
-  const handleEdgeUpdateEnd = useCallback((event: MouseEvent | TouchEvent) => {
+  const handleEdgeUpdateEnd = useCallback((event: globalThis.MouseEvent | TouchEvent) => {
     const pending = pendingEdgeUpdateRef.current
-    if (pending?.oldEdge && pending.connection) {
-      const point = 'clientX' in event ? event : { clientX: pending.x, clientY: pending.y }
-      const distance = Math.hypot(point.clientX - pending.x, point.clientY - pending.y)
+    if (!cancelledRef.current && pending?.oldEdge && pending.connection) {
+      const point = connectionClientPoint(event)
+      const distance = Math.hypot(point.x - pending.x, point.y - pending.y)
       if (distance >= EDGE_UPDATE_DRAG_THRESHOLD_PX) {
         onEdgeUpdate?.(pending.oldEdge, pending.connection)
       }
@@ -198,9 +203,27 @@ function IntegrationArchitectureFlowInner({
   }, [finishEdgeReconnect, onEdgeUpdate])
 
   const handleConnect = useCallback((connection: Connection) => {
-    if (reconnectingEdgeRef.current) return
+    if (reconnectingEdgeRef.current || cancelledRef.current) return
     onConnect?.(connection)
   }, [onConnect])
+
+  useEffect(() => {
+    const cancel = () => {
+      if (!store.getState().connectionStartHandle && !reconnectingEdgeRef.current) return
+      cancelledRef.current = true
+      pendingEdgeUpdateRef.current = null
+      store.getState().cancelConnection()
+    }
+    const keyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel() }
+    window.addEventListener('keydown', keyDown)
+    window.addEventListener('blur', cancel)
+    window.addEventListener('touchcancel', cancel)
+    return () => {
+      window.removeEventListener('keydown', keyDown)
+      window.removeEventListener('blur', cancel)
+      window.removeEventListener('touchcancel', cancel)
+    }
+  }, [store])
 
   const handleInit = useCallback((instance: ReactFlowInstance) => {
     if (preview) {
@@ -227,6 +250,10 @@ function IntegrationArchitectureFlowInner({
         onNodeDragStop={onNodeDragStop}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
+        onConnectStart={() => { cancelledRef.current = false }}
+        onConnectEnd={() => { if (!reconnectingEdgeRef.current) cancelledRef.current = false }}
+        connectionRadius={18 / zoom}
+        autoPanOnConnect={!preview}
         onEdgeUpdateStart={preview || !onEdgeUpdate ? undefined : handleEdgeUpdateStart}
         onEdgeUpdate={preview || !onEdgeUpdate ? undefined : handleEdgeUpdate}
         onEdgeUpdateEnd={preview || !onEdgeUpdate ? undefined : handleEdgeUpdateEnd}
@@ -252,7 +279,7 @@ function IntegrationArchitectureFlowInner({
         elementsSelectable={!preview}
         edgesFocusable={!preview}
         edgesUpdatable={!preview ? 'selected' : false}
-        edgeUpdaterRadius={14}
+        edgeUpdaterRadius={10 / zoom}
         panOnDrag={preview ? false : panMode ? [0, 1, 2] : [1, 2]}
         selectionOnDrag={!preview && !panMode}
         snapToGrid={!preview && snapToGrid}

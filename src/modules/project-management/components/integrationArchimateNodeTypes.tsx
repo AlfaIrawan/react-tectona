@@ -1,3 +1,4 @@
+import { connectionAnchor } from '@/modules/project-management/lib/diagramConnections'
 import { Handle, NodeResizer, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Library, Link2 } from 'lucide-react'
@@ -57,21 +58,18 @@ function SelectionResizer({
 const HANDLE_SIZE_PX = 8
 const HANDLE_HALF_PX = HANDLE_SIZE_PX / 2
 
-function handlePlacement(side: 'top' | 'right' | 'bottom' | 'left', percent: number): CSSProperties {
-  const center = `calc(${percent}% - ${HANDLE_HALF_PX}px)`
+function handlePlacement(side: 'top' | 'right' | 'bottom' | 'left', percent: number, shape: 'rectangle' | 'ellipse' | 'diamond'): CSSProperties {
+  const anchor = connectionAnchor(side, percent, shape)
   const box: CSSProperties = {
     width: HANDLE_SIZE_PX,
     height: HANDLE_SIZE_PX,
     transform: 'none',
     margin: 0,
   }
-  if (side === 'top') return { ...box, top: -HANDLE_HALF_PX, bottom: 'auto', left: center, right: 'auto' }
-  if (side === 'bottom') return { ...box, top: `calc(100% - ${HANDLE_HALF_PX}px)`, bottom: 'auto', left: center, right: 'auto' }
-  if (side === 'left') return { ...box, left: -HANDLE_HALF_PX, right: 'auto', top: center, bottom: 'auto' }
-  return { ...box, left: `calc(100% - ${HANDLE_HALF_PX}px)`, right: 'auto', top: center, bottom: 'auto' }
+  return { ...box, left: `calc(${anchor.x}% - ${HANDLE_HALF_PX}px)`, top: `calc(${anchor.y}% - ${HANDLE_HALF_PX}px)`, bottom: 'auto', right: 'auto' }
 }
 
-function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; selected: boolean; layoutKey?: string }) {
+function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }: { nodeId: string; selected: boolean; layoutKey?: string; shape?: 'rectangle' | 'ellipse' | 'diamond' }) {
   const updateNodeInternals = useUpdateNodeInternals()
   const measuredKey = useStore((state) => {
     const node = state.nodeInternals.get(nodeId)
@@ -95,7 +93,7 @@ function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; se
     updateNodeInternals(nodeId)
     const frame = window.requestAnimationFrame(() => updateNodeInternals(nodeId))
     return () => window.cancelAnimationFrame(frame)
-  }, [nodeId, sizeKey, updateNodeInternals])
+  }, [nodeId, sizeKey, shape, updateNodeInternals])
 
   const sides: Array<{ side: 'top' | 'right' | 'bottom' | 'left'; position: Position }> = [
     { side: 'top', position: Position.Top },
@@ -110,7 +108,7 @@ function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; se
         const length = side === 'top' || side === 'bottom' ? width : height
         return connectionHandlePercentsForLength(length).flatMap((percent) => {
           const idSuffix = percent === 50 ? side : `${side}-${percent}`
-          const offsetStyle = handlePlacement(side, percent)
+          const offsetStyle = handlePlacement(side, percent, shape)
           return [
             <Handle
               key={`target-${idSuffix}`}
@@ -613,11 +611,11 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         minHeight={lockSquare ? minSize : isAnnotation ? 40 : kind.family === 'pool' || kind.family === 'lane' ? 64 : 56}
         keepAspectRatio={lockSquare}
       />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} shape={isEvent ? 'ellipse' : isGateway ? 'diamond' : 'rectangle'} />
       {isEvent ? (
         <div className="flex h-full w-full items-center justify-center">
           <div
-            className="relative flex aspect-square h-[88%] w-[88%] items-center justify-center rounded-full bg-white"
+            className="relative flex aspect-square h-full w-full items-center justify-center rounded-full bg-white"
             style={{
               border: kind.eventPhase === 'end' ? `4px solid ${stroke}` : `2px solid ${stroke}`,
               boxShadow: kind.eventPhase === 'intermediate' ? `inset 0 0 0 2px ${stroke}` : undefined,
@@ -635,7 +633,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         </div>
       ) : isGateway ? (
         <div className="flex h-full w-full items-center justify-center">
-          <div className="relative aspect-square h-[78%] w-[78%] rotate-45 border-2 bg-white" style={{ borderColor: stroke }}>
+          <div className="relative aspect-square h-[70.710678%] w-[70.710678%] rotate-45 border-2 bg-white" style={{ borderColor: stroke }}>
             <svg viewBox="0 0 24 24" className="absolute inset-[18%] -rotate-45" aria-hidden>
               <BpmnGatewayMarkerIcon kind={kind.gateway ?? 'exclusive'} color={stroke} />
             </svg>
