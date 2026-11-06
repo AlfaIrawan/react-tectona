@@ -2,7 +2,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SlidingCardGrid } from './SlidingCardGrid'
-const geometry={width:1200,scale:1,top:100,viewportHeight:600,heights:Array(16).fill(100) as number[]}
+const geometry={width:1200,gutter:48,scale:1,top:100,viewportHeight:600,heights:Array(16).fill(100) as number[]}
 const observers:Observer[]=[]
 class Observer {
  targets=new Set<Element>()
@@ -16,14 +16,14 @@ let host:HTMLDivElement,root:Root,originalHeight:PropertyDescriptor|undefined
 const render=()=>createElement(SlidingCardGrid<number>,{items:Array.from({length:16},(_,i)=>i),getKey:String,renderItem:i=>createElement('article',{'data-qa-card':i},'Idea '+i)})
 beforeEach(()=>{
  (globalThis as {IS_REACT_ACT_ENVIRONMENT?:boolean}).IS_REACT_ACT_ENVIRONMENT=true
- vi.useFakeTimers();observers.length=0;Object.assign(geometry,{width:1200,scale:1,top:100,viewportHeight:600,heights:Array(16).fill(100)})
+ vi.useFakeTimers();observers.length=0;Object.assign(geometry,{width:1200,gutter:48,scale:1,top:100,viewportHeight:600,heights:Array(16).fill(100)})
  originalHeight=Object.getOwnPropertyDescriptor(window,'innerHeight')
  Object.defineProperty(window,'innerHeight',{configurable:true,get:()=>geometry.viewportHeight})
  vi.stubGlobal('ResizeObserver',Observer)
- vi.spyOn(HTMLElement.prototype,'clientWidth','get').mockImplementation(function(this:HTMLElement){return geometry.width+(this.classList.contains('overflow-x-clip')?96:0)})
+ vi.spyOn(HTMLElement.prototype,'clientWidth','get').mockImplementation(function(this:HTMLElement){return this.hasAttribute('data-app-main-body')?geometry.width+2*geometry.gutter:geometry.width+(this.classList.contains('overflow-x-clip')?2*Number.parseFloat(this.style.width.match(/\+ ([\d.]+)px/)?.[1]??'0')/2:0)})
  vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){const card=this.querySelector('[data-qa-card]');return card?geometry.heights[Number(card.getAttribute('data-qa-card'))]:0})
- vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(this:HTMLElement){return {top:geometry.top,left:0,right:this.clientWidth*geometry.scale,bottom:geometry.top+100,width:this.clientWidth*geometry.scale,height:100,x:0,y:geometry.top,toJSON:()=>({})}})
- host=document.createElement('div');document.body.appendChild(host);root=createRoot(host)
+ vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(this:HTMLElement){const left=this.hasAttribute('data-app-main-body')?0:geometry.gutter*geometry.scale;return {top:geometry.top,left,right:left+this.clientWidth*geometry.scale,bottom:geometry.top+100,width:this.clientWidth*geometry.scale,height:100,x:left,y:geometry.top,toJSON:()=>({})}})
+ host=document.createElement('div');host.setAttribute('data-app-main-body','');document.body.appendChild(host);root=createRoot(host)
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals();vi.useRealTimers();if(originalHeight)Object.defineProperty(window,'innerHeight',originalHeight)})
 const next=()=>host.querySelector<HTMLButtonElement>('[aria-label="Next page"]')
@@ -70,4 +70,20 @@ describe('card grid viewport regressions',()=>{
   expect(pageWidth+padding).toBeGreaterThan(viewportWidth)
   expect(viewport.classList.contains('overflow-y-visible')).toBe(true)
  })
+ it.each([0, 8, 16, 40, 64])('caps shadow bleed to a %s px page gutter without widening the page',async(gutter)=>{
+  Object.assign(geometry,{gutter,viewportHeight:450})
+  await act(async()=>root.render(render()))
+  const viewport=host.querySelector<HTMLElement>('.overflow-x-clip')!,page=viewport.firstElementChild!.firstElementChild as HTMLElement
+  const bleed=Number.parseFloat(page.style.paddingInline)
+  expect(bleed).toBe(Math.min(48,gutter))
+  expect(geometry.gutter-bleed).toBeGreaterThanOrEqual(0)
+  expect(geometry.gutter+geometry.width+bleed).toBeLessThanOrEqual(host.clientWidth)
+ })
+ it.each([0.5,0.625,0.75,1,1.25])('uses layout gutter size under UI scale %s',async(scale)=>{
+  Object.assign(geometry,{gutter:16,scale,viewportHeight:300,heights:Array(16).fill(300)})
+  await act(async()=>root.render(render()))
+  const page=host.querySelector<HTMLElement>('.overflow-x-clip')!.firstElementChild!.firstElementChild as HTMLElement
+  expect(Number.parseFloat(page.style.paddingInline)).toBeCloseTo(16)
+ })
+
 })

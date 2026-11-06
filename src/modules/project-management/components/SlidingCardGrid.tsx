@@ -65,6 +65,12 @@ export function gridAvailableLayoutHeight(input: { viewportHeight: number; top: 
   return Math.max(0, input.viewportHeight - input.top - SLIDING_GRID_BOTTOM_RESERVE_PX) / scale
 }
 
+/** Keep decorative bleed inside the page scroller; it must never widen the scrollable page. */
+export function gridShadowBleed(input: { left: number; right: number; renderedWidth: number; layoutWidth: number; boundaryLeft: number; boundaryRight: number }): number {
+  const scale = input.layoutWidth > 0 && input.renderedWidth > 0 ? input.renderedWidth / input.layoutWidth : 1
+  return Math.max(0, Math.min(SLIDING_GRID_SHADOW_BLEED_PX, (input.left - input.boundaryLeft) / scale, (input.boundaryRight - input.right) / scale))
+}
+
 export function slidingLayout(input: {
   itemCount: number; columns: number; rowHeight: number; rowHeights?: number[]; gap: number; availableHeight: number
 }): SlidingLayout {
@@ -109,6 +115,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const [rowHeights, setRowHeights] = useState<number[]>([])
   const [page, setPage] = useState(0)
   const [dragOffset, setDragOffset] = useState(0)
+  const [shadowBleed, setShadowBleed] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
   const dragOffsetRef = useRef(0)
   // Fingers currently on the viewport, by pointer id. A swipe is made by exactly two of them.
@@ -122,6 +129,12 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
     const element = containerRef.current
     if (!element) return
     const rect = element.getBoundingClientRect(), layoutWidth = element.clientWidth
+    const scroller = element.closest<HTMLElement>('[data-app-main-body]')
+    const boundary = scroller?.getBoundingClientRect()
+    const scale = layoutWidth > 0 && rect.width > 0 ? rect.width / layoutWidth : 1
+    const boundaryLeft = boundary ? boundary.left + (scroller?.clientLeft ?? 0) * scale : 0
+    const boundaryRight = boundary ? boundaryLeft + scroller!.clientWidth * scale : window.innerWidth
+    setShadowBleed(gridShadowBleed({ left: rect.left, right: rect.right, renderedWidth: rect.width, layoutWidth, boundaryLeft, boundaryRight }))
     setWidth(layoutWidth)
     setAvailableHeight(gridAvailableLayoutHeight({ viewportHeight: window.innerHeight, top: rect.top, renderedWidth: rect.width, layoutWidth }))
     const columns = columnsForWidth(layoutWidth, isListView)
@@ -293,7 +306,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
         // Clip neighboring pages horizontally while letting card shadows fade vertically.
         className="overflow-x-clip overflow-y-visible"
         // Vertical scrolling stays native; the two-finger horizontal swipe is handled here.
-        style={{ touchAction: 'pan-y', marginInline: -SLIDING_GRID_SHADOW_BLEED_PX, width: `calc(100% + ${SLIDING_GRID_SHADOW_BLEED_PX * 2}px)` }}
+        style={{ touchAction: 'pan-y', marginInline: -shadowBleed, width: `calc(100% + ${shadowBleed * 2}px)` }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerEnd}
@@ -311,7 +324,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
             <div
               key={pageIndex}
               className="grid min-w-0 shrink-0 content-start"
-              style={{ width: `${100 / layout.pageCount}%`, gridTemplateColumns, gap, paddingInline: SLIDING_GRID_SHADOW_BLEED_PX }}
+              style={{ width: `${100 / layout.pageCount}%`, gridTemplateColumns, gap, paddingInline: shadowBleed }}
               aria-hidden={pageIndex !== currentPage}
             >
               {pageItems.map((item) => (

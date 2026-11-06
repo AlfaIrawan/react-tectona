@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { columnsForWidth, gridAvailableLayoutHeight, slidingLayout, wheelPageDelta } from './SlidingCardGrid'
+import { columnsForWidth, gridShadowBleed, gridAvailableLayoutHeight, slidingLayout, wheelPageDelta } from './SlidingCardGrid'
 
 describe('wheelPageDelta', () => {
   const wheel = { deltaX: 0, deltaY: 100, deltaMode: 0, ctrlKey: false, metaKey: false }
@@ -86,5 +86,13 @@ describe('scaled and variable-height paging boundaries', () => {
     expect(slidingLayout({itemCount:5,columns:4,rowHeight:200,rowHeights:[200,120],gap:16,availableHeight:336}).sliding).toBe(false)
     expect(slidingLayout({itemCount:3,columns:1,rowHeight:200,rowHeights:[100,80,120],gap:16,availableHeight:332}).sliding).toBe(false)
     expect(slidingLayout({itemCount:0,columns:4,rowHeight:200,gap:16,availableHeight:0})).toMatchObject({sliding:false,pageCount:1})
+  })
+})
+
+describe('shadow gutter boundaries', () => {
+  it('uses the narrower side and handles scrollers offset from the browser origin', () => {
+    expect(gridShadowBleed({left:216,right:900,renderedWidth:684,layoutWidth:684,boundaryLeft:200,boundaryRight:940})).toBe(16)
+    expect(gridShadowBleed({left:240,right:924,renderedWidth:684,layoutWidth:684,boundaryLeft:200,boundaryRight:940})).toBe(16)
+    expect(gridShadowBleed({left:190,right:874,renderedWidth:684,layoutWidth:684,boundaryLeft:200,boundaryRight:940})).toBe(0)
   })
 })
