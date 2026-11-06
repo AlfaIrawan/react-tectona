@@ -1,7 +1,7 @@
 import { getSmoothStepPath, type Position } from 'reactflow'
 
 export type RoutePoint = { x: number; y: number }
-export type DiagramSegmentRoute = { points: RoutePoint[] }
+export type DiagramSegmentRoute = { points: RoutePoint[]; controls?: import('./diagramManualControls').RouteControl[] }
 export type SegmentPathArgs = { sourceX: number; sourceY: number; targetX: number; targetY: number; sourcePosition: Position; targetPosition: Position }
 const EPS = 0.001
 export const DIAGRAM_CORNER_RADIUS = 12
@@ -25,7 +25,9 @@ export function readSegmentRoute(value: unknown): DiagramSegmentRoute | undefine
   const points=(value as DiagramSegmentRoute | undefined)?.points
   if (!Array.isArray(points)||points.length<2||points.length>1000||!points.every(p=>p && Number.isFinite(p.x)&&Number.isFinite(p.y))) return
   if (points.some((p,i)=>i>0 && Math.abs(p.x-points[i-1].x)>EPS && Math.abs(p.y-points[i-1].y)>EPS)) return
-  return { points: compactRoute(points) }
+  const rawControls=(value as DiagramSegmentRoute).controls
+  const controls=Array.isArray(rawControls)?rawControls.filter(c=>c && typeof c.id==='string' && (c.axis==='x'||c.axis==='y') && Number.isFinite(c.x) && Number.isFinite(c.y)):undefined
+  return { points: compactRoute(points), ...(controls?.length?{controls}:{}) }
 }
 const stub = (p: RoutePoint, side: Position) => ({x:p.x+directions[side].x*18,y:p.y+directions[side].y*18})
 

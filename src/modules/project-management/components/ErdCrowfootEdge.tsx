@@ -94,8 +94,9 @@ export function ErdCrowfootEdge({
   const targetX = live?.target.x ?? targetPointAtHandle.x, targetY = live?.target.y ?? targetPointAtHandle.y
   const sourcePosition = live?.source.position ?? rawSourcePosition, targetPosition = live?.target.position ?? rawTargetPosition
 
-  const routePoints = segmentRoutePoints({sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition}, readSegmentRoute(data?.segmentRoute))
-  const segments = useDiagramSegmentDrag(id, routePoints, sourcePosition, targetPosition, {source, target, sourceHandleId, targetHandleId}, Boolean(selected) && !live)
+  const manualRoute = readSegmentRoute(data?.segmentRoute)
+  const routePoints = segmentRoutePoints({sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition}, manualRoute)
+  const segments = useDiagramSegmentDrag(id, routePoints, sourcePosition, targetPosition, {source, target, sourceHandleId, targetHandleId}, Boolean(selected) && !live, manualRoute?.controls)
   const [path] = roundedRoutePath(segments.points, DIAGRAM_CORNER_RADIUS)
 
   const ends = (data ?? {}) as ErdEdgeData
@@ -111,7 +112,7 @@ export function ErdCrowfootEdge({
   return (
     <>
       <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.25 }} />
-      <DiagramEdgeSegmentControls points={segments.points} editable={segments.editable} start={segments.start} />
+      <DiagramEdgeSegmentControls edgeId={id} controls={segments.controls} points={segments.points} editable={segments.editable} start={segments.start} />
       <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       <g>
         {crowfoot(sourceX, sourceY, sourceAway.x, sourceAway.y, Boolean(ends.sourceMany), Boolean(ends.sourceOptional), color)}

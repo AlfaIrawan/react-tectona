@@ -244,3 +244,65 @@ describe('orthogonal segment pointer interactions',()=>{
   expect(host.querySelector('g[data-testid="real-edge"]')!.lastElementChild!.innerHTML).toBe(marks)
  })
 })
+
+describe('manual helper points, movable labels and node directions',()=>{
+ const line=()=>host.querySelector<SVGLineElement>('[data-diagram-segment="1"]')!
+ const position=(element:SVGLineElement)=>({x:(Number(element.getAttribute('x1'))+Number(element.getAttribute('x2')))/2,y:(Number(element.getAttribute('y1'))+Number(element.getAttribute('y2')))/2})
+ const menu=()=>document.querySelector<HTMLElement>('[role="menu"]')!
+ const action=(text:string)=>[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b=>b.textContent===text)!
+ it.each([0.25,0.5,1,2])('adds/drags/removes only explicit points at zoom %s and preserves them through reload',async(zoom)=>{
+  state.zoom=zoom;state.panX=47;state.panY=-12
+  await act(async()=>root.render(createElement(Harness)))
+  expect(host.querySelector('[data-diagram-segment-grip]')).toBeNull();expect(host.querySelector('[data-diagram-control-dot]')).toBeNull()
+  const segment=line(),p=position(segment),before=path().getAttribute('d')
+  await act(async()=>segment.dispatchEvent(new MouseEvent('contextmenu',{...screen(p.x,p.y),button:2,bubbles:true,cancelable:true})))
+  expect(menu()).toBeTruthy();await act(async()=>action('Tambah titik bantu').click())
+  expect(host.querySelectorAll('[data-diagram-control-dot]')).toHaveLength(1)
+  expect(path().getAttribute('d')).toBe(before)
+  const id=current[0].data.segmentRoute.controls[0].id
+  const hitPoint=host.querySelector('[data-diagram-manual-control] circle')!
+  await act(async()=>hitPoint.dispatchEvent(pointer('pointerdown',screen(p.x,p.y))))
+  await act(async()=>window.dispatchEvent(pointer('pointerup',screen(p.x,p.y+60))))
+  expect(current[0].data.segmentRoute.controls).toEqual([{id,x:p.x,y:p.y+60,axis:'y'}])
+  expect(current[0].sourceHandle).toBe(original.sourceHandle);expect(current[0].targetHandle).toBe(original.targetHandle)
+  initial=JSON.parse(JSON.stringify(current));await act(async()=>root.render(createElement(Harness,{key:'reloaded'})))
+  expect(host.querySelectorAll('[data-diagram-control-dot]')).toHaveLength(1)
+  const point=current[0].data.segmentRoute.controls[0],keptPath=path().getAttribute('d')
+  await act(async()=>host.querySelector('[data-diagram-manual-control] circle')!.dispatchEvent(new MouseEvent('contextmenu',{...screen(point.x,point.y),button:2,bubbles:true,cancelable:true})))
+  await act(async()=>action('Hapus titik bantu').click())
+  expect(host.querySelector('[data-diagram-control-dot]')).toBeNull();expect(current[0].data.segmentRoute.controls).toEqual([]);expect(path().getAttribute('d')).toBe(keptPath)
+ })
+ it('closes the point menu with Escape and never adds a point just by selecting the line',async()=>{
+  await act(async()=>root.render(createElement(Harness)));const segment=line(),p=position(segment)
+  await act(async()=>segment.dispatchEvent(new MouseEvent('contextmenu',{...screen(p.x,p.y),button:2,bubbles:true,cancelable:true})))
+  await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
+  expect(menu()).toBeNull();expect(current[0].data.segmentRoute).toBeUndefined()
+ })
+ it.each([0.25,0.5,1,2])('moves the relation label independently at zoom %s and persists its offset',async(zoom)=>{
+  state.zoom=zoom;state.panX=35;state.panY=-17;initial=[{...structuredClone(original),label:'Serving'}]
+  await act(async()=>root.render(createElement(Harness)))
+  const label=host.querySelector<HTMLElement>('[data-diagram-edge-id] [role="button"]')!,before=path().getAttribute('d')
+  await act(async()=>label.dispatchEvent(pointer('pointerdown',screen(400,180))))
+  await act(async()=>label.dispatchEvent(pointer('pointermove',screen(460,215))))
+  await act(async()=>label.dispatchEvent(pointer('pointerup',screen(460,215))))
+  expect(current[0].data.textStyle).toMatchObject({offsetX:60,offsetY:35})
+  expect(path().getAttribute('d')).toBe(before);expect(current[0].sourceHandle).toBe(original.sourceHandle)
+  initial=JSON.parse(JSON.stringify(current));await act(async()=>root.render(createElement(Harness,{key:'label-reloaded'})))
+  expect(host.querySelector<HTMLElement>('[data-diagram-edge-id]')!.style.transform).toContain('translate(')
+  expect(current[0].data.textStyle).toMatchObject({offsetX:60,offsetY:35})
+ })
+ it('cancels a label preview on Escape and keeps endpoint direction changes tied to node movement',async()=>{
+  initial=[{...structuredClone(original),label:'Serving',sourceHandle:'source-bottom-31.5',targetHandle:'target-top-67.75',data:{...original.data,manualConnectionHandles:true}}]
+  await act(async()=>root.render(createElement(Harness)))
+  const label=host.querySelector<HTMLElement>('[data-diagram-edge-id] [role="button"]')!
+  await act(async()=>label.dispatchEvent(pointer('pointerdown',screen(400,180))))
+  await act(async()=>label.dispatchEvent(pointer('pointermove',screen(460,215))))
+  await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})))
+  expect(current[0].data.textStyle).toBeUndefined()
+  await act(async()=>state.flow!.onNodesChange([{id:'b',type:'position',position:{x:-500,y:40},dragging:true}]))
+  expect(current[0]).toMatchObject({sourceHandle:'source-left-31.5',targetHandle:'target-right-67.75',data:{manualConnectionHandles:true}})
+  const handles=[current[0].sourceHandle,current[0].targetHandle]
+  await act(async()=>state.flow!.onPaneClick());await act(async()=>state.flow!.onEdgeClick())
+  expect([current[0].sourceHandle,current[0].targetHandle]).toEqual(handles)
+ })
+})

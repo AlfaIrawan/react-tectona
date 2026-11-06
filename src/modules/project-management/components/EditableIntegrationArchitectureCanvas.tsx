@@ -1,3 +1,4 @@
+import { facingMovedDiagramEdge } from '@/modules/project-management/lib/diagramMovingAnchors'
 import { useDiagramHistory } from '@/modules/project-management/lib/useDiagramHistory'
 import { reconnectDiagramEdge } from '@/modules/project-management/lib/diagramConnections'
 import { canvasDocumentSnapshot, renderDiagramViewportImage } from '@/modules/project-management/lib/canvasDocumentSnapshot'
@@ -1007,8 +1008,7 @@ function EditableIntegrationArchitectureCanvasInner({
           const sourceGeometry = geometry(edge.source)
           const targetGeometry = geometry(edge.target)
           if (!sourceGeometry || !targetGeometry) return edge
-          const handles = pickAnchoredHandles(sourceGeometry, targetGeometry)
-          return { ...edge, sourceHandle: handles.sourceHandle, targetHandle: handles.targetHandle }
+          return facingMovedDiagramEdge(edge, sourceGeometry, targetGeometry)
         })
       })
     },

@@ -1,8 +1,10 @@
+import { retargetMovedDiagramEdges } from '@/modules/project-management/lib/diagramMovingAnchors'
 import { DiagramReconnectContext, useDiagramReconnect } from '@/modules/project-management/lib/useDiagramReconnect'
 import { DiagramConnectionLine } from './DiagramConnectionLine'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Hand, ImagePlus, Type, Undo2, Redo2 } from 'lucide-react'
 import {
+  applyNodeChanges,
   useStore,
   useReactFlow,
   ConnectionLineType,
@@ -134,9 +136,17 @@ function IntegrationArchitectureFlowInner({
   onMoveEnd,
 }: IntegrationArchitectureFlowProps) {
   const store = useStoreApi()
-  const { getNodes, screenToFlowPosition } = useReactFlow()
+  const { getNodes, screenToFlowPosition, setEdges } = useReactFlow()
   const transform = useStore((state) => state.transform)
   const zoom = transform[2] || 1
+  const changeNodes: OnNodesChange = useCallback(changes => {
+    const moved = new Set(changes.flatMap(change => change.type === 'position' && change.position ? [change.id] : []))
+    if (!preview && onEdgeUpdate && moved.size) {
+      const nextNodes = applyNodeChanges(changes, nodes)
+      setEdges(current => retargetMovedDiagramEdges(nextNodes, current, moved))
+    }
+    onNodesChange?.(changes)
+  }, [nodes, onNodesChange, onEdgeUpdate, preview, setEdges])
   const cancelledRef = useRef(false)
   const [panMode, setPanMode] = useState(false)
   const displayedEdges = useMemo(() => edges.map(edge => ({ ...edge, updatable: false })), [edges])
@@ -194,7 +204,7 @@ function IntegrationArchitectureFlowInner({
         edges={displayedEdges}
         nodeTypes={INTEGRATION_NODE_TYPES}
         edgeTypes={INTEGRATION_EDGE_TYPES}
-        onNodesChange={onNodesChange}
+        onNodesChange={changeNodes}
         onNodeDragStop={onNodeDragStop}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
