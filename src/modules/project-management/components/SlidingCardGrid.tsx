@@ -267,7 +267,8 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
     <div ref={containerRef} className="space-y-3">
       <div
         ref={viewportRef}
-        className="overflow-hidden"
+        // Clip neighboring pages horizontally while letting card shadows fade vertically.
+        className="overflow-x-clip overflow-y-visible"
         // Vertical scrolling stays native; the two-finger horizontal swipe is handled here.
         style={{ touchAction: 'pan-y' }}
         onPointerDown={handlePointerDown}
