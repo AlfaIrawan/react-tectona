@@ -1,3 +1,4 @@
+import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
 import { BaseEdge, getSmoothStepPath, type EdgeProps } from 'reactflow'
 
@@ -68,15 +69,22 @@ function crowfoot(
 }
 
 export function ErdCrowfootEdge({
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
+  sourceX: rawSourceX,
+  sourceY: rawSourceY,
+  targetX: rawTargetX,
+  targetY: rawTargetY,
+  sourceHandleId,
+  targetHandleId,
   sourcePosition,
   targetPosition,
   data,
   selected,
 }: EdgeProps) {
+  const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, sourcePosition, sourceHandleId)
+  const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, targetPosition, targetHandleId)
+  const sourceX = sourcePointAtHandle.x, sourceY = sourcePointAtHandle.y
+  const targetX = targetPointAtHandle.x, targetY = targetPointAtHandle.y
+
   const [path] = getSmoothStepPath({
     sourceX,
     sourceY,

@@ -1,12 +1,18 @@
+import { magneticDiagramAnchor, magneticAnchorHandle } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { useId } from 'react'
 import { getSmoothStepPath, useStore, type ConnectionLineComponentProps } from 'reactflow'
 import { connectionPreviewTargetPosition } from '@/modules/project-management/lib/diagramConnections'
 
-export function DiagramConnectionLine({ fromX, fromY, toX, toY, fromPosition, toPosition }: ConnectionLineComponentProps) {
+export function DiagramConnectionLine({ fromX, fromY, toX, toY, fromPosition, toPosition, fromNode, connectionStatus }: ConnectionLineComponentProps) {
   const markerId = useId()
   const hoveredHandleId = useStore(state => state.connectionEndHandle?.handleId)
-  const targetPosition = connectionPreviewTargetPosition(fromX, fromY, toX, toY, toPosition, hoveredHandleId)
-  const [path] = getSmoothStepPath({ sourceX: fromX, sourceY: fromY, targetX: toX, targetY: toY,
+  const nodeInternals = useStore(state => state.nodeInternals)
+  const nodes = nodeInternals ? Array.from(nodeInternals.values()) : []
+  const zoom = useStore(state => state.transform[2]) || 1
+  const magnetic = connectionStatus !== 'valid' && fromNode ? magneticDiagramAnchor({ x: toX, y: toY }, nodes, fromNode.id, zoom) : null
+  const target = magnetic?.point ?? { x: toX, y: toY }
+  const targetPosition = connectionPreviewTargetPosition(fromX, fromY, target.x, target.y, toPosition, magnetic ? magneticAnchorHandle(magnetic, 'target') : hoveredHandleId)
+  const [path] = getSmoothStepPath({ sourceX: fromX, sourceY: fromY, targetX: target.x, targetY: target.y,
     sourcePosition: fromPosition, targetPosition, borderRadius: 0, offset: 18 })
 
   return (

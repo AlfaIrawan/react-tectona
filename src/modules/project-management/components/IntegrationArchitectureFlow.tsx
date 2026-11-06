@@ -1,8 +1,10 @@
+import { magneticDiagramAnchor, magneticAnchorHandle } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramConnectionLine } from './DiagramConnectionLine'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Hand, ImagePlus, Type, Undo2, Redo2 } from 'lucide-react'
 import {
   useStore,
+  useReactFlow,
   ConnectionLineType,
   ConnectionMode,
   ControlButton,
@@ -134,33 +136,41 @@ function IntegrationArchitectureFlowInner({
   onMoveEnd,
 }: IntegrationArchitectureFlowProps) {
   const store = useStoreApi()
+  const { getNodes, screenToFlowPosition } = useReactFlow()
   const zoom = useStore((state) => state.transform[2]) || 1
   const cancelledRef = useRef(false)
   const pendingEdgeUpdateRef = useRef<{
     original: Edge
+    movingEnd: 'source' | 'target'
     x: number
     y: number
     oldEdge?: Edge
     connection?: Connection
   } | null>(null)
   const reconnectingEdgeRef = useRef(false)
+  const reconnectEndTimerRef = useRef<number | null>(null)
   const [panMode, setPanMode] = useState(false)
   const displayedEdges = useMemo(() => edges.map(edge => ({ ...edge, updatable: !preview && Boolean(edge.selected) })), [edges, preview])
   const hasSelectedEdge = !preview && edges.some((edge) => edge.selected)
 
   const finishEdgeReconnect = useCallback(() => {
     pendingEdgeUpdateRef.current = null
-    window.setTimeout(() => {
+    if (reconnectEndTimerRef.current !== null) window.clearTimeout(reconnectEndTimerRef.current)
+    reconnectEndTimerRef.current = window.setTimeout(() => {
       reconnectingEdgeRef.current = false
+      reconnectEndTimerRef.current = null
     }, 0)
   }, [])
 
-  const handleEdgeUpdateStart = useCallback((event: MouseEvent | globalThis.MouseEvent | TouchEvent, edge: Edge) => {
+  const handleEdgeUpdateStart = useCallback((event: MouseEvent | globalThis.MouseEvent | TouchEvent, edge: Edge, fixedHandleType: 'source' | 'target') => {
+    if (reconnectEndTimerRef.current !== null) window.clearTimeout(reconnectEndTimerRef.current)
+    reconnectEndTimerRef.current = null
     cancelledRef.current = false
     reconnectingEdgeRef.current = true
     const point = connectionClientPoint(event)
     pendingEdgeUpdateRef.current = {
       original: edge,
+      movingEnd: fixedHandleType === 'source' ? 'target' : 'source',
       x: point.x,
       y: point.y,
     }
@@ -178,15 +188,24 @@ function IntegrationArchitectureFlowInner({
 
   const handleEdgeUpdateEnd = useCallback((event: globalThis.MouseEvent | TouchEvent) => {
     const pending = pendingEdgeUpdateRef.current
-    if (!cancelledRef.current && pending?.oldEdge && pending.connection) {
+    if (!cancelledRef.current && pending) {
       const point = connectionClientPoint(event)
       const distance = Math.hypot(point.x - pending.x, point.y - pending.y)
       if (distance >= EDGE_UPDATE_DRAG_THRESHOLD_PX) {
-        onEdgeUpdate?.(pending.oldEdge, pending.connection)
+        let connection = pending.connection
+        if (!connection) {
+          const moving = pending.movingEnd
+          const fixedNode = moving === 'target' ? pending.original.source : pending.original.target
+          const anchor = magneticDiagramAnchor(screenToFlowPosition(point), getNodes(), fixedNode, zoom)
+          if (anchor) connection = moving === 'target'
+            ? { source: pending.original.source, sourceHandle: pending.original.sourceHandle ?? null, target: anchor.nodeId, targetHandle: magneticAnchorHandle(anchor, 'target') }
+            : { source: anchor.nodeId, sourceHandle: magneticAnchorHandle(anchor, 'source'), target: pending.original.target, targetHandle: pending.original.targetHandle ?? null }
+        }
+        if (connection && (!store.getState().isValidConnection || store.getState().isValidConnection!(connection))) onEdgeUpdate?.(pending.oldEdge ?? pending.original, connection)
       }
     }
     finishEdgeReconnect()
-  }, [finishEdgeReconnect, onEdgeUpdate])
+  }, [finishEdgeReconnect, getNodes, onEdgeUpdate, screenToFlowPosition, store, zoom])
 
   const handleConnect = useCallback((connection: Connection) => {
     if (reconnectingEdgeRef.current || cancelledRef.current) return
@@ -195,7 +214,7 @@ function IntegrationArchitectureFlowInner({
 
   useEffect(() => {
     const cancel = () => {
-      if (!store.getState().connectionStartHandle && !reconnectingEdgeRef.current) return
+      if (!store.getState().connectionStartHandle && !reconnectingEdgeRef.current && !pendingEdgeUpdateRef.current) return
       cancelledRef.current = true
       pendingEdgeUpdateRef.current = null
       store.getState().cancelConnection()
@@ -205,6 +224,7 @@ function IntegrationArchitectureFlowInner({
     window.addEventListener('blur', cancel)
     window.addEventListener('touchcancel', cancel)
     return () => {
+      if (reconnectEndTimerRef.current !== null) window.clearTimeout(reconnectEndTimerRef.current)
       window.removeEventListener('keydown', keyDown)
       window.removeEventListener('blur', cancel)
       window.removeEventListener('touchcancel', cancel)

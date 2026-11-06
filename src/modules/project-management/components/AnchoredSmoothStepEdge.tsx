@@ -1,3 +1,4 @@
+import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
 import {
   BaseEdge,
@@ -150,10 +151,12 @@ function arrowMarker(
 
 export function AnchoredSmoothStepEdge({
   id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
+  sourceX: rawSourceX,
+  sourceY: rawSourceY,
+  targetX: rawTargetX,
+  targetY: rawTargetY,
+  sourceHandleId,
+  targetHandleId,
   sourcePosition,
   targetPosition,
   style,
@@ -161,6 +164,11 @@ export function AnchoredSmoothStepEdge({
   selected,
   data,
 }: EdgeProps) {
+  const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, sourcePosition, sourceHandleId)
+  const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, targetPosition, targetHandleId)
+  const sourceX = sourcePointAtHandle.x, sourceY = sourcePointAtHandle.y
+  const targetX = targetPointAtHandle.x, targetY = targetPointAtHandle.y
+
   const { setEdges, setNodes } = useReactFlow()
   const zoom = useStore((state) => state.transform[2]) || 1
   const labelBoxRef = useRef<HTMLDivElement | null>(null)
