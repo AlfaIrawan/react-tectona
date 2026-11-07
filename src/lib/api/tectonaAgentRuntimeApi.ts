@@ -611,6 +611,9 @@ export interface IdeaDraftDiscoveryProgress {
 export interface IdeaDraftBrainstormMessage {
   role: 'user' | 'assistant'
   text: string
+  /** Genuine client-observed timing retained in local recovery snapshots; absent for unknown history. */
+  sentAt?: string
+  respondedAt?: string
   /** Server intent metadata, retained when restoring a saved brainstorming transcript. */
   conversation_action?: 'navigation' | 'defer' | 'discovery_question' | 'revision_pending' | 'question_explanation' | 'analysis_request' | 'analysis_resume' | null
   /** Basis of a sub-question (the user's quoted words and the question they answered), set by the server. */

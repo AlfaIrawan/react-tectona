@@ -1,4 +1,5 @@
 // @refresh reset
+import { mergeBrainstormUiMessages, brainstormMessageSnapshot, type BrainstormUiMessage } from '../lib/brainstormMessageTiming'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
@@ -200,12 +201,7 @@ import { ChatContextUsagePanel } from '@/modules/core-shell/components/chat/Chat
 import { ChatContextUsageRing } from '@/modules/core-shell/components/chat/ChatContextUsageRing'
 import { UI_SCOPE_IDEA_BACKLOG, useUiLayoutBoolean } from '@/stores/ui-layout-store'
 
-type BrainstormUiMessage = IdeaDraftBrainstormMessage & {
-  sentAt?: string
-  respondedAt?: string
-  /** Local preview of an uploaded diagram. Not stored in the chat log. */
-  imagePreview?: string
-}
+
 
 const BRAINSTORM_GAP_LABELS_EN: Record<string, string> = {
   as_is_actors: 'Who is involved in the current (AS-IS) process?',
@@ -390,31 +386,6 @@ function formatBrainstormLatencyMs(sentAt?: string, respondedAt?: string): strin
   return `${(ms / 1000).toFixed(1)} s`
 }
 
-function mergeBrainstormUiMessages(
-  previous: BrainstormUiMessage[],
-  incoming: IdeaDraftBrainstormMessage[],
-  responseReceivedAt: string,
-): BrainstormUiMessage[] {
-  const userSentAtByText = new Map<string, string>()
-  const userPreviewByText = new Map<string, string>()
-  const assistantRespondedAtByText = new Map<string, string>()
-  for (const message of previous) {
-    if (message.role === 'user' && message.sentAt) userSentAtByText.set(message.text, message.sentAt)
-    if (message.role === 'user' && message.imagePreview) userPreviewByText.set(message.text, message.imagePreview)
-    if (message.role === 'assistant' && message.respondedAt) {
-      assistantRespondedAtByText.set(message.text, message.respondedAt)
-    }
-  }
-  return incoming.map((message) => {
-    if (message.role === 'user') {
-      const sentAt = userSentAtByText.get(message.text)
-      const imagePreview = userPreviewByText.get(message.text)
-      return sentAt || imagePreview ? { ...message, sentAt, imagePreview } : message
-    }
-    const respondedAt = assistantRespondedAtByText.get(message.text) ?? responseReceivedAt
-    return { ...message, respondedAt }
-  })
-}
 
 function diagramUploadCaption(message: string, indonesian: boolean): string {
   const typed = message.trim()
@@ -4221,7 +4192,6 @@ export function IdeaBacklogManagementPage() {
     setBrainstormMessages((current) => mergeBrainstormUiMessages(
       current,
       status.brainstorm_messages ?? [],
-      new Date().toISOString(),
     ))
     setBrainstormReady(Boolean(status.brainstorm_ready))
     setBrainstormRemainingGaps(status.brainstorm_remaining_gaps ?? status.evidence_summary.gaps ?? [])
@@ -4464,7 +4434,6 @@ export function IdeaBacklogManagementPage() {
         setBrainstormMessages((current) => mergeBrainstormUiMessages(
           current.length > 0 ? current : historyBeforeSend,
           restored.brainstorm_messages ?? [],
-          new Date().toISOString(),
         ))
         setBrainstormReady(Boolean(restored.brainstorm_ready))
         setBrainstormRemainingGaps(
@@ -4615,7 +4584,7 @@ export function IdeaBacklogManagementPage() {
         if (conflict.latest) {
           const latest = conflict.latest
           setIdeaDraftJob(latest)
-          setBrainstormMessages(mergeBrainstormUiMessages(fullHistory, latest.brainstorm_messages ?? [], new Date().toISOString()))
+          setBrainstormMessages(mergeBrainstormUiMessages(fullHistory, latest.brainstorm_messages ?? []))
           setBrainstormReady(Boolean(latest.brainstorm_ready))
           setBrainstormRemainingGaps(latest.brainstorm_remaining_gaps ?? [])
           setBrainstormLatestKind(latest.brainstorm_latest_kind ?? null)
@@ -4928,7 +4897,7 @@ export function IdeaBacklogManagementPage() {
       sourceWorkspaceName: createSourceWorkspaceName.current ?? currentPointer?.sourceWorkspaceName ?? null,
       workspaceName: brainstormWorkspaceName,
       sessionId: ideaDraftJob.correlation_id || null,
-      messages: brainstormMessages.map(({ sentAt: _sentAt, imagePreview: _imagePreview, ...message }) => message),
+      messages: brainstormMessageSnapshot(brainstormMessages),
       remainingGaps: brainstormRemainingGaps,
       readyToContinue: brainstormReady,
     })
@@ -5076,7 +5045,7 @@ export function IdeaBacklogManagementPage() {
         setBrainstormEdit(null)
         setBrainstormError('')
         setAiAssistanceError('')
-        setBrainstormMessages(mergeBrainstormUiMessages([], status.brainstorm_messages ?? [], new Date().toISOString()))
+        setBrainstormMessages(mergeBrainstormUiMessages(snapshot.messages ?? [], status.brainstorm_messages ?? []))
         if (status.status === 'completed') applyCompletedIdeaDraft(status, status.brainstorm_messages)
         if (snapshot.form?.description) setCreateIdeaDescriptionFromPlainText(snapshot.form.description, status.brainstorm_messages)
         if (snapshot.form?.html) syncCreateIdeaDescriptionFromHtml(snapshot.form.html)

@@ -1,3 +1,4 @@
+import { mergeBrainstormUiMessages } from '@/modules/project-management/lib/brainstormMessageTiming'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
@@ -93,7 +94,7 @@ export const useIdeaDraftBrainstormPointerStore = create<IdeaDraftBrainstormPoin
         get().setPointer({
           ...previous,
           ...pointer,
-          messages: pointer.messages?.length ? pointer.messages : previous?.messages,
+          messages: pointer.messages?.length ? mergeBrainstormUiMessages(previous?.messages ?? [], pointer.messages) : previous?.messages,
         })
       },
       mergePointers: (incoming) => set((state) => {
@@ -110,11 +111,11 @@ export const useIdeaDraftBrainstormPointerStore = create<IdeaDraftBrainstormPoin
           // Server list metadata must never discard the local recovery transcript.
           pointers = upsert(pointers, previous && previous.updatedAt > pointer.updatedAt
             ? { ...pointer, ...previous, jobId: pointer.jobId, status: pointer.status ?? previous.status, relatedJobIds: pointer.relatedJobIds,
-              messages: pointer.messages?.length ? pointer.messages : previous.messages,
+              messages: pointer.messages?.length ? mergeBrainstormUiMessages(previous.messages ?? [], pointer.messages) : previous.messages,
               draftSessionId: pointer.draftSessionId || previous.draftSessionId, ideaId: pointer.ideaId || previous.ideaId,
               sourceWorkspaceId: pointer.sourceWorkspaceId || previous.sourceWorkspaceId,
               sourceWorkspaceName: pointer.sourceWorkspaceName || previous.sourceWorkspaceName }
-            : { ...previous, ...pointer, messages: pointer.messages?.length ? pointer.messages : previous?.messages,
+            : { ...previous, ...pointer, messages: pointer.messages?.length ? mergeBrainstormUiMessages(previous?.messages ?? [], pointer.messages) : previous?.messages,
               draftSessionId: pointer.draftSessionId || previous?.draftSessionId, ideaId: pointer.ideaId || previous?.ideaId,
               sourceWorkspaceId: pointer.sourceWorkspaceId || previous?.sourceWorkspaceId,
               sourceWorkspaceName: pointer.sourceWorkspaceName || previous?.sourceWorkspaceName })
