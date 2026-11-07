@@ -1,6 +1,8 @@
+import { useDiagramInteractions } from '../lib/diagramInteractionContext'
+import './diagramNodeAffordances.css'
 import { InlineDiagramNodeTitle } from './InlineDiagramNodeTitle'
 import { connectionAnchor, retainConnectionHandlePercents } from '@/modules/project-management/lib/diagramConnections'
-import { Handle, NodeResizer, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
+import { Handle, NodeResizer, NodeResizeControl, useNodeId, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Library, Link2 } from 'lucide-react'
 import {
@@ -44,34 +46,91 @@ function SelectionResizer({
   minHeight: number
   keepAspectRatio?: boolean
 }) {
+  const zoom = useStore(state => state.transform[2])
+  const nodeId = useNodeId()
+  const { beginResize, endResize } = useDiagramInteractions()
+  const onResizeStart = () => {
+    if (nodeId) beginResize(nodeId, { minWidth, minHeight, keepAspectRatio })
+  }
+  const handleStyle = { ...RESIZER_HANDLE_STYLE, width: 10 / zoom, height: 10 / zoom, borderWidth: 1.5 / zoom, borderRadius: 2 / zoom, zIndex: 40 }
   return (
-    <NodeResizer
-      isVisible={selected}
-      minWidth={minWidth}
-      minHeight={minHeight}
-      keepAspectRatio={keepAspectRatio}
-      lineStyle={RESIZER_LINE_STYLE}
-      handleStyle={RESIZER_HANDLE_STYLE}
-    />
+    <>
+      <NodeResizer
+        isVisible={selected}
+        onResizeStart={onResizeStart}
+        onResizeEnd={endResize}
+        minWidth={minWidth}
+        minHeight={minHeight}
+        keepAspectRatio={keepAspectRatio}
+        lineStyle={{ ...RESIZER_LINE_STYLE, borderWidth: 1 / zoom }}
+        handleStyle={handleStyle}
+      />
+      {selected && (['top', 'right', 'bottom', 'left'] as const).map(position => (
+        <NodeResizeControl
+          key={position}
+          position={position}
+          onResizeStart={onResizeStart}
+          onResizeEnd={endResize}
+          minWidth={minWidth}
+          minHeight={minHeight}
+          keepAspectRatio={keepAspectRatio}
+          style={handleStyle}
+        />
+      ))}
+    </>
   )
 }
 
-const HANDLE_SIZE_PX = 8
-const HANDLE_HALF_PX = HANDLE_SIZE_PX / 2
-
-function handlePlacement(side: 'top' | 'right' | 'bottom' | 'left', percent: number, shape: 'rectangle' | 'ellipse' | 'diamond'): CSSProperties {
+function handlePlacement(side: 'top' | 'right' | 'bottom' | 'left', percent: number, shape: 'rectangle' | 'ellipse' | 'diamond', zoom: number): CSSProperties {
   const anchor = connectionAnchor(side, percent, shape)
-  const box: CSSProperties = {
-    width: HANDLE_SIZE_PX,
-    height: HANDLE_SIZE_PX,
+  // Registered geometry stays 8px for the existing centeredDiagramEndpoint contract.
+  // Only the visible dot scales, via CSS, independently of persisted anchors.
+  const size = 8
+  return {
+    width: size,
+    height: size,
     transform: 'none',
     margin: 0,
-  }
-  return { ...box, left: `calc(${anchor.x}% - ${HANDLE_HALF_PX}px)`, top: `calc(${anchor.y}% - ${HANDLE_HALF_PX}px)`, bottom: 'auto', right: 'auto' }
+    left: `calc(${anchor.x}% - ${size / 2}px)`,
+    top: `calc(${anchor.y}% - ${size / 2}px)`,
+    bottom: 'auto',
+    right: 'auto',
+    '--diagram-control-scale': 1 / zoom,
+  } as CSSProperties
 }
 
 function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }: { nodeId: string; selected: boolean; layoutKey?: string; shape?: 'rectangle' | 'ellipse' | 'diamond' }) {
   const updateNodeInternals = useUpdateNodeInternals()
+  const zoom = useStore(state => state.transform[2])
+  const connectable = useStore(state => state.nodesConnectable)
+  const { showConnectionArrows } = useDiagramInteractions()
+  const containerRef = useRef<HTMLSpanElement>(null)
+  const [nearestSide, setNearestSide] = useState<string | null>(null)
+  useEffect(() => {
+    const node = containerRef.current?.closest('.react-flow__node')
+    if (!node) return
+    const move = (event: Event) => {
+      const pointer = event as PointerEvent
+      const rect = node.getBoundingClientRect()
+      const centers = [
+        ['top', rect.left + rect.width / 2, rect.top - 25],
+        ['right', rect.right + 25, rect.top + rect.height / 2],
+        ['bottom', rect.left + rect.width / 2, rect.bottom + 25],
+        ['left', rect.left - 25, rect.top + rect.height / 2],
+      ] as const
+      const nearest = centers.reduce((best, center) =>
+        Math.hypot(pointer.clientX - center[1], pointer.clientY - center[2]) <
+        Math.hypot(pointer.clientX - best[1], pointer.clientY - best[2]) ? center : best)
+      setNearestSide(nearest[0])
+    }
+    const leave = () => setNearestSide(null)
+    node.addEventListener('pointermove', move)
+    node.addEventListener('pointerleave', leave)
+    return () => {
+      node.removeEventListener('pointermove', move)
+      node.removeEventListener('pointerleave', leave)
+    }
+  }, [])
   const connectedHandleKey = useStore(state => state.edges.flatMap(edge => [
     ...(edge.source === nodeId && edge.sourceHandle ? [edge.sourceHandle] : []),
     ...(edge.target === nodeId && edge.targetHandle ? [edge.targetHandle] : []),
@@ -85,20 +144,14 @@ function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }:
   const width = measuredWidth || layoutWidth
   const height = measuredHeight || layoutHeight
   const sizeKey = `${Math.round(width)}x${Math.round(height)}`
-  const sourceClass = [
-    '!m-0 !box-border !block !min-h-0 !min-w-0 !rounded-full !border !border-white !bg-sky-500 !p-0 !leading-none',
-    '!pointer-events-auto !z-30',
-    '!opacity-0 !transition-opacity !duration-150',
-    'group-hover:!opacity-100',
-    selected ? '!opacity-100' : '',
-  ].join(' ')
+  const sourceClass = `diagram-connection-point${selected ? ' diagram-connection-point-selected' : ''}`
   const targetClass = '!m-0 !box-border !block !min-h-0 !min-w-0 !rounded-full !border-0 !bg-transparent !p-0 !leading-none !pointer-events-none !opacity-0'
 
   useEffect(() => {
     updateNodeInternals(nodeId)
     const frame = window.requestAnimationFrame(() => updateNodeInternals(nodeId))
     return () => window.cancelAnimationFrame(frame)
-  }, [nodeId, sizeKey, shape, connectedHandleKey, updateNodeInternals])
+  }, [nodeId, sizeKey, shape, connectedHandleKey, zoom, updateNodeInternals])
 
   const sides: Array<{ side: 'top' | 'right' | 'bottom' | 'left'; position: Position }> = [
     { side: 'top', position: Position.Top },
@@ -109,11 +162,12 @@ function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }:
 
   return (
     <>
+      <span ref={containerRef} hidden />
       {sides.flatMap(({ side, position }) => {
         const length = side === 'top' || side === 'bottom' ? width : height
         return retainConnectionHandlePercents(side, connectionHandlePercentsForLength(length), connectedHandleKey.split('|')).flatMap((percent) => {
           const idSuffix = percent === 50 ? side : `${side}-${percent}`
-          const offsetStyle = handlePlacement(side, percent, shape)
+          const offsetStyle = handlePlacement(side, percent, shape, zoom)
           return [
             <Handle
               key={`target-${idSuffix}`}
@@ -128,12 +182,27 @@ function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }:
               id={`source-${idSuffix}`}
               type="source"
               position={position}
-              isConnectable
-              isConnectableStart
-              isConnectableEnd
+              isConnectable={connectable}
+              isConnectableStart={connectable}
+              isConnectableEnd={connectable}
               className={sourceClass}
               style={offsetStyle}
-            />,
+            >
+              {percent === 50 && connectable && showConnectionArrows ? (
+                <span
+                  className={`diagram-connection-arrow diagram-connection-arrow-${side} source nodrag nopan${nearestSide === side ? ' diagram-connection-arrow-nearest' : ''}`}
+                  data-handleid={`source-${idSuffix}`}
+                  data-nodeid={nodeId}
+                  data-handlepos={position}
+                  title={`Drag to connect from ${side}`}
+                  aria-label={`Drag to connect from ${side}`}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 8h10V3l8 9-8 9v-5H3z" />
+                  </svg>
+                </span>
+              ) : null}
+            </Handle>,
           ]
         })
       })}

@@ -1,6 +1,9 @@
 import { retargetMovedDiagramEdges } from '@/modules/project-management/lib/diagramMovingAnchors'
 import { DiagramReconnectContext, useDiagramReconnect } from '@/modules/project-management/lib/useDiagramReconnect'
 import { DiagramConnectionLine } from './DiagramConnectionLine'
+import { DiagramSmartGuides } from './DiagramSmartGuides'
+import { DiagramInteractionContext, type DiagramResizeConstraints } from '../lib/diagramInteractionContext'
+import { diagramNodeRect, snapDiagramDrag, snapDiagramResize, type DiagramGuideFeedback, type DiagramResizeSession } from '../lib/diagramSmartGuides'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
 import { Hand, ImagePlus, Type, Undo2, Redo2 } from 'lucide-react'
 import {
@@ -121,8 +124,10 @@ function IntegrationArchitectureFlowInner({
   onNodeDoubleClick,
   onEdgeContextMenu,
   showGrid = true,
+  showGuides = true,
   snapToGrid = false,
   showRuler = true,
+  showConnectionArrows = true,
   showConnectionPoints = true,
   preview = false,
   defaultViewport,
@@ -139,14 +144,41 @@ function IntegrationArchitectureFlowInner({
   const { getNodes, screenToFlowPosition, setEdges } = useReactFlow()
   const transform = useStore((state) => state.transform)
   const zoom = transform[2] || 1
+  const resizeSession = useRef<DiagramResizeSession | null>(null)
+  const [guideFeedback, setGuideFeedback] = useState<DiagramGuideFeedback>({ lines: [] })
+  const clearGuides = useCallback(() => setGuideFeedback({ lines: [] }), [])
+  const beginResize = useCallback((nodeId: string, constraints: DiagramResizeConstraints) => {
+    const current = getNodes(), node = current.find(item => item.id === nodeId)
+    if (!node || preview) return
+    const initial = diagramNodeRect(node, current)
+    resizeSession.current = { ...constraints, nodeId, initial }
+    setGuideFeedback({ lines: [], size: initial })
+  }, [getNodes, preview])
+  const endResize = useCallback(() => { resizeSession.current = null; clearGuides() }, [clearGuides])
+  const interactions = useMemo(() => ({ showConnectionArrows: !preview && showConnectionArrows,
+    showConnectionPoints: !preview && showConnectionPoints, beginResize, endResize }),
+  [preview, showConnectionArrows, showConnectionPoints, beginResize, endResize])
   const changeNodes: OnNodesChange = useCallback(changes => {
-    const moved = new Set(changes.flatMap(change => change.type === 'position' && change.position ? [change.id] : []))
+    let nextChanges = changes
+    if (!preview) {
+      if (resizeSession.current) {
+        const result = snapDiagramResize(changes, nodes, resizeSession.current, zoom, !showGuides || snapToGrid)
+        nextChanges = result.changes
+        if (result.feedback.size) setGuideFeedback(showGuides ? result.feedback : { lines: [], size: result.feedback.size })
+      } else if (changes.some(change => change.type === 'position' && change.dragging !== undefined)) {
+        const result = showGuides ? snapDiagramDrag(changes, nodes, zoom, snapToGrid) : { changes, feedback: { lines: [] } }
+        nextChanges = result.changes
+        setGuideFeedback(changes.some(change => change.type === 'position' && change.dragging) ? result.feedback : { lines: [] })
+      }
+      if (changes.some(change => change.type === 'remove' || change.type === 'reset' || change.type === 'dimensions' && change.resizing === false)) clearGuides()
+    }
+    const moved = new Set(nextChanges.flatMap(change => change.type === 'position' && change.position ? [change.id] : []))
     if (!preview && onEdgeUpdate && moved.size) {
-      const nextNodes = applyNodeChanges(changes, nodes)
+      const nextNodes = applyNodeChanges(nextChanges, nodes)
       setEdges(current => retargetMovedDiagramEdges(nextNodes, current, moved))
     }
-    onNodesChange?.(changes)
-  }, [nodes, onNodesChange, onEdgeUpdate, preview, setEdges])
+    onNodesChange?.(nextChanges)
+  }, [nodes, onNodesChange, onEdgeUpdate, preview, setEdges, zoom, showGuides, snapToGrid, clearGuides])
   const cancelledRef = useRef(false)
   const [panMode, setPanMode] = useState(false)
   const displayedEdges = useMemo(() => edges.map(edge => ({ ...edge, updatable: false })), [edges])
@@ -168,6 +200,7 @@ function IntegrationArchitectureFlowInner({
 
   useEffect(() => {
     const cancel = () => {
+      endResize()
       if (!store.getState().connectionStartHandle) return
       cancelledRef.current = true
       store.getState().cancelConnection()
@@ -181,7 +214,7 @@ function IntegrationArchitectureFlowInner({
       window.removeEventListener('blur', cancel)
       window.removeEventListener('touchcancel', cancel)
     }
-  }, [store])
+  }, [store, endResize])
 
   const handleInit = useCallback((instance: ReactFlowInstance) => {
     if (preview) {
@@ -196,16 +229,17 @@ function IntegrationArchitectureFlowInner({
   }, [defaultViewport, preview])
 
   return (
+    <DiagramInteractionContext.Provider value={interactions}>
     <DiagramReconnectContext.Provider value={preview || !onEdgeUpdate ? null : reconnect}>
       <PatchReactFlowOnError />
       <ReactFlow
-        className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}${panMode ? ' pan-mode' : ''}`}
+        className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}${panMode ? ' pan-mode' : ''}${preview || !showConnectionArrows ? ' hide-connection-arrows' : ''}${preview || !showConnectionPoints ? ' hide-connection-points' : ''}`}
         nodes={nodes}
         edges={displayedEdges}
         nodeTypes={INTEGRATION_NODE_TYPES}
         edgeTypes={INTEGRATION_EDGE_TYPES}
         onNodesChange={changeNodes}
-        onNodeDragStop={onNodeDragStop}
+        onNodeDragStop={(event, node, draggedNodes) => { clearGuides(); onNodeDragStop?.(event, node, draggedNodes) }}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
         onConnectStart={() => { cancelledRef.current = false }}
@@ -214,7 +248,7 @@ function IntegrationArchitectureFlowInner({
         autoPanOnConnect={!preview}
         onSelectionChange={onSelectionChange}
         onEdgeClick={onEdgeClick}
-        onPaneClick={onPaneClick}
+        onPaneClick={() => { clearGuides(); onPaneClick?.() }}
         onPaneContextMenu={onPaneContextMenu}
         onNodeContextMenu={onNodeContextMenu}
         onNodeDoubleClick={onNodeDoubleClick}
@@ -230,7 +264,7 @@ function IntegrationArchitectureFlowInner({
         defaultViewport={defaultViewport}
         nodesDraggable={!preview}
         selectNodesOnDrag={!preview}
-        nodesConnectable={!preview && showConnectionPoints}
+        nodesConnectable={!preview && (showConnectionPoints || showConnectionArrows)}
         elementsSelectable={!preview}
         edgesFocusable={!preview}
         edgesUpdatable={false}
@@ -275,8 +309,10 @@ function IntegrationArchitectureFlowInner({
       ) : null}
         {showGrid && !preview ? <CanvasViewportGrid /> : null}
         {showRuler && !preview ? <CanvasViewportRulers /> : null}
+        {!preview && (guideFeedback.size || showGuides && guideFeedback.lines.length > 0) ? <DiagramSmartGuides feedback={guideFeedback} /> : null}
       </ReactFlow>
     </DiagramReconnectContext.Provider>
+    </DiagramInteractionContext.Provider>
   )
 }
 

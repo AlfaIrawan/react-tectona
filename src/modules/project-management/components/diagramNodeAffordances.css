@@ -1,0 +1,75 @@
+/* Keep hit targets and edge anchors on the perimeter; arrows are their children,
+   not duplicate ReactFlow handles, so persisted connector IDs never move. */
+.react-flow__handle.diagram-connection-point {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  z-index: 30;
+  cursor: crosshair;
+}
+.react-flow__handle.diagram-connection-point::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(6px * var(--diagram-control-scale));
+  height: calc(6px * var(--diagram-control-scale));
+  box-sizing: border-box;
+  border: calc(1px * var(--diagram-control-scale)) solid white;
+  border-radius: 50%;
+  background: #0ea5e9;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+}
+.react-flow__node:hover .diagram-connection-point::before,
+.react-flow__handle.diagram-connection-point-selected::before { opacity: 1; }
+.hide-connection-points .react-flow__handle.diagram-connection-point::before { opacity: 0; }
+.diagram-connection-arrow {
+  --arrow-angle: 0deg;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  width: 50px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 4px 14px;
+  opacity: 0;
+  pointer-events: none;
+  cursor: crosshair;
+  color: #79b9df;
+  transform: translate(-50%, -50%) scale(var(--diagram-control-scale)) rotate(var(--arrow-angle)) translateX(25px);
+  transform-origin: center;
+  transition: color 100ms, opacity 100ms;
+}
+.diagram-connection-arrow-top { --arrow-angle: -90deg; }
+.diagram-connection-arrow-bottom { --arrow-angle: 90deg; }
+.diagram-connection-arrow-left { --arrow-angle: 180deg; }
+.react-flow__node:hover .diagram-connection-arrow {
+  opacity: 0.65;
+  pointer-events: auto;
+}
+.react-flow__node:hover .diagram-connection-arrow-nearest,
+.react-flow__node .diagram-connection-arrow:hover {
+  color: #168ac8;
+  opacity: 1;
+}
+.diagram-connection-arrow svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 0.5;
+}
+.diagram-connection-arrow-nearest svg,
+.diagram-connection-arrow:hover svg { stroke-width: 2; }
+.hide-connection-arrows .diagram-connection-arrow { display: none; }
+/* Hidden points still participate in native nearest-handle drop detection. */
+.hide-connection-points .diagram-connection-point { pointer-events: none; }
