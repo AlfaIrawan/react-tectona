@@ -30,3 +30,18 @@ export function diagramClientToFlow(client:RoutePoint,toFlow:(point:RoutePoint)=
   if(!Number.isFinite(scale)||scale<=0||Math.abs(scale-1)<0.001)return toFlow(client)
   return toFlow({x:rect.left+(client.x-rect.left)/scale,y:rect.top+(client.y-rect.top)/scale})
 }
+
+/** Explicit points, unlike old serialized vertices, bound a draggable span. */
+export function splitRouteAtControls(points:RoutePoint[],controls:RouteControl[]):RoutePoint[]{
+ const result:RoutePoint[]=[]
+ for(let i=0;i<points.length-1;i++){
+  const a=points[i],b=points[i+1],length=Math.hypot(b.x-a.x,b.y-a.y)
+  result.push(a)
+  if(length<0.001)continue
+  const inside=controls.filter(p=>Math.abs(Math.hypot(p.x-a.x,p.y-a.y)+Math.hypot(p.x-b.x,p.y-b.y)-length)<0.001&&Math.hypot(p.x-a.x,p.y-a.y)>0.001&&Math.hypot(p.x-b.x,p.y-b.y)>0.001)
+  inside.sort((p,q)=>Math.hypot(p.x-a.x,p.y-a.y)-Math.hypot(q.x-a.x,q.y-a.y))
+  for(const point of inside)if(!result.some(p=>Math.hypot(p.x-point.x,p.y-point.y)<0.001))result.push({x:point.x,y:point.y})
+ }
+ if(points.length)result.push(points[points.length-1])
+ return result
+}

@@ -441,7 +441,7 @@ export function AnchoredSmoothStepEdge({
       />
       {arrowMarker(visual.startArrow, startDirection.x, startDirection.y, -startDirection.dx, -startDirection.dy, visual.startSize, visual.startFill, stroke)}
       {arrowMarker(visual.endArrow, endDirection.x, endDirection.y, endDirection.dx, endDirection.dy, visual.endSize, visual.endFill, stroke)}
-      <DiagramEdgeSegmentControls edgeId={id} controls={segments.controls} points={segments.points} editable={segments.editable} start={segments.start} />
+      <DiagramEdgeSegmentControls pathArgs={pathArgs} edgeId={id} controls={segments.controls} points={segments.points} editable={segments.editable} start={segments.start} />
       <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       {labelText && !arrange.ignoreEdge ? (
         <EdgeLabelRenderer>

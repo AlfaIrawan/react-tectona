@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Position } from 'reactflow'
-import { compactRoute, moveRouteSegment, readSegmentRoute, roundedRoutePath, segmentRoutePoints } from './diagramSegmentRouting'
+import { compactRoute, moveRouteSegment, readSegmentRoute, roundedRoutePath, segmentRoutePoints, routeThroughControls } from './diagramSegmentRouting'
 import { buildPersistentC4Payload, emptyRuntimeC4Analysis, runtimeC4FromPersistent } from './c4ArchitectureService'
 import { buildPersistentProcessDiagramPayload, emptyRuntimeProcessDiagramAnalysis, runtimeProcessDiagramFromPersistent } from './processDiagramService'
 import { buildPersistentIntegrationPayload, EMPTY_RUNTIME_INTEGRATION_ANALYSIS, graphRecordFromPersistentIntegration } from './integrationArchitectureService'
@@ -43,7 +43,7 @@ describe('anchored orthogonal segment geometry',()=>{
   expect(compactRoute([{x:0,y:0},{x:0,y:0},{x:0,y:2},{x:0,y:4}])).toEqual([{x:0,y:0},{x:0,y:4}])
  })
  it('round-trips tracks, anchor IDs and styles through process/C4/ArchiMate payloads and source merge',()=>{
-  const edge={id:'rel',source:'a',target:'b',sourceHandle:'source-bottom-31.5',targetHandle:'target-top-67.75',label:'Uses',style:{strokeDasharray:'6 4'},data:{manualConnectionHandles:true,visual:{lineStyle:'dashed',endArrow:'diamond'},segmentRoute:{points:moveRouteSegment(segmentRoutePoints(args),1,210,Position.Bottom,Position.Top)}}}
+  const edge={id:'rel',source:'a',target:'b',sourceHandle:'source-bottom-31.5',targetHandle:'target-top-67.75',label:'Uses',style:{strokeDasharray:'6 4'},data:{manualConnectionHandles:true,visual:{lineStyle:'dashed',endArrow:'diamond'},segmentRoute:{routingVersion:2 as const,points:moveRouteSegment(segmentRoutePoints(args),1,210,Position.Bottom,Position.Top)}}}
   const graph={nodes:[],edges:[edge],source:'source',viewport:{x:45,y:-30,zoom:0.625},userCustomized:true}
   const process=buildPersistentProcessDiagramPayload({...emptyRuntimeProcessDiagramAnalysis(),canvasGraph:graph},'qa')
   expect(runtimeProcessDiagramFromPersistent(JSON.parse(JSON.stringify({process_json:process.process_json})) as never).canvasGraph?.edges).toEqual([edge])
@@ -55,3 +55,71 @@ describe('anchored orthogonal segment geometry',()=>{
   expect(merged).toMatchObject({...edge,label:'Updated',data:{...edge.data,technology:'new'}})
  })
 })
+
+describe('whole spans without hidden helper bends',()=>{
+ const a={sourceX:0,sourceY:0,targetX:200,targetY:100,sourcePosition:Position.Right,targetPosition:Position.Left}
+ it('does not add a terminal kink when a nearby track is saved and rendered repeatedly',()=>{
+  const points=[{x:0,y:0},{x:10,y:0},{x:10,y:100},{x:200,y:100}]
+  let route={points,routingVersion:2 as const}
+  for(let i=0;i<20;i++){
+   const rendered=segmentRoutePoints(a,JSON.parse(JSON.stringify(route)))
+   expect(rendered).toEqual(points);route={points:rendered,routingVersion:2 as const}
+  }
+ })
+ it('moves an entire collinear span across former serialized points',()=>{
+  const points=[{x:0,y:0},{x:100,y:0},{x:100,y:30},{x:100,y:60},{x:100,y:100},{x:200,y:100}]
+  for(const index of [1,2,3])expect(moveRouteSegment(points,index,60,Position.Right,Position.Left)).toEqual([{x:0,y:0},{x:60,y:0},{x:60,y:100},{x:200,y:100}])
+ })
+ it('removes backtracking and closed excursions instead of retaining a hidden loop',()=>{
+  expect(compactRoute([{x:0,y:0},{x:18,y:0},{x:10,y:0},{x:10,y:100},{x:200,y:100}])).toEqual([{x:0,y:0},{x:10,y:0},{x:10,y:100},{x:200,y:100}])
+  const loop=[{x:0,y:0},{x:0,y:80},{x:200,y:80},{x:200,y:40},{x:100,y:40},{x:100,y:200}]
+  expect(compactRoute(loop)).toEqual([{x:0,y:0},{x:0,y:80},{x:100,y:80},{x:100,y:200}])
+ })
+ it('releases deleted control geometry and routes through remaining manual constraints',()=>{
+  expect(routeThroughControls(a,[])).toEqual(segmentRoutePoints(a))
+  const control={id:'kept',x:80,y:60,axis:'x' as const}
+  const route=routeThroughControls(a,[control])
+  expect(orthogonal(route)).toBe(true);expect(route[0]).toEqual({x:0,y:0});expect(route.at(-1)).toEqual({x:200,y:100})
+  expect(route.some((p,i)=>i>0&&p.x===80&&route[i-1].x===80&&Math.min(p.y,route[i-1].y)<=60&&Math.max(p.y,route[i-1].y)>=60)).toBe(true)
+ })
+ it('stays stable through drag/release/reselect and persistence for every node side',()=>{
+  for(const sourcePosition of Object.values(Position))for(const targetPosition of Object.values(Position)){
+   const pathArgs={...args,sourcePosition,targetPosition};let points=segmentRoutePoints(pathArgs)
+   for(let step=0;step<8;step++){
+    const i=Math.min(1,points.length-2),horizontal=points[i].y===points[i+1].y
+    points=moveRouteSegment(points,i,(horizontal?points[i].y:points[i].x)+(step%2?45:-33),sourcePosition,targetPosition)
+    const reloaded=readSegmentRoute(JSON.parse(JSON.stringify({points,routingVersion:2})))!
+    expect(segmentRoutePoints(pathArgs,reloaded)).toEqual(points)
+    const vector={left:{x:-1,y:0},right:{x:1,y:0},top:{x:0,y:-1},bottom:{x:0,y:1}}
+    const first=points[1],last=points[points.length-2],sourceDir=vector[sourcePosition],targetDir=vector[targetPosition]
+    expect((first.x-args.sourceX)*sourceDir.x+(first.y-args.sourceY)*sourceDir.y).toBeGreaterThan(0)
+    expect((last.x-args.targetX)*targetDir.x+(last.y-args.targetY)*targetDir.y).toBeGreaterThan(0)
+    expect(orthogonal(points)).toBe(true);expect(points[0]).toEqual({x:args.sourceX,y:args.sourceY});expect(points.at(-1)).toEqual({x:args.targetX,y:args.targetY})
+   }
+  }
+ })
+})
+
+describe('explicit points bound a span',()=>{
+ it('keeps a manual point fixed while only its adjoining span is moved',()=>{
+  const control={x:100,y:50,id:'kept',axis:'x' as const}
+  const points=[{x:0,y:0},{x:100,y:0},control,{x:100,y:100},{x:200,y:100}]
+  const moved=moveRouteSegment(points,1,60,Position.Right,Position.Left,[control])
+  expect(moved).toEqual([{x:0,y:0},{x:60,y:0},{x:60,y:50},{x:100,y:50},{x:100,y:100},{x:200,y:100}])
+  expect(readSegmentRoute({points:moved,controls:[control]})?.controls).toEqual([control])
+ })
+ it('does not remove a loop that is constrained by an explicit manual point',()=>{
+  const loop=[{x:0,y:0},{x:0,y:80},{x:200,y:80},{x:200,y:40},{x:100,y:40},{x:100,y:200}]
+  expect(compactRoute(loop,[{x:200,y:60}])).toEqual(loop)
+ })
+})
+
+it('retains an intentional closed self-relation',()=>{const route=[{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:0,y:100},{x:0,y:0}];expect(compactRoute(route)).toEqual(route)})
+
+it('removes a small unconstrained overshoot kink but keeps an explicit constraint',()=>{
+ const route=[{x:98,y:19},{x:40,y:19},{x:40,y:40},{x:57,y:40},{x:57,y:59}]
+ expect(compactRoute(route)).toEqual([{x:98,y:19},{x:57,y:19},{x:57,y:59}])
+ expect(compactRoute(route,[{x:40,y:30}])).toEqual(route)
+})
+
+it('cleans a legacy hidden kink but preserves newly edited span geometry after JSON reload',()=>{const points=[{x:98,y:19},{x:40,y:19},{x:40,y:40},{x:57,y:40},{x:57,y:59}];expect(readSegmentRoute({points})!.points).toHaveLength(3);const route=JSON.parse(JSON.stringify({points,routingVersion:2}));expect(readSegmentRoute(route)!.points).toEqual(points);expect(readSegmentRoute(route)!.routingVersion).toBe(2)})

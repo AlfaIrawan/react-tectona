@@ -270,7 +270,23 @@ describe('manual helper points, movable labels and node directions',()=>{
   const point=current[0].data.segmentRoute.controls[0],keptPath=path().getAttribute('d')
   await act(async()=>host.querySelector('[data-diagram-manual-control] circle')!.dispatchEvent(new MouseEvent('contextmenu',{...screen(point.x,point.y),button:2,bubbles:true,cancelable:true})))
   await act(async()=>action('Hapus titik bantu').click())
-  expect(host.querySelector('[data-diagram-control-dot]')).toBeNull();expect(current[0].data.segmentRoute.controls).toEqual([]);expect(path().getAttribute('d')).toBe(keptPath)
+  expect(host.querySelector('[data-diagram-control-dot]')).toBeNull();expect(current[0].data.segmentRoute.controls).toEqual([]);expect(path().getAttribute('d')).not.toBe(keptPath);expect(path().getAttribute('d')).toBe(before)
+ })
+ it.each([0.25,0.5,1,2])('bounds a dragged span at its manual point at zoom %s',async(zoom)=>{
+  state.zoom=zoom;state.panX=47;state.panY=-12
+  await act(async()=>root.render(createElement(Harness)))
+  const p=position(line())
+  await act(async()=>line().dispatchEvent(new MouseEvent('contextmenu',{...screen(p.x,p.y),button:2,bubbles:true,cancelable:true})))
+  await act(async()=>action('Tambah titik bantu').click())
+  const control=structuredClone(current[0].data.segmentRoute.controls[0]),span=line(),grab=position(span)
+  await act(async()=>span.dispatchEvent(pointer('pointerdown',screen(grab.x,grab.y))))
+  await act(async()=>window.dispatchEvent(pointer('pointerup',screen(grab.x,grab.y+35))))
+  expect(current[0].data.segmentRoute.controls).toEqual([control])
+  const points=current[0].data.segmentRoute.points
+  expect(points.some((q:{x:number;y:number},i:number)=>i>0&&q.y===p.y&&points[i-1].y===p.y&&points[i-1].x===p.x&&q.x===500)).toBe(true)
+  const saved=path().getAttribute('d');initial=JSON.parse(JSON.stringify(current))
+  await act(async()=>root.render(createElement(Harness,{key:'bounded-reload'})))
+  expect(path().getAttribute('d')).toBe(saved);expect(current[0].data.segmentRoute.controls).toEqual([control])
  })
  it('closes the point menu with Escape and never adds a point just by selecting the line',async()=>{
   await act(async()=>root.render(createElement(Harness)));const segment=line(),p=position(segment)

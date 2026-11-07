@@ -3,10 +3,10 @@ import { createPortal } from 'react-dom'
 import { useReactFlow, useStore } from 'reactflow'
 import { visualPxToLayoutPx } from '@/lib/uiScale'
 import { diagramClientToFlow, nearestRouteSegment, type RouteControl } from '@/modules/project-management/lib/diagramManualControls'
-import type { RoutePoint } from '@/modules/project-management/lib/diagramSegmentRouting'
+import { routeThroughControls, type RoutePoint, type SegmentPathArgs } from '@/modules/project-management/lib/diagramSegmentRouting'
 
 /** Segment hit areas stay invisible; only user-created helper points are painted. */
-export function DiagramEdgeSegmentControls({edgeId,points,controls,editable,start}:{edgeId:string;points:RoutePoint[];controls:RouteControl[];editable:boolean;start:(index:number,event:PointerEvent<SVGElement>)=>void}) {
+export function DiagramEdgeSegmentControls({edgeId,points,controls,editable,start,pathArgs}:{pathArgs:SegmentPathArgs;edgeId:string;points:RoutePoint[];controls:RouteControl[];editable:boolean;start:(index:number,event:PointerEvent<SVGElement>,controlId?:string)=>void}) {
   const zoom=useStore(s=>s.transform[2])||1,host=useStore(s=>s.domNode),transform=useStore(s=>s.transform)
   const {setEdges,screenToFlowPosition}=useReactFlow()
   const [menu,setMenu]=useState<{x:number;y:number;point:RoutePoint;index:number;controlId?:string}|null>(null)
@@ -28,7 +28,10 @@ export function DiagramEdgeSegmentControls({edgeId,points,controls,editable,star
     if(!menu)return
     const segment=nearestRouteSegment([points[menu.index],points[menu.index+1]],menu.point)
     const next=remove?controls.filter(c=>c.id!==menu.controlId):segment?[...controls,{id:`point-${globalThis.crypto?.randomUUID?.()??Math.random().toString(36).slice(2)}`,...segment.point,axis:segment.axis}]:controls
-    setEdges(edges=>edges.map(edge=>edge.id===edgeId?{...edge,selected:true,data:{...edge.data,segmentRoute:{...edge.data?.segmentRoute,points,controls:next}}}:edge))
+    setEdges(edges=>edges.map(edge=>edge.id===edgeId?{...edge,selected:true,data:{...edge.data,segmentRoute:{...edge.data?.segmentRoute,routingVersion:2,points:remove?routeThroughControls(pathArgs,[...next].sort((a,b)=>{
+      const sa=nearestRouteSegment(points,a,a.axis),sb=nearestRouteSegment(points,b,b.axis)
+      return (sa?.index??0)-(sb?.index??0)||Math.hypot(a.x-points[sa?.index??0].x,a.y-points[sa?.index??0].y)-Math.hypot(b.x-points[sb?.index??0].x,b.y-points[sb?.index??0].y)
+    })):points,controls:next}}}:edge))
     setMenu(null)
   }
   return <>
@@ -45,7 +48,7 @@ export function DiagramEdgeSegmentControls({edgeId,points,controls,editable,star
         const segment=nearestRouteSegment(points,control,control.axis);if(!segment)return null
         return <g key={control.id} data-diagram-manual-control={control.id}>
           <circle cx={control.x} cy={control.y} r={10/zoom} fill="transparent" style={{pointerEvents:'all',cursor:control.axis==='y'?'ns-resize':'ew-resize',touchAction:'none'}}
-            onPointerDown={event=>start(segment.index,event)} onClick={event=>event.stopPropagation()} onContextMenu={open(segment.index,control.id)}/>
+            onPointerDown={event=>start(segment.index,event,control.id)} onClick={event=>event.stopPropagation()} onContextMenu={open(segment.index,control.id)}/>
           <circle data-diagram-control-dot cx={control.x} cy={control.y} r={2.75/zoom} fill="#fff" stroke="#0284c7" strokeWidth={1/zoom} pointerEvents="none"/>
         </g>
       })}

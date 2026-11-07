@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest'
-import { diagramClientToFlow, projectRouteControls, movedRouteControls } from './diagramManualControls'
+import { diagramClientToFlow, splitRouteAtControls, projectRouteControls, movedRouteControls } from './diagramManualControls'
 import { facingMovedDiagramEdge, retargetMovedDiagramEdges } from './diagramMovingAnchors'
 import { readSegmentRoute } from './diagramSegmentRouting'
 const points=[{x:100,y:50},{x:100,y:180},{x:400,y:180},{x:400,y:300}]
@@ -30,4 +30,10 @@ describe('manual controls and moving anchors',()=>{
   expect(retargetMovedDiagramEdges(nodes,[edge],new Set())[0]).toBe(edge)
   expect(retargetMovedDiagramEdges(nodes,[edge],new Set(['group']))[0]).toMatchObject({sourceHandle:'source-left',targetHandle:'target-right'})
  })
+})
+
+it('splits a hit span only at explicit helpers, ordered along the line',()=>{
+ const route=[{x:0,y:0},{x:0,y:100}]
+ expect(splitRouteAtControls(route,[])).toEqual(route)
+ expect(splitRouteAtControls(route,[{id:'last',x:0,y:75,axis:'x'},{id:'first',x:0,y:25,axis:'x'}])).toEqual([{x:0,y:0},{x:0,y:25},{x:0,y:75},{x:0,y:100}])
 })

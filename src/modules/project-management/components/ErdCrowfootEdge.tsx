@@ -112,7 +112,7 @@ export function ErdCrowfootEdge({
   return (
     <>
       <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.25 }} />
-      <DiagramEdgeSegmentControls edgeId={id} controls={segments.controls} points={segments.points} editable={segments.editable} start={segments.start} />
+      <DiagramEdgeSegmentControls pathArgs={{sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition}} edgeId={id} controls={segments.controls} points={segments.points} editable={segments.editable} start={segments.start} />
       <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
       <g>
         {crowfoot(sourceX, sourceY, sourceAway.x, sourceAway.y, Boolean(ends.sourceMany), Boolean(ends.sourceOptional), color)}

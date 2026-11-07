@@ -1,12 +1,14 @@
-import { diagramClientToFlow, projectRouteControls, movedRouteControls, type RouteControl } from './diagramManualControls'
+import { diagramClientToFlow, splitRouteAtControls, projectRouteControls, movedRouteControls, type RouteControl } from './diagramManualControls'
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useReactFlow, useStore, type Position } from 'reactflow'
 import { DiagramReconnectContext } from './useDiagramReconnect'
 import { moveRouteSegment, type RoutePoint } from './diagramSegmentRouting'
 
 type Identity = { source: string; target: string; sourceHandleId?: string | null; targetHandleId?: string | null }
-type Drag = { points: RoutePoint[]; index: number; pointerId: number; start: RoutePoint; client: RoutePoint; grabOffset: number; identity: Identity; controls: RouteControl[] }
+type Drag = { controlId?:string; points: RoutePoint[]; index: number; pointerId: number; start: RoutePoint; client: RoutePoint; grabOffset: number; identity: Identity; controls: RouteControl[] }
 export function useDiagramSegmentDrag(id: string, points: RoutePoint[], sourcePosition: Position, targetPosition: Position, identity: Identity, enabled: boolean, controls: RouteControl[] = []) {
+  const projected=projectRouteControls(controls,points)
+  points=splitRouteAtControls(points,projected)
   const writable=Boolean(useContext(DiagramReconnectContext))
   const {setEdges,screenToFlowPosition}=useReactFlow()
   const transform=useStore(s=>s.transform),zoom=transform[2]||1,host=useStore(s=>s.domNode)
@@ -19,15 +21,15 @@ export function useDiagramSegmentDrag(id: string, points: RoutePoint[], sourcePo
     if(Math.hypot(client.x-drag.start.x,client.y-drag.start.y)<3)return null
     const a=drag.points[drag.index],b=drag.points[drag.index+1],axis=Math.abs(a.y-b.y)<0.001?'y':'x'
     const coordinate=diagramClientToFlow(client,now.screenToFlowPosition,now.host)[axis]-drag.grabOffset/now.zoom
-    const next=moveRouteSegment(drag.points,drag.index,coordinate,now.sourcePosition,now.targetPosition)
-    return {points:next,controls:movedRouteControls(drag.controls,drag.points,next,drag.index,coordinate)}
+    const next=moveRouteSegment(drag.points,drag.index,coordinate,now.sourcePosition,now.targetPosition,drag.controls.filter(c=>c.id!==drag.controlId))
+    return {points:next,controls:drag.controlId?movedRouteControls(drag.controls,drag.points,next,drag.index,coordinate):projectRouteControls(drag.controls,next)}
   },[])
-  const start=useCallback((index:number,event:ReactPointerEvent<SVGElement>)=>{
+  const start=useCallback((index:number,event:ReactPointerEvent<SVGElement>,controlId?:string)=>{
     const now=latest.current
     if(!now.enabled||pending.current||event.button!==0)return
     event.preventDefault();event.stopPropagation()
     const a=now.points[index],b=now.points[index+1],axis=Math.abs(a.y-b.y)<0.001?'y':'x',client={x:event.clientX,y:event.clientY}
-    pending.current={points:now.points,index,pointerId:event.pointerId,start:client,client,identity:now.identity,controls:now.controls,grabOffset:(diagramClientToFlow(client,now.screenToFlowPosition,now.host)[axis]-a[axis])*now.zoom}
+    pending.current={controlId,points:now.points,index,pointerId:event.pointerId,start:client,client,identity:now.identity,controls:now.controls,grabOffset:(diagramClientToFlow(client,now.screenToFlowPosition,now.host)[axis]-a[axis])*now.zoom}
     try{event.currentTarget.setPointerCapture?.(event.pointerId)}catch{/* Window listeners retain the gesture. */}
   },[])
   useEffect(()=>{
@@ -40,7 +42,7 @@ export function useDiagramSegmentDrag(id: string, points: RoutePoint[], sourcePo
       if(!next||!latest.current.enabled)return
       latest.current.setEdges(edges=>edges.map(edge=>edge.id===id && edge.source===drag.identity.source && edge.target===drag.identity.target
         && (edge.sourceHandle??null)===(drag.identity.sourceHandleId??null) && (edge.targetHandle??null)===(drag.identity.targetHandleId??null)
-        ? {...edge,selected:true,data:{...edge.data,segmentRoute:{...edge.data?.segmentRoute,...next}}}:edge))
+        ? {...edge,selected:true,data:{...edge.data,segmentRoute:{...edge.data?.segmentRoute,routingVersion:2,...next}}}:edge))
     }
     const key=(event:KeyboardEvent)=>{if(event.key==='Escape'&&pending.current){event.preventDefault();event.stopPropagation();cancel()}}
     window.addEventListener('pointermove',move,true);window.addEventListener('pointerup',finish,true);window.addEventListener('pointercancel',cancel,true);window.addEventListener('blur',cancel);window.addEventListener('keydown',key,true)
