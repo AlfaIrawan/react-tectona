@@ -1,3 +1,7 @@
+import type { ErdForeignKeyMapping } from './erdForeignKeyMapping'
+export type UmlRelation = 'association' | 'directed-association' | 'aggregation' | 'composition' | 'generalization' | 'realization' | 'dependency'
+export type UmlDecoration = 'none' | 'arrow' | 'triangle' | 'diamond' | 'filled-diamond'
+
 export type UmlView = 'class' | 'erd'
 
 export type UmlBox = {
@@ -13,9 +17,16 @@ export type ErdEnd = {
 }
 
 export type UmlLink = {
+  erdForeignKey?: ErdForeignKeyMapping
   source: string
   target: string
   label: string
+  relation?: UmlRelation
+  sourceDecoration?: UmlDecoration
+  targetDecoration?: UmlDecoration
+  lineStyle?: 'solid' | 'dashed'
+  sourceMultiplicity?: string
+  targetMultiplicity?: string
   sourceEnd?: ErdEnd
   targetEnd?: ErdEnd
 }
@@ -46,9 +57,25 @@ function memberLines(body: string): string[] {
     .filter((line) => line && line !== '--' && line !== '..' && line !== '__' && !line.startsWith("'"))
 }
 
-const BLOCK_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w]*))(?:\s+as\s+([A-Za-z_][\w]*))?\s*\{([^}]*)\}/gi
-const BARE_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w]*))(?:\s+as\s+([A-Za-z_][\w]*))?\s*$/gim
-const REL_RE = /^([A-Za-z_][\w]*)\s+([|}.o<>*+]*)\s*((?:--+>?)|(?:\.+>?)|(?:--+)|(?:\.+))\s*([|}.o<>*+]*)\s+([A-Za-z_][\w]*)(?:\s*:\s*(.+))?$/
+const BLOCK_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w-]*))(?:\s+as\s+([A-Za-z_][\w-]*))?\s*\{([^}]*)\}/gi
+const BARE_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w-]*))(?:\s+as\s+([A-Za-z_][\w-]*))?\s*$/gim
+const REL_RE = /^([A-Za-z_][\w-]*)\s*(?:"([^"]*)"\s*)?([|{}o<>*+]*)(--+|\.\.+)([|{}o<>*+]*)(?:\s*"([^"]*)")?\s*([A-Za-z_][\w-]*)(?:\s*:\s*(.+))?$/
+
+function decoration(token: string): UmlDecoration {
+  if (token.includes('|')) return 'triangle'
+  if (token.includes('*')) return 'filled-diamond'
+  if (token.includes('o')) return 'diamond'
+  if (/[<>]/.test(token)) return 'arrow'
+  return 'none'
+}
+function relationKind(start: UmlDecoration, end: UmlDecoration, dashed: boolean): UmlRelation {
+  if (start === 'triangle' || end === 'triangle') return dashed ? 'realization' : 'generalization'
+  if (start === 'filled-diamond' || end === 'filled-diamond') return 'composition'
+  if (start === 'diamond' || end === 'diamond') return 'aggregation'
+  if (dashed) return 'dependency'
+  return start === 'arrow' || end === 'arrow' ? 'directed-association' : 'association'
+}
+
 
 function parseCardinality(token: string): ErdEnd | undefined {
   if (!token || /^[<>]+$/.test(token)) return undefined
@@ -85,7 +112,7 @@ export function parseUmlDiagram(source: string, view: UmlView): UmlDiagram {
     const match = trimmed.match(REL_RE)
     if (!match) continue
     const sourceId = match[1]
-    const targetId = match[5]
+    const targetId = match[7]
     if (!seen.has(sourceId)) {
       seen.add(sourceId)
       boxes.push({ id: sourceId, title: sourceId, members: [] })
@@ -97,9 +124,16 @@ export function parseUmlDiagram(source: string, view: UmlView): UmlDiagram {
     links.push({
       source: sourceId,
       target: targetId,
-      label: (match[6] || '').trim(),
-      sourceEnd: parseCardinality(match[2] || ''),
-      targetEnd: parseCardinality(match[4] || ''),
+      label: (match[8] || '').trim(),
+      sourceMultiplicity: match[2],
+      targetMultiplicity: match[6],
+      lineStyle: match[4].startsWith('.') ? 'dashed' : 'solid',
+      ...(view === 'erd' ? {
+        sourceEnd: parseCardinality(match[3]), targetEnd: parseCardinality(match[5]),
+      } : {
+        sourceDecoration: decoration(match[3]), targetDecoration: decoration(match[5]),
+        relation: relationKind(decoration(match[3]), decoration(match[5]), match[4].startsWith('.')),
+      }),
     })
   }
   return { view, boxes, links }
@@ -131,8 +165,54 @@ export function serializeUmlDiagram(diagram: UmlDiagram): string {
     lines.push('}')
   }
   for (const link of diagram.links) {
-    lines.push(link.label ? `${link.source} --> ${link.target} : ${link.label}` : `${link.source} --> ${link.target}`)
+    const connector = umlLinkConnector(link, diagram.view)
+    const sourceMultiplicity = link.sourceMultiplicity !== undefined ? ` ${quote(link.sourceMultiplicity)}` : ''
+    const targetMultiplicity = link.targetMultiplicity !== undefined ? `${quote(link.targetMultiplicity)} ` : ''
+    lines.push(`${link.source}${sourceMultiplicity} ${connector} ${targetMultiplicity}${link.target}${link.label ? ` : ${link.label}` : ''}`)
   }
   lines.push('@enduml')
   return `${lines.join('\n')}\n`
+}
+
+export function umlRelationDefaults(relation: UmlRelation): Pick<UmlLink, 'relation' | 'sourceDecoration' | 'targetDecoration' | 'lineStyle'> {
+  return { relation, sourceDecoration: relation === 'aggregation' ? 'diamond' : relation === 'composition' ? 'filled-diamond' : 'none',
+    targetDecoration: relation === 'generalization' || relation === 'realization' ? 'triangle' : relation === 'dependency' || relation === 'directed-association' ? 'arrow' : 'none',
+    lineStyle: relation === 'dependency' || relation === 'realization' ? 'dashed' : 'solid' }
+}
+export function umlLinkConnector(link: UmlLink, view: UmlView): string {
+  const line = link.lineStyle === 'dashed' ? '..' : '--'
+  if (view === 'erd' && (link.sourceEnd || link.targetEnd)) {
+    const start = link.sourceEnd ?? { many: false, optional: false }
+    const end = link.targetEnd ?? { many: false, optional: false }
+    return `${start.many ? '}' : '|'}${start.optional ? 'o' : '|'}${line}${end.optional ? 'o' : '|'}${end.many ? '{' : '|'}`
+  }
+  const defaults = umlRelationDefaults(link.relation ?? 'directed-association')
+  const start = link.sourceDecoration ?? defaults.sourceDecoration
+  const end = link.targetDecoration ?? defaults.targetDecoration
+  const token = (value: UmlDecoration | undefined, source: boolean) => value === 'triangle' ? (source ? '<|' : '|>') : value === 'diamond' ? 'o' : value === 'filled-diamond' ? '*' : value === 'arrow' ? (source ? '<' : '>') : ''
+  return `${token(start, true)}${link.lineStyle ? line : defaults.lineStyle === 'dashed' ? '..' : '--'}${token(end, false)}`
+}
+
+type CanvasUmlEdge = { source: string; target: string; label?: unknown; data?: Record<string, unknown>; style?: { strokeDasharray?: unknown } }
+export function umlLinkToCanvasData(link: UmlLink): Record<string, unknown> {
+  return { umlRelation: link.relation, sourceDecoration: link.sourceDecoration, targetDecoration: link.targetDecoration,
+    lineStyle: link.lineStyle, sourceMultiplicity: link.sourceMultiplicity, targetMultiplicity: link.targetMultiplicity,
+    sourceMany: link.sourceEnd?.many, sourceOptional: link.sourceEnd?.optional,
+    targetMany: link.targetEnd?.many, targetOptional: link.targetEnd?.optional }
+}
+export function umlLinkFromCanvasEdge(edge: CanvasUmlEdge, view: UmlView): UmlLink {
+  const data = edge.data ?? {}
+  const visual = data.visual as { lineStyle?: string } | undefined
+  const lineStyle = visual?.lineStyle === 'solid' ? 'solid' : visual?.lineStyle ? 'dashed' : data.lineStyle ?? (edge.style?.strokeDasharray ? 'dashed' : undefined)
+  return { source: edge.source, target: edge.target, label: String(edge.label ?? ''),
+    relation: data.umlRelation as UmlRelation | undefined,
+    sourceDecoration: data.sourceDecoration as UmlDecoration | undefined,
+    targetDecoration: data.targetDecoration as UmlDecoration | undefined,
+    lineStyle: lineStyle as UmlLink['lineStyle'],
+    sourceMultiplicity: data.sourceMultiplicity as string | undefined, targetMultiplicity: data.targetMultiplicity as string | undefined,
+    ...(view === 'erd' ? { sourceEnd: { many: !!data.sourceMany, optional: !!data.sourceOptional }, targetEnd: { many: !!data.targetMany, optional: !!data.targetOptional } } : {}) }
+}
+export function erdRelationDefaults(relation: string): Record<string, boolean> {
+  return { sourceMany: relation === 'many-to-many', targetMany: !['one-to-one', 'one-to-zero-or-one'].includes(relation),
+    sourceOptional: false, targetOptional: relation === 'one-to-zero-or-one' || relation === 'one-to-zero-or-many' }
 }

@@ -110,11 +110,13 @@ export function buildIntegrationNodeBoxStyle(
   const borderColor = resolved.lineEnabled ? resolved.lineColor : 'transparent'
 
   return {
-    backgroundColor: resolved.glass ? `${backgroundColor}cc` : backgroundColor,
+    backgroundColor: resolved.glass && resolved.fillEnabled
+      ? `color-mix(in srgb, ${backgroundColor} 80%, transparent)`
+      : backgroundColor,
     borderColor,
-    borderWidth: resolved.lineEnabled ? resolved.lineWidth : 0,
+    borderWidth: resolved.lineEnabled ? Math.max(0, resolved.lineWidth) : 0,
     borderStyle: resolved.lineStyle,
-    opacity: resolved.opacity / 100,
+    opacity: Math.max(0, Math.min(100, resolved.opacity)) / 100,
     borderRadius: resolved.rounded ? 18 : 4,
     boxShadow: resolved.shadow ? '0 12px 30px -22px rgba(15,23,42,0.45)' : undefined,
     backdropFilter: resolved.glass ? 'blur(10px) saturate(140%)' : undefined,
@@ -131,7 +133,7 @@ export function buildIntegrationNodeTextStyle(
 
   return {
     fontFamily: resolved.fontFamily,
-    fontSize: resolved.fontSize,
+    fontSize: Math.max(1, resolved.fontSize),
     fontWeight: resolved.bold ? 700 : 400,
     fontStyle: resolved.italic ? 'italic' : 'normal',
     textDecoration: resolved.underline ? 'underline' : 'none',
@@ -141,12 +143,14 @@ export function buildIntegrationNodeTextStyle(
     justifyContent:
       resolved.verticalAlign === 'top' ? 'flex-start' : resolved.verticalAlign === 'bottom' ? 'flex-end' : 'center',
     color: resolved.fontColorEnabled ? resolved.fontColor : fallbackColor,
-    opacity: resolved.opacity / 100,
+    opacity: Math.max(0, Math.min(100, resolved.opacity)) / 100,
     paddingTop: resolved.spacingTop + global,
     paddingRight: resolved.spacingRight + global,
     paddingBottom: resolved.spacingBottom + global,
     paddingLeft: resolved.spacingLeft + global,
-    transform: resolved.angle ? `rotate(${resolved.angle}deg)` : undefined,
+    transform: [resolved.offsetX || resolved.offsetY ? `translate(${resolved.offsetX}px, ${resolved.offsetY}px)` : '', resolved.angle ? `rotate(${resolved.angle}deg)` : ''].filter(Boolean).join(' ') || undefined,
+    width: resolved.boxWidth > 0 ? resolved.boxWidth : undefined,
+    height: resolved.boxHeight > 0 ? resolved.boxHeight : undefined,
     whiteSpace: resolved.wordWrap ? 'pre-wrap' : 'nowrap',
     overflowWrap: resolved.wordWrap ? 'break-word' : undefined,
     wordBreak: resolved.wordWrap ? 'break-word' : undefined,

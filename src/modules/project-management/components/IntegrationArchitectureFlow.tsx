@@ -270,7 +270,7 @@ function IntegrationArchitectureFlowInner({
         edgesUpdatable={false}
         elevateEdgesOnSelect
         edgeUpdaterRadius={10 / zoom}
-        panOnDrag={preview ? false : panMode ? [0, 1, 2] : [1, 2]}
+        panOnDrag={preview ? false : panMode ? [0, 1] : [1]}
         selectionOnDrag={!preview && !panMode}
         snapToGrid={!preview && snapToGrid}
         snapGrid={INTEGRATION_SNAP_GRID}

@@ -3,7 +3,7 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
 const TOKEN_SPLIT =
-  /("(?:[^"\\]|\\.)*")|(@\w+|!\w[\w/<>.-]*)|\b(Person_Ext|Person|System_Boundary|System_Ext|SystemDb|System|Container_Boundary|Container_Ext|ContainerDb|Container|Component_Ext|ComponentDb|Component|Enterprise_Boundary|Boundary|BiRel|Rel_U|Rel_D|Rel_L|Rel_R|Rel|package|component|rectangle|database|cloud|node|actor|interface|queue|folder|frame|title|caption|legend|skinparam|left|right|up|down|as|endif|else|if|then|start|stop|end)\b|([()[\]{}])|(<?[-.]+>?)|('.*$)/g
+  /("(?:[^"\\]|\\.)*")|(@\w+|!\w[\w/<>.-]*)|\b(Person_Ext|Person|System_Boundary|System_Ext|SystemDb|System|Container_Boundary|Container_Ext|ContainerDb|Container|Component_Ext|ComponentDb|Component|Enterprise_Boundary|Boundary|BiRel|Rel_U|Rel_D|Rel_L|Rel_R|Rel|package|component|rectangle|database|cloud|node|actor|participant|boundary|control|entity|collections|activate|deactivate|create|destroy|autonumber|alt|opt|loop|par|break|critical|group|ref|note|over|interface|queue|folder|frame|title|caption|legend|skinparam|left|right|up|down|as|endif|else|if|then|start|stop|end)\b|([()[\]{}])|(<?[-.]+>?)|('.*$)/g
 
 const KEYWORD_CLASS = new Set([
   'Person',
@@ -34,6 +34,26 @@ const KEYWORD_CLASS = new Set([
   'cloud',
   'node',
   'actor',
+  'participant',
+  'boundary',
+  'control',
+  'entity',
+  'collections',
+  'activate',
+  'deactivate',
+  'create',
+  'destroy',
+  'autonumber',
+  'alt',
+  'opt',
+  'loop',
+  'par',
+  'break',
+  'critical',
+  'group',
+  'ref',
+  'note',
+  'over',
   'interface',
   'queue',
   'folder',

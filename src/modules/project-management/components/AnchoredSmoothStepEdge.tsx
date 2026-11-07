@@ -1,7 +1,8 @@
+import { edgeInteractionPermissions, edgeLabelContentStyle, edgeMarkerStyle, safeDiagramEdgeLabelHtml } from '@/modules/project-management/lib/diagramEdgePresentation'
 import { diagramClientToFlow } from '@/modules/project-management/lib/diagramManualControls'
 import { DiagramEdgeSegmentControls } from './DiagramEdgeSegmentControls'
 import { useDiagramSegmentDrag } from '@/modules/project-management/lib/useDiagramSegmentDrag'
-import { readSegmentRoute, segmentRoutePoints, roundedRoutePath, DIAGRAM_CORNER_RADIUS } from '@/modules/project-management/lib/diagramSegmentRouting'
+import { readSegmentRoute, segmentRoutePoints, roundedRoutePath } from '@/modules/project-management/lib/diagramSegmentRouting'
 import { DiagramReconnectContext, useDiagramReconnectPreview } from '@/modules/project-management/lib/useDiagramReconnect'
 import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
 import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
@@ -14,7 +15,7 @@ import {
   useStore,
   type EdgeProps,
 } from 'reactflow'
-import { useContext, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useContext, useEffect, useRef, useState, type ReactNode, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { diagramTerminalPoint } from '@/modules/project-management/lib/diagramConnections'
 import type { IntegrationEdgeArrow } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import {
@@ -145,13 +146,15 @@ function arrowMarker(
   return (
     <polygon
       points={points}
-      fill={kind === 'classic' || filled ? color : 'white'}
+      fill={filled ? color : 'white'}
       stroke={color}
       strokeLinejoin="round"
       pointerEvents="none"
     />
   )
 }
+
+export type DiagramEdgeMarkerRenderer = (start: { x: number; y: number; dx: number; dy: number }, end: { x: number; y: number; dx: number; dy: number }, color: string) => ReactNode
 
 export function AnchoredSmoothStepEdge({
   id,
@@ -169,7 +172,8 @@ export function AnchoredSmoothStepEdge({
   label,
   selected,
   data,
-}: EdgeProps) {
+  renderMarkers,
+}: EdgeProps & { renderMarkers?: DiagramEdgeMarkerRenderer }) {
   const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, rawSourcePosition, sourceHandleId)
   const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, rawTargetPosition, targetHandleId)
   const live = useDiagramReconnectPreview(id)
@@ -196,9 +200,10 @@ export function AnchoredSmoothStepEdge({
   const [liveLabel, setLiveLabel] = useState<{ offsetX: number; offsetY: number; boxWidth: number; boxHeight: number } | null>(null)
   const [isEditingLabel, setIsEditingLabel] = useState(false)
   const [labelDraft, setLabelDraft] = useState('')
-  const visual = resolveEdgeVisual({ id, style, data })
+  const visual = resolveEdgeVisual({ style, data })
   const textStyle = resolveEdgeTextStyle({ data })
   const arrange = resolveEdgeArrange({ data })
+  const permissions = edgeInteractionPermissions(editableLabel, arrange)
 
   const terminal = arrange.terminalSpacing
   const startOffset = visual.startSpacing + terminal
@@ -231,12 +236,12 @@ export function AnchoredSmoothStepEdge({
     if (visual.waypoints === 'curved') {
       return getBezierPath(pathArgs)
     }
-    return roundedRoutePath(segments.points, visual.waypoints === 'rounded' ? Math.max(DIAGRAM_CORNER_RADIUS, arrange.arcSize) : 0)
+    return roundedRoutePath(segments.points, visual.waypoints === 'rounded' ? Math.max(0, arrange.arcSize) : 0)
   })()
 
   const strokeStyle = edgeStrokeStyle(visual, arrange)
   const restStroke = String(strokeStyle.stroke ?? '#334155')
-  const stroke = selected ? '#0284c7' : restStroke
+  const stroke = selected && visual.lineEnabled ? '#0284c7' : restStroke
   const strokeWidth = selected ? Math.max(Number(strokeStyle.strokeWidth ?? 2), 2.5) : Number(strokeStyle.strokeWidth ?? 2)
   const labelText = typeof label === 'string' ? label : ''
   const endDirection = lastPathVector(path)
@@ -255,7 +260,7 @@ export function AnchoredSmoothStepEdge({
   const offsetY = liveLabel?.offsetY ?? textStyle.offsetY
   const boxWidth = liveLabel?.boxWidth ?? textStyle.boxWidth
   const boxHeight = liveLabel?.boxHeight ?? textStyle.boxHeight
-  const wrapLabel = textStyle.wordWrap || boxWidth > 0 || boxHeight > 0
+  const wrapLabel = textStyle.wordWrap
 
   useEffect(() => {
     if (!isEditingLabel) return
@@ -265,7 +270,7 @@ export function AnchoredSmoothStepEdge({
 
   const finishLabelEditing = (commit: boolean) => {
     setIsEditingLabel(false)
-    if (!commit) return
+    if (!commit || !permissions.editLabel) return
     const nextLabel = labelDraft.trim()
     if (!nextLabel || nextLabel === labelText) return
     setEdges((edges) => edges.map((edge) => (edge.id === id ? { ...edge, label: nextLabel, selected: true } : edge)))
@@ -285,6 +290,7 @@ export function AnchoredSmoothStepEdge({
   }
 
   const commitLabelBox = (next: { offsetX: number; offsetY: number; boxWidth: number; boxHeight: number }) => {
+    if (!permissions.moveLabel) { setLiveLabel(null); return }
     setEdges((edges) => edges.map((edge) => {
       if (edge.id !== id) return edge
       const stored = readEdgeData(edge)
@@ -299,7 +305,7 @@ export function AnchoredSmoothStepEdge({
             offsetY: next.offsetY,
             boxWidth: next.boxWidth,
             boxHeight: next.boxHeight,
-            wordWrap: next.boxWidth > 0 || next.boxHeight > 0 || Boolean(stored.textStyle?.wordWrap),
+            wordWrap: stored.textStyle?.wordWrap ?? textStyle.wordWrap,
           },
         },
       }
@@ -316,7 +322,7 @@ export function AnchoredSmoothStepEdge({
   }
 
   const beginLabelInteract = (kind: 'move' | 'e' | 's' | 'se') => (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!editableLabel || event.button !== 0) return
+    if (!permissions.moveLabel || event.button !== 0) return
     event.stopPropagation()
     event.preventDefault()
     const measured = measuredBox()
@@ -439,10 +445,14 @@ export function AnchoredSmoothStepEdge({
         markerEnd={undefined}
         markerStart={undefined}
       />
+      <g style={edgeMarkerStyle(visual, arrange)}>
+      {renderMarkers ? renderMarkers(startDirection, endDirection, stroke) : <>
       {arrowMarker(visual.startArrow, startDirection.x, startDirection.y, -startDirection.dx, -startDirection.dy, visual.startSize, visual.startFill, stroke)}
       {arrowMarker(visual.endArrow, endDirection.x, endDirection.y, endDirection.dx, endDirection.dy, visual.endSize, visual.endFill, stroke)}
+      </>}
+      </g>
       <DiagramEdgeSegmentControls pathArgs={pathArgs} edgeId={id} controls={segments.controls} points={segments.points} editable={segments.editable} start={segments.start} />
-      <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
+      <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected && permissions.reconnect} />
       {labelText && !arrange.ignoreEdge ? (
         <EdgeLabelRenderer>
           <div
@@ -493,12 +503,13 @@ export function AnchoredSmoothStepEdge({
                 whiteSpace: wrapLabel ? 'pre-wrap' : 'nowrap',
                 overflowWrap: wrapLabel ? 'break-word' : 'normal',
                 overflow: 'hidden',
-                cursor: isEditingLabel ? 'text' : 'move',
+                cursor: isEditingLabel ? 'text' : permissions.moveLabel ? 'move' : 'pointer',
                 boxShadow: '0 1px 2px rgba(15,23,42,0.08)',
               }}
               onClick={selectEdge}
               onDoubleClick={(event) => {
                 event.stopPropagation()
+                if (!permissions.editLabel) return
                 setLabelDraft(labelText)
                 setIsEditingLabel(true)
               }}
@@ -519,9 +530,11 @@ export function AnchoredSmoothStepEdge({
                   style={{ font: 'inherit', letterSpacing: 'inherit', textAlign: 'inherit' }}
                   aria-label="Edit arrow label"
                 />
-              ) : labelText}
+              ) : textStyle.formattedText ? (
+                <span style={edgeLabelContentStyle(textStyle)} dangerouslySetInnerHTML={{ __html: safeDiagramEdgeLabelHtml(labelText) }} />
+              ) : <span style={edgeLabelContentStyle(textStyle)}>{labelText}</span>}
             </div>
-            {selected ? (
+            {selected && permissions.moveLabel ? (
               <>
                 <div
                   role="separator"

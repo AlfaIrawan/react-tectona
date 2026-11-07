@@ -53,7 +53,7 @@ export function splitBrainstormDisplayParts(text: string): BrainstormDisplayPart
 
 /** Sequence, C4, and ArchiMate stay PlantUML. Process fences are still drawn as BPMN. */
 export function isTechnicalViewSource(source: string): boolean {
-  return /tectona-view:|!include\s*<C4\/|!include\s*<archimate\//i.test(source || '')
+  return /tectona-view:|^\s*usecase\b|!include\s*<C4\/|!include\s*<archimate\//im.test(source || '')
 }
 
 export function brainstormTypingCutoff(text: string): number {

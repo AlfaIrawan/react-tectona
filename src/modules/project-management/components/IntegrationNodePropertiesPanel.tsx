@@ -93,6 +93,7 @@ function NumberStepper({
       <div className="flex items-center gap-1">
         <Input
           type="number"
+          aria-label={label || (suffix === '%' ? 'Opacity' : 'Angle')}
           value={Number.isFinite(value) ? value : 0}
           onChange={(event) => onChange(Number.parseFloat(event.target.value) || 0)}
           className="h-7 px-2 text-[11px]"
@@ -109,7 +110,7 @@ function NumberStepper({
           <button
             type="button"
             className="inline-flex h-3.5 w-5 items-center justify-center rounded-b border border-t-0 border-slate-300 bg-slate-50 text-[9px] leading-none"
-            onClick={() => onChange(Math.max(0, value - 1))}
+            onClick={() => onChange(value - 1)}
             aria-label={`Decrease ${label}`}
           >
             ▼
@@ -128,17 +129,19 @@ function CheckboxRow({
   onChange,
   color,
   onColorChange,
+  disabled = false,
 }: {
   label: string
   checked: boolean
   onChange: (checked: boolean) => void
   color?: string
   onColorChange?: (color: string) => void
+  disabled?: boolean
 }) {
   return (
     <div className="flex items-center gap-2">
-      <label className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-slate-700">
-        <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <label title={disabled ? 'Not supported by this renderer' : undefined} className={cn("flex min-w-0 flex-1 items-center gap-2 text-[11px] text-slate-700", disabled && "opacity-50")}>
+        <input type="checkbox" disabled={disabled} checked={checked} onChange={(event) => onChange(event.target.checked)} />
         {label}
       </label>
       {onColorChange ? (
@@ -160,14 +163,17 @@ export function IntegrationNodePropertiesPanel({
   onUpdateSize,
   onUpdatePosition,
   onLayerAction,
-  onRotate90,
   dragHandleProps,
   c4Mode = false,
 }: IntegrationNodePropertiesPanelProps) {
   const [tab, setTab] = useState<PropertiesTab>('style')
   const elementData = isArchimateElementData(selectedNode.data) ? selectedNode.data : null
   const layer = elementData?.layer
-  const visual = resolveNodeVisual(selectedNode.data.visual, layer)
+  const visual = resolveNodeVisual({
+    ...(selectedNode.data.kind === 'boundary' ? { fillEnabled: false, fillColor: '#ffffff', lineColor: '#64748b', lineStyle: 'dashed' as const } : {}),
+    ...(selectedNode.data.kind === 'note' ? { fillColor: '#ffffff', lineColor: '#e2e8f0' } : {}),
+    ...selectedNode.data.visual,
+  }, layer)
   const textStyle = resolveNodeTextStyle(selectedNode.data.textStyle)
   const arrange = selectedNode.data.arrange ?? {}
   const size = useMemo(() => readIntegrationNodeSize(selectedNode), [selectedNode])
@@ -339,9 +345,7 @@ export function IntegrationNodePropertiesPanel({
                 patchElementField(
                   'description',
                   event.target.value
-                    .split('\n')
-                    .map((line) => line.trim())
-                    .filter(Boolean),
+                    .split('\n'),
                 )
               }
               rows={3}
@@ -375,9 +379,7 @@ export function IntegrationNodePropertiesPanel({
               onChange={(event) =>
                 onUpdateData({
                   lines: event.target.value
-                    .split('\n')
-                    .map((line) => line.trim())
-                    .filter(Boolean),
+                    .split('\n'),
                 })
               }
               rows={3}
@@ -492,7 +494,7 @@ export function IntegrationNodePropertiesPanel({
           color={textStyle.fontColor}
           onColorChange={(fontColor) => patchTextStyle({ fontColor, fontColorEnabled: true })}
         />
-        <CheckboxRow label="Word Wrap" checked={textStyle.wordWrap || textStyle.boxWidth > 0 || textStyle.boxHeight > 0} onChange={(wordWrap) => patchTextStyle({ wordWrap })} />
+        <CheckboxRow label="Word Wrap" checked={textStyle.wordWrap} onChange={(wordWrap) => patchTextStyle({ wordWrap })} />
         <div className="grid grid-cols-2 gap-2">
           <NumberStepper label="Offset X" suffix="px" value={Math.round(textStyle.offsetX)} onChange={(offsetX) => patchTextStyle({ offsetX })} />
           <NumberStepper label="Offset Y" suffix="px" value={Math.round(textStyle.offsetY)} onChange={(offsetY) => patchTextStyle({ offsetY })} />
@@ -599,12 +601,12 @@ export function IntegrationNodePropertiesPanel({
 
       <div className={PANEL_SECTION_CLASS}>
         <div className="flex items-center gap-2">
-          <span className={PANEL_LABEL_CLASS}>Angle</span>
+          <span className={PANEL_LABEL_CLASS}>Text Angle</span>
           <div className="ml-auto w-28">
             <NumberStepper label="" suffix="°" value={textStyle.angle} onChange={(angle) => patchTextStyle({ angle })} />
           </div>
         </div>
-        <button type="button" className={cn(PANEL_MINI_BUTTON_CLASS, 'w-full gap-1')} onClick={onRotate90}>
+        <button type="button" className={cn(PANEL_MINI_BUTTON_CLASS, 'w-full gap-1 opacity-50')} disabled title="Shape rotation is not supported yet; Text Angle rotates only the label">
           <RotateCw className="h-3.5 w-3.5" />
           Rotate shape only by 90°
         </button>
@@ -613,6 +615,7 @@ export function IntegrationNodePropertiesPanel({
       <div className="space-y-2">
         <CheckboxRow
           label="Containable"
+          disabled={!['archimateBoundary', 'archimateElement'].includes(selectedNode.type ?? '')}
           checked={
             selectedNode.type === 'archimateBoundary'
               ? arrange.containable !== false
@@ -621,11 +624,12 @@ export function IntegrationNodePropertiesPanel({
           onChange={(containable) => patchArrange({ containable })}
         />
         <CheckboxRow
-          label="Recursive Resize"
+          label="Recursive Resize (unavailable)"
+          disabled
           checked={arrange.recursiveResize ?? true}
           onChange={(recursiveResize) => patchArrange({ recursiveResize })}
         />
-        <CheckboxRow label="Frame" checked={Boolean(arrange.frame)} onChange={(frame) => patchArrange({ frame })} />
+        <CheckboxRow disabled label="Frame (unavailable)" checked={Boolean(arrange.frame)} onChange={(frame) => patchArrange({ frame })} />
       </div>
     </div>
   )
@@ -661,9 +665,19 @@ export function IntegrationNodePropertiesPanel({
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-        {tab === 'style' ? styleTab : null}
-        {tab === 'text' ? textTab : null}
-        {tab === 'arrange' ? arrangeTab : null}
+        {selectedNode.data.kind === 'legend' ? (
+          <p className="text-xs text-slate-600">This legend uses fixed notation samples. Style and text properties are not editable.</p>
+        ) : <>
+          {tab === 'style' ? styleTab : null}
+          {tab === 'text' ? selectedNode.data.kind === 'image' ? (
+            <div className="space-y-2">
+              <label className={PANEL_LABEL_CLASS}>Alternative text</label>
+              <Input aria-label="Alternative text" value={selectedNode.data.alt} onChange={(event) => onUpdateData({ alt: event.target.value })} />
+              <p className="text-xs text-slate-600">Alternative text describes the image for accessibility. Font and label formatting do not apply to image pixels.</p>
+            </div>
+          ) : textTab : null}
+          {tab === 'arrange' ? arrangeTab : null}
+        </>}
       </div>
     </div>
   )

@@ -1,10 +1,6 @@
-import { DiagramEdgeSegmentControls } from './DiagramEdgeSegmentControls'
-import { useDiagramSegmentDrag } from '@/modules/project-management/lib/useDiagramSegmentDrag'
-import { readSegmentRoute, segmentRoutePoints, roundedRoutePath, DIAGRAM_CORNER_RADIUS } from '@/modules/project-management/lib/diagramSegmentRouting'
-import { useDiagramReconnectPreview } from '@/modules/project-management/lib/useDiagramReconnect'
-import { centeredDiagramEndpoint } from '@/modules/project-management/lib/diagramEndpointAnchors'
-import { DiagramEdgeEndpointControls } from './DiagramEdgeEndpointControls'
-import { BaseEdge, type EdgeProps } from 'reactflow'
+import type { EdgeProps } from 'reactflow'
+import { AnchoredSmoothStepEdge } from './AnchoredSmoothStepEdge'
+import { readEdgeData } from '@/modules/project-management/lib/integrationEdgeAppearance'
 
 type ErdEdgeData = {
   sourceMany?: boolean
@@ -16,15 +12,6 @@ type ErdEdgeData = {
 function unit(dx: number, dy: number) {
   const length = Math.hypot(dx, dy) || 1
   return { ux: dx / length, uy: dy / length }
-}
-
-function pathPoints(path: string): Array<{ x: number; y: number }> {
-  const values = [...path.matchAll(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi)].map((match) => Number(match[0])).filter((value) => Number.isFinite(value))
-  const points: Array<{ x: number; y: number }> = []
-  for (let index = 0; index + 1 < values.length; index += 2) {
-    points.push({ x: values[index], y: values[index + 1] })
-  }
-  return points
 }
 
 function crowfoot(
@@ -72,52 +59,14 @@ function crowfoot(
   return marks
 }
 
-export function ErdCrowfootEdge({
-  id,
-  source,
-  target,
-  sourceX: rawSourceX,
-  sourceY: rawSourceY,
-  targetX: rawTargetX,
-  targetY: rawTargetY,
-  sourceHandleId,
-  targetHandleId,
-  sourcePosition: rawSourcePosition,
-  targetPosition: rawTargetPosition,
-  data,
-  selected,
-}: EdgeProps) {
-  const sourcePointAtHandle = centeredDiagramEndpoint(rawSourceX, rawSourceY, rawSourcePosition, sourceHandleId)
-  const targetPointAtHandle = centeredDiagramEndpoint(rawTargetX, rawTargetY, rawTargetPosition, targetHandleId)
-  const live = useDiagramReconnectPreview(id)
-  const sourceX = live?.source.x ?? sourcePointAtHandle.x, sourceY = live?.source.y ?? sourcePointAtHandle.y
-  const targetX = live?.target.x ?? targetPointAtHandle.x, targetY = live?.target.y ?? targetPointAtHandle.y
-  const sourcePosition = live?.source.position ?? rawSourcePosition, targetPosition = live?.target.position ?? rawTargetPosition
-
-  const manualRoute = readSegmentRoute(data?.segmentRoute)
-  const routePoints = segmentRoutePoints({sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition}, manualRoute)
-  const segments = useDiagramSegmentDrag(id, routePoints, sourcePosition, targetPosition, {source, target, sourceHandleId, targetHandleId}, Boolean(selected) && !live, manualRoute?.controls)
-  const [path] = roundedRoutePath(segments.points, DIAGRAM_CORNER_RADIUS)
-
-  const ends = (data ?? {}) as ErdEdgeData
-  const color = selected ? '#1D4ED8' : '#4B5563'
-  const points = pathPoints(path)
-  const sourceAway = points.length > 1
-    ? { x: points[1].x - points[0].x, y: points[1].y - points[0].y }
-    : { x: targetX - sourceX, y: targetY - sourceY }
-  const last = points.length - 1
-  const targetAway = points.length > 1
-    ? { x: points[last - 1].x - points[last].x, y: points[last - 1].y - points[last].y }
-    : { x: sourceX - targetX, y: sourceY - targetY }
-  return (
-    <>
-      <BaseEdge path={path} style={{ stroke: color, strokeWidth: 1.25 }} />
-      <DiagramEdgeSegmentControls pathArgs={{sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition}} edgeId={id} controls={segments.controls} points={segments.points} editable={segments.editable} start={segments.start} />
-      <DiagramEdgeEndpointControls edgeId={id} sourcePosition={sourcePosition} targetPosition={targetPosition} sourceX={sourceX} sourceY={sourceY} targetX={targetX} targetY={targetY} selected={selected} />
-      <g>
-        {crowfoot(sourceX, sourceY, sourceAway.x, sourceAway.y, Boolean(ends.sourceMany), Boolean(ends.sourceOptional), color)}
-        {crowfoot(targetX, targetY, targetAway.x, targetAway.y, Boolean(ends.targetMany), Boolean(ends.targetOptional), color)}
-      </g>
-    </>
-  )
+/** Share routing, labels and interaction permissions while retaining ERD cardinality glyphs. */
+export function ErdCrowfootEdge(props: EdgeProps) {
+  const ends = (props.data ?? {}) as ErdEdgeData
+  const stored = readEdgeData(props)
+  const data = { ...props.data, arrange: { arcSize: 12, ...stored.arrange } }
+  return <AnchoredSmoothStepEdge {...props} data={data} style={{ stroke: '#4B5563', strokeWidth: 1.25, ...props.style }}
+    renderMarkers={(start, end, color) => <>
+      {crowfoot(start.x, start.y, start.dx, start.dy, Boolean(ends.sourceMany), Boolean(ends.sourceOptional), color)}
+      {crowfoot(end.x, end.y, -end.dx, -end.dy, Boolean(ends.targetMany), Boolean(ends.targetOptional), color)}
+    </>} />
 }

@@ -182,7 +182,12 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
           </div>
         </div>
         <DropdownMenuSeparator className="my-0" />
-        <div className={cn('overflow-y-auto pb-3 pt-1', WORKSPACE_LIST_MAX_HEIGHT_CLASS)}>
+        <div
+          role="region"
+          aria-label="Workspace options"
+          tabIndex={0}
+          className={cn('overflow-y-auto pb-3 pt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', WORKSPACE_LIST_MAX_HEIGHT_CLASS)}
+        >
           {groupedOptions.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               No workspace matches “{query.trim()}”.

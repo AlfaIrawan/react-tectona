@@ -1,5 +1,6 @@
 const INCLUDE_L1 = '!include <C4/C4_Context>'
 const INCLUDE_L2 = '!include <C4/C4_Container>'
+const INCLUDE_COMPONENT = '!include <C4/C4_Component>'
 const MACRO_START = /^(Person(?:_Ext)?|System_Boundary|Enterprise_Boundary|Container_Boundary|System(?:_Ext|Db)?|Container(?:_Ext|Db)?|Component(?:_Ext|Db)?|BiRel|Rel(?:_[UDLR])?|Boundary)\s*\(/i
 export type C4Level = 'L1' | 'L2'
 export type C4ElementKind = 'Person' | 'Person_Ext' | 'System' | 'System_Ext' | 'SystemDb' | 'Container' | 'Container_Ext' | 'ContainerDb' | 'Component' | 'Component_Ext' | 'ComponentDb'
@@ -113,7 +114,8 @@ function renderElement(element: C4ParsedElement): string {
   return `${element.kind}(${element.id}, ${args.join(', ')})`
 }
 export function serializeC4Graph(graph: C4ParsedGraph, level: C4Level): string {
-  const lines = ['@startuml', level === 'L1' ? INCLUDE_L1 : INCLUDE_L2]
+  const include = graph.elements.some(element => element.kind.startsWith('Component')) ? INCLUDE_COMPONENT : level === 'L1' ? INCLUDE_L1 : INCLUDE_L2
+  const lines = ['@startuml', include]
   if (graph.title) lines.push(`title ${graph.title}`)
   lines.push(...(graph.extraStatements ?? []))
   const emitted = new Set<string>(), boundaryIds = new Set(graph.boundaries.map(b => b.id))
@@ -158,5 +160,6 @@ export function normalizeC4PlantUml(source: string, level: C4Level = 'L2'): stri
   if (!source.trim()) return ''
   // Wrapping source must not rewrite hierarchy, relationship direction, or free-form text.
   const body = extractBody(source.trim()).split('\n').filter(line => !/^\s*!include\s+.*C4[\/_]/i.test(line)).join('\n').trim()
-  return ['@startuml', level === 'L1' ? INCLUDE_L1 : INCLUDE_L2, body, '@enduml', ''].join('\n')
+  const include = parseC4Graph(source).elements.some(element => element.kind.startsWith('Component')) ? INCLUDE_COMPONENT : level === 'L1' ? INCLUDE_L1 : INCLUDE_L2
+  return ['@startuml', include, body, '@enduml', ''].join('\n')
 }

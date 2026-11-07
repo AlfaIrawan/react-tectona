@@ -1,3 +1,8 @@
+import { arrangeDiagramSelection, canCutDiagramSelection, deletableDiagramNodeIds, copyDiagramSelection, diagramSelectedRoots, DIAGRAM_ARRANGE_ACTIONS, pasteDiagramSelection, type DiagramArrangeAction, type DiagramClipboard } from '../lib/diagramSelectionActions'
+import { DiagramEditorMenu, DiagramEditorSubmenu } from '@/components/DiagramEditorMenu'
+import { pasteDiagramNodes, removeDiagramNodes } from '../lib/diagramNodeActions'
+import { canDiagramEdgeAction, clearDiagramEdgeWaypoints, reverseDiagramEdge, unpinDiagramEdgeEnds } from '../lib/diagramEdgeActions'
+import { orderDiagramNode, listenForDiagramMenuDismissal } from '@/modules/project-management/lib/diagramContextMenuActions'
 import { facingMovedDiagramEdge } from '@/modules/project-management/lib/diagramMovingAnchors'
 import { useDiagramHistory } from '@/modules/project-management/lib/useDiagramHistory'
 import { reconnectDiagramEdge } from '@/modules/project-management/lib/diagramConnections'
@@ -83,7 +88,7 @@ import {
 
 type IntegrationViewMode = 'canvas' | 'source' | 'notations'
 type StudioSidebarPanel = 'source' | 'notations'
-type CanvasMenuSubmenu = 'options' | 'layout' | 'order' | null
+type CanvasMenuSubmenu = 'options' | 'layout' | 'order' | 'arrange' | null
 type CanvasContextMenuState = {
   x: number
   y: number
@@ -241,9 +246,10 @@ function EditableIntegrationArchitectureCanvasInner({
   const [canvasMenu, setCanvasMenu] = useState<CanvasContextMenuState | null>(null)
   const [edgeMenu, setEdgeMenu] = useState<EdgeContextMenuState | null>(null)
   const [hasPasteableContent, setHasPasteableContent] = useState(false)
+  const [clipboardError, setClipboardError] = useState<string | null>(null)
   // Same canvas commands as the BPMN/C4 studio (EditableDiagramCanvas): node clipboard, default
   // element style, text and image nodes from the footer.
-  const nodeClipboardRef = useRef<Node<ArchimateNodeData> | null>(null)
+  const nodeClipboardRef = useRef<DiagramClipboard<ArchimateNodeData> | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
   const [defaultElementStyle, setDefaultElementStyle] = useState<Pick<ArchimateElementNodeData, 'visual' | 'textStyle'> | null>(null)
   const [studioPanelWidth, setStudioPanelWidth] = useState(0)
@@ -471,6 +477,7 @@ function EditableIntegrationArchitectureCanvasInner({
 
   const onEdgeUpdate = useCallback(
     (oldEdge: Edge, connection: Connection) => {
+      if (!canDiagramEdgeAction(oldEdge, 'reconnect')) return
       markCustomized()
       setEdges((current) =>
         reconnectDiagramEdge(oldEdge, connection, current).map((edge) => (
@@ -485,9 +492,15 @@ function EditableIntegrationArchitectureCanvasInner({
     (changes: Parameters<typeof onNodesChange>[0]) => {
       const moved = changes.some((change) => change.type === 'position' && change.dragging === false)
       if (moved) markCustomized()
-      onNodesChange(changes)
+      const removed = deletableDiagramNodeIds(nodes, edges, new Set(changes.filter(change => change.type === 'remove').map(change => change.id)))
+      if (removed.size) {
+        markCustomized()
+        setNodes(current => removeDiagramNodes(current, removed))
+        setEdges(current => current.filter(edge => !removed.has(edge.source) && !removed.has(edge.target)))
+      }
+      onNodesChange(changes.filter(change => change.type !== 'remove'))
     },
-    [markCustomized, onNodesChange],
+    [edges, markCustomized, nodes, onNodesChange, setEdges, setNodes],
   )
 
   const selectedNode = useMemo(
@@ -518,7 +531,13 @@ function EditableIntegrationArchitectureCanvasInner({
   }, [markCustomized, selectedEdgeId, setEdges])
 
   const clearSelectedEdgeWaypoints = useCallback(() => {
-    if (!selectedEdgeId) return
+    if (!selectedEdgeId || !canDiagramEdgeAction(selectedEdge, 'clearWaypoints')) return
+    markCustomized()
+    setEdges((current) => current.map((edge) => edge.id === selectedEdgeId ? clearDiagramEdgeWaypoints(edge) : edge))
+  }, [markCustomized, selectedEdge, selectedEdgeId, setEdges])
+
+  const unpinSelectedEdgeEnds = useCallback(() => {
+    if (!selectedEdgeId || !canDiagramEdgeAction(selectedEdge, 'unpin')) return
     markCustomized()
     setEdges((current) => {
       const nodeById = new Map(nodes.map((node) => [node.id, node]))
@@ -544,13 +563,13 @@ function EditableIntegrationArchitectureCanvasInner({
         const targetGeometry = geometry(edge.target)
         const handles = sourceGeometry && targetGeometry ? pickAnchoredHandles(sourceGeometry, targetGeometry) : undefined
         return {
-          ...edge,
+          ...unpinDiagramEdgeEnds(edge),
           sourceHandle: handles?.sourceHandle,
           targetHandle: handles?.targetHandle,
         }
       })
     })
-  }, [markCustomized, nodes, selectedEdgeId, setEdges])
+  }, [markCustomized, nodes, selectedEdge, selectedEdgeId, setEdges])
 
   const updateSelectedNodeData = useCallback(
     (patch: Record<string, unknown>) => {
@@ -620,30 +639,11 @@ function EditableIntegrationArchitectureCanvasInner({
     [markCustomized, selectedNodeId, setNodes],
   )
 
-  const handleLayerAction = useCallback(
-    (action: 'front' | 'back' | 'forward' | 'backward') => {
-      if (!selectedNodeId) return
-      markCustomized()
-      setNodes((current) => {
-        const ordered = [...current].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
-        const index = ordered.findIndex((node) => node.id === selectedNodeId)
-        if (index < 0) return current
-
-        const zValues = ordered.map((node) => node.zIndex ?? 0)
-        const minZ = Math.min(...zValues, 0)
-        const maxZ = Math.max(...zValues, 0)
-        let nextZ = ordered[index].zIndex ?? 0
-
-        if (action === 'front') nextZ = maxZ + 1
-        if (action === 'back') nextZ = minZ - 1
-        if (action === 'forward' && index < ordered.length - 1) nextZ = (ordered[index + 1].zIndex ?? 0) + 1
-        if (action === 'backward' && index > 0) nextZ = Math.max(0, (ordered[index - 1].zIndex ?? 0) - 1)
-
-        return current.map((node) => (node.id === selectedNodeId ? { ...node, zIndex: nextZ } : node))
-      })
-    },
-    [markCustomized, selectedNodeId, setNodes],
-  )
+  const handleLayerAction = useCallback((action: 'front' | 'back' | 'forward' | 'backward') => {
+    if (!selectedNodeId) return
+    markCustomized()
+    setNodes((current) => orderDiagramNode(current, selectedNodeId, action))
+  }, [markCustomized, selectedNodeId, setNodes])
 
   const handleRotateSelectedNode90 = useCallback(() => {
     if (!selectedNodeId) return
@@ -667,17 +667,19 @@ function EditableIntegrationArchitectureCanvasInner({
   const handleEdgesChange = useCallback(
     (changes: Parameters<typeof onEdgesChange>[0]) => {
       if (changes.some((change) => change.type === 'remove')) markCustomized()
-      onEdgesChange(changes)
+      onEdgesChange(changes.filter(change => change.type !== 'remove' || canDiagramEdgeAction(edges.find(edge => edge.id === change.id), 'delete')))
     },
-    [markCustomized, onEdgesChange],
+    [edges, markCustomized, onEdgesChange],
   )
 
   const deleteSelectedEdge = useCallback(() => {
-    if (!selectedEdgeId) return
+    const ids = new Set(edges.filter(edge => edge.selected && canDiagramEdgeAction(edge, 'delete')).map(edge => edge.id))
+    if (!ids.size && selectedEdgeId && canDiagramEdgeAction(selectedEdge, 'delete')) ids.add(selectedEdgeId)
+    if (!ids.size) return
     markCustomized()
-    setEdges((current) => current.filter((edge) => edge.id !== selectedEdgeId))
+    setEdges((current) => current.filter((edge) => !ids.has(edge.id)))
     setSelectedEdgeId(null)
-  }, [markCustomized, selectedEdgeId, setEdges])
+  }, [edges, markCustomized, selectedEdge, selectedEdgeId, setEdges])
 
   const handleSelectionChange = useCallback<OnSelectionChangeFunc>(
     ({ nodes: selectedNodes, edges: selectedEdges }) => {
@@ -1186,21 +1188,10 @@ function EditableIntegrationArchitectureCanvasInner({
     [applyDefaultElementStyle, fillHeight, markCustomized, nodes, screenToFlowPosition, setNodes],
   )
 
-  const refreshPasteAvailability = useCallback(async () => {
-    if (nodeClipboardRef.current) {
-      setHasPasteableContent(true)
-      return
-    }
-    if (!navigator.clipboard?.readText) {
-      setHasPasteableContent(false)
-      return
-    }
-    try {
-      const source = await navigator.clipboard.readText()
-      setHasPasteableContent(parsePlantUmlToIntegrationGraph(source).nodes.length > 0)
-    } catch {
-      setHasPasteableContent(false)
-    }
+  const refreshPasteAvailability = useCallback(() => {
+    // Clipboard contents are unknown until the user explicitly chooses Paste.
+    // Reading here would prompt for permission and blur/dismiss the context menu.
+    setHasPasteableContent(Boolean(nodeClipboardRef.current || navigator.clipboard?.readText))
   }, [])
 
   const handlePaneContextMenu = useCallback(
@@ -1212,8 +1203,8 @@ function EditableIntegrationArchitectureCanvasInner({
       const bounds = wrapper.getBoundingClientRect()
       setEdgeMenu(null)
       setCanvasMenu({
-        x: Math.min(event.clientX - bounds.left, bounds.width - 280),
-        y: Math.min(event.clientY - bounds.top, bounds.height - 280),
+        x: event.clientX - bounds.left,
+        y: event.clientY - bounds.top,
         flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
         submenu: null,
       })
@@ -1226,14 +1217,14 @@ function EditableIntegrationArchitectureCanvasInner({
     const wrapper = reactFlowWrapperRef.current
     if (!wrapper) return
     const bounds = wrapper.getBoundingClientRect()
-    setNodes((current) => current.map((item) => ({ ...item, selected: item.id === node.id })))
-    setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
+    setNodes((current) => node.selected ? current : current.map((item) => ({ ...item, selected: item.id === node.id })))
+    setEdges((current) => node.selected ? current : current.map((edge) => ({ ...edge, selected: false })))
     setSelectedNodeId(node.id)
     setSelectedEdgeId(null)
     setEdgeMenu(null)
     setCanvasMenu({
-      x: Math.min(event.clientX - bounds.left, bounds.width - 280),
-      y: Math.min(event.clientY - bounds.top, bounds.height - 360),
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
       flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
       submenu: null,
       nodeId: node.id,
@@ -1251,8 +1242,8 @@ function EditableIntegrationArchitectureCanvasInner({
     setSelectedNodeId(null)
     setSelectedEdgeId(edge.id)
     setEdgeMenu({
-      x: Math.min(event.clientX - bounds.left, bounds.width - 260),
-      y: Math.min(event.clientY - bounds.top, bounds.height - 220),
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
       edgeId: edge.id,
     })
   }, [setEdges, setNodes])
@@ -1313,49 +1304,77 @@ function EditableIntegrationArchitectureCanvasInner({
     reader.readAsDataURL(file)
   }, [addCanvasNode, canvasCenterPosition])
 
-  const copyNodeToClipboard = useCallback((nodeId: string) => {
-    const node = nodes.find((item) => item.id === nodeId)
-    if (!node) return
-    nodeClipboardRef.current = structuredClone(node)
-    setHasPasteableContent(true)
-    setCanvasMenu(null)
-  }, [nodes])
-
-  const deleteNode = useCallback((nodeId: string) => {
+  const insertCopiedSelection = useCallback((clipboard: DiagramClipboard<ArchimateNodeData>, at?: { x: number; y: number }) => {
+    if (!clipboard.nodes.length) return
+    const pasted = pasteDiagramSelection(clipboard, crypto.randomUUID(), at)
     markCustomized()
-    setNodes((current) => current.filter((node) => node.id !== nodeId))
-    setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId))
-    setSelectedNodeId(null)
+    setNodes(current => [...current.map(node => ({ ...node, selected: false })), ...pasted.nodes])
+    setEdges(current => [...current.map(edge => ({ ...edge, selected: false })), ...pasted.edges])
+    setSelectedNodeId(pasted.nodes[0]?.id ?? null)
     setSelectedEdgeId(null)
+    setClipboardError(null)
     setCanvasMenu(null)
   }, [markCustomized, setEdges, setNodes])
 
+  const copyNodeToClipboard = useCallback((nodeId: string) => {
+    const copied = copyDiagramSelection(nodes, edges, nodeId)
+    if (!copied.nodes.length) { setClipboardError('This selection cannot be copied.'); return }
+    nodeClipboardRef.current = copied
+    setHasPasteableContent(true)
+    setCanvasMenu(null)
+  }, [edges, nodes])
+
+  const deleteNode = useCallback((nodeId: string) => {
+    const clicked = nodes.find(node => node.id === nodeId)
+    const requested = new Set(clicked?.selected ? nodes.filter(node => node.selected).map(node => node.id) : [nodeId])
+    const ids = deletableDiagramNodeIds(nodes, edges, requested)
+    const edgeIds = new Set(clicked?.selected ? edges.filter(edge => edge.selected && canDiagramEdgeAction(edge, 'delete')).map(edge => edge.id) : [])
+    if (!ids.size && !edgeIds.size) { setClipboardError('This selection is protected from deletion.'); return }
+    markCustomized()
+    setNodes(current => removeDiagramNodes(current, ids))
+    setEdges(current => current.filter(edge => !edgeIds.has(edge.id) && !ids.has(edge.source) && !ids.has(edge.target)))
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setCanvasMenu(null)
+  }, [markCustomized, edges, nodes, setEdges, setNodes])
+
   const cutNode = useCallback((nodeId: string) => {
-    copyNodeToClipboard(nodeId)
-    deleteNode(nodeId)
-  }, [copyNodeToClipboard, deleteNode])
+    const copied = copyDiagramSelection(nodes, edges, nodeId)
+    if (!canCutDiagramSelection(copied, nodes, edges)) {
+      setClipboardError('This selection contains protected objects or connections and cannot be cut.')
+      setCanvasMenu(null)
+      return
+    }
+    nodeClipboardRef.current = copied
+    setHasPasteableContent(true)
+    const ids = new Set(copied.nodes.map(node => node.id))
+    markCustomized()
+    setNodes(current => removeDiagramNodes(current, ids))
+    setEdges(current => current.filter(edge => !ids.has(edge.source) && !ids.has(edge.target)))
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setCanvasMenu(null)
+  }, [markCustomized, edges, nodes, setEdges, setNodes])
 
   const duplicateNode = useCallback((nodeId: string) => {
-    const node = nodes.find((item) => item.id === nodeId)
-    if (!node) return
-    addCanvasNode({
-      ...structuredClone(node),
-      id: `${node.id}-copy-${crypto.randomUUID()}`,
-      position: { x: node.position.x + 32, y: node.position.y + 32 },
-    })
-    setCanvasMenu(null)
-  }, [addCanvasNode, nodes])
+    const copied = copyDiagramSelection(nodes, edges, nodeId)
+    if (!copied.nodes.length) { setClipboardError('This selection cannot be duplicated.'); return }
+    insertCopiedSelection(copied)
+  }, [edges, insertCopiedSelection, nodes])
 
   const pasteCopiedNode = useCallback((at?: { x: number; y: number }) => {
-    const copied = nodeClipboardRef.current
-    if (!copied) return
-    addCanvasNode({
-      ...structuredClone(copied),
-      id: `${copied.id}-copy-${crypto.randomUUID()}`,
-      // At the cursor (pasted from the pane menu) the node lands on the canvas root.
-      ...(at ? { position: at, parentNode: undefined, extent: undefined } : { position: { x: copied.position.x + 32, y: copied.position.y + 32 } }),
-    })
-  }, [addCanvasNode])
+    if (nodeClipboardRef.current) insertCopiedSelection(nodeClipboardRef.current, at)
+  }, [insertCopiedSelection])
+
+  const arrangeSelection = useCallback((action: DiagramArrangeAction) => {
+    const next = arrangeDiagramSelection(nodes, edges, action)
+    if (next.nodes === nodes) return
+    markCustomized()
+    setNodes(next.nodes)
+    setEdges(next.edges)
+    setCanvasMenu(null)
+  }, [markCustomized, edges, nodes, setEdges, setNodes])
+  const arrangeSelectionCount = diagramSelectedRoots(nodes).length
 
   const setNodeAsDefaultStyle = useCallback((nodeId: string) => {
     const node = nodes.find((item) => item.id === nodeId)
@@ -1370,14 +1389,10 @@ function EditableIntegrationArchitectureCanvasInner({
   // Menus close on any click outside them, as in the BPMN/C4 studio.
   useEffect(() => {
     if (!canvasMenu && !edgeMenu) return
-    const close = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Element && target.closest('[data-diagram-context-menu]')) return
+    return listenForDiagramMenuDismissal(() => {
       setCanvasMenu(null)
       setEdgeMenu(null)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
+    })
   }, [canvasMenu, edgeMenu])
 
   // The footer toolbar sits right of the floating Source/ArchiMate panel, as in the BPMN studio.
@@ -1391,22 +1406,12 @@ function EditableIntegrationArchitectureCanvasInner({
   }, [fillHeight])
 
   const clearDefaultStyle = useCallback(() => {
-    const selectedIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id))
-    markCustomized()
-    setNodes((current) => current.map((node) => {
-      if (selectedIds.size > 0 && !selectedIds.has(node.id)) return node
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          visual: { ...node.data.visual, fillEnabled: false, shadow: false },
-        } as ArchimateNodeData,
-      }
-    }))
+    setDefaultElementStyle(null)
     setCanvasMenu(null)
-  }, [markCustomized, nodes, setNodes])
+  }, [])
 
   const pastePlantUmlAtCursor = useCallback(async () => {
+    setClipboardError(null)
     if (canvasMenu && nodeClipboardRef.current) {
       pasteCopiedNode(canvasMenu.flowPosition)
       setCanvasMenu(null)
@@ -1416,22 +1421,13 @@ function EditableIntegrationArchitectureCanvasInner({
     try {
       const source = await navigator.clipboard.readText()
       const parsed = parsePlantUmlToIntegrationGraph(source)
-      if (parsed.nodes.length === 0) return
-      const minX = Math.min(...parsed.nodes.map((node) => node.position.x))
-      const minY = Math.min(...parsed.nodes.map((node) => node.position.y))
+      if (parsed.nodes.length === 0) {
+        setClipboardError('Clipboard does not contain valid diagram source.')
+        return
+      }
       const idSuffix = crypto.randomUUID()
       const idMap = new Map(parsed.nodes.map((node) => [node.id, `${node.id}-paste-${idSuffix}`]))
-      const pastedNodes = parsed.nodes.map((node) => ({
-        ...node,
-        id: idMap.get(node.id) ?? node.id,
-        parentNode: undefined,
-        extent: undefined,
-        selected: true,
-        position: {
-          x: canvasMenu.flowPosition.x + node.position.x - minX,
-          y: canvasMenu.flowPosition.y + node.position.y - minY,
-        },
-      }))
+      const pastedNodes = pasteDiagramNodes(parsed.nodes, canvasMenu.flowPosition, idMap)
       const pastedEdges = parsed.edges.map((edge) => ({
         ...edge,
         id: `${edge.id}-paste-${idSuffix}`,
@@ -1444,7 +1440,7 @@ function EditableIntegrationArchitectureCanvasInner({
       setSelectedNodeId(pastedNodes[0]?.id ?? null)
       setSelectedEdgeId(null)
     } catch {
-      setApplyError('Clipboard tidak berisi source PlantUML yang valid.')
+      setClipboardError('Could not paste. Check clipboard access and copy valid diagram source, then try again.')
     } finally {
       setCanvasMenu(null)
     }
@@ -1788,15 +1784,12 @@ function EditableIntegrationArchitectureCanvasInner({
         return
       }
       if (event.key !== 'Delete' && event.key !== 'Backspace') return
-      if (selectedEdgeId) {
+      const node = nodes.find(item => item.selected && item.type !== 'archimateLegend')
+        ?? (selectedNodeId ? nodes.find(item => item.id === selectedNodeId && item.type !== 'archimateLegend') : undefined)
+      if (node || selectedEdgeId) {
         event.preventDefault()
-        deleteSelectedEdge()
-        return
-      }
-      const node = selectedNodeId ? nodes.find((item) => item.id === selectedNodeId) : undefined
-      if (node && node.type !== 'archimateLegend') {
-        event.preventDefault()
-        deleteNode(node.id)
+        if (node) deleteNode(node.id)
+        if (selectedEdgeId) deleteSelectedEdge()
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -1866,7 +1859,7 @@ function EditableIntegrationArchitectureCanvasInner({
     <IntegrationArchitectureFlow
       key={ideaId}
       nodes={previewNodes}
-      edges={edges}
+      edges={edges.map(edge => ({ ...edge, deletable: canDiagramEdgeAction(edge, 'delete') }))}
       onNodesChange={handleNodesChange}
       onNodeDragStop={handleNodeDragStop}
       onEdgesChange={handleEdgesChange}
@@ -1901,10 +1894,10 @@ function EditableIntegrationArchitectureCanvasInner({
 
   const contextMenuNode = canvasMenu?.nodeId ? nodes.find((item) => item.id === canvasMenu.nodeId) : undefined
   const canvasContextMenu = canvasMenu ? (
-    <div
+    <DiagramEditorMenu
       className="absolute z-50 w-64 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
       data-diagram-context-menu=""
-      style={{ left: Math.max(8, canvasMenu.x), top: Math.max(8, canvasMenu.y) }}
+      boundaryRef={reactFlowWrapperRef} point={{ x: canvasMenu.x, y: canvasMenu.y }}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -1917,7 +1910,7 @@ function EditableIntegrationArchitectureCanvasInner({
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
             onClick={() => {
-              void copyCanvasAsImage([contextMenuNode.id])
+              void copyCanvasAsImage(copyDiagramSelection(nodes, edges, contextMenuNode.id).nodes.map(node => node.id))
               setCanvasMenu(null)
             }}
           >
@@ -1938,26 +1931,38 @@ function EditableIntegrationArchitectureCanvasInner({
             <span className="flex items-center gap-2"><Trash2 className="h-4 w-4" /> Delete</span><span className="text-xs text-slate-400">Delete</span>
           </button>
           <div className="my-1 border-t border-slate-200" />
-          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setCanvasMenu(null) }}>
+          <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" title="Styles apply to the right-clicked object" onClick={() => { setNodes(current => current.map(node => ({ ...node, selected: node.id === contextMenuNode.id }))); setEdges(current => current.map(edge => ({ ...edge, selected: false }))); setIsPropertiesPanelOpen(true); setCanvasMenu(null) }}>
             <Paintbrush className="h-4 w-4" /> Styles &amp; formatting
           </button>
           {contextMenuNode.data.kind === 'element' ? (
-            <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setNodeAsDefaultStyle(contextMenuNode.id)}>
+            <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" title="Use the right-clicked object as the insertion default" onClick={() => setNodeAsDefaultStyle(contextMenuNode.id)}>
               <span className="flex items-center gap-2"><Paintbrush className="h-4 w-4" /> Set as default style</span><span className="text-xs text-slate-400">Ctrl+Shift+D</span>
             </button>
           ) : null}
           <div className="my-1 border-t border-slate-200" />
-          <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'order' } : current)}>
+          <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'arrange' } : current)}>
+                <button type="button" aria-haspopup="menu" aria-expanded={canvasMenu.submenu === 'arrange'} className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setCanvasMenu((current) => current ? { ...current, submenu: 'arrange' } : current)}>
+                  <span>Align / Distribute</span><ChevronRight className="h-4 w-4" />
+                </button>
+                {canvasMenu.submenu === 'arrange' ? (
+                  <DiagramEditorSubmenu className="w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+                    {DIAGRAM_ARRANGE_ACTIONS.map(({ action, label, minimum }) => (
+                      <button key={action} type="button" disabled={arrangeSelectionCount < minimum} title={arrangeSelectionCount < minimum ? `Select at least ${minimum} movable objects` : label} className="flex w-full px-3 py-2 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => arrangeSelection(action)}>{label}</button>
+                    ))}
+                  </DiagramEditorSubmenu>
+                ) : null}
+              </div>
+              <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'order' } : current)}>
             <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
-              <span className="flex items-center gap-2"><Layers className="h-4 w-4" /> Order</span><ChevronRight className="h-4 w-4" />
+              <span title="Order applies to the right-clicked object" className="flex items-center gap-2"><Layers className="h-4 w-4" /> Order</span><ChevronRight className="h-4 w-4" />
             </button>
             {canvasMenu.submenu === 'order' ? (
-              <div className="absolute left-full top-0 w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+              <DiagramEditorSubmenu className="w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
                 <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('front'); setCanvasMenu(null) }}><ChevronsUp className="h-4 w-4" />Bring to front</button>
                 <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('forward'); setCanvasMenu(null) }}><ArrowRight className="h-4 w-4" />Bring forward</button>
                 <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('backward'); setCanvasMenu(null) }}><ArrowDown className="h-4 w-4" />Send backward</button>
                 <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('back'); setCanvasMenu(null) }}><ChevronsDown className="h-4 w-4" />Send to back</button>
-              </div>
+              </DiagramEditorSubmenu>
             ) : null}
           </div>
         </>
@@ -1991,7 +1996,7 @@ function EditableIntegrationArchitectureCanvasInner({
           <span className="flex items-center gap-2"><Settings2 className="h-4 w-4" /> Options</span><ChevronRight className="h-4 w-4" />
         </button>
         {canvasMenu.submenu === 'options' ? (
-          <div className="absolute left-full top-0 w-64 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+          <DiagramEditorSubmenu className="w-64 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
             {[
               ['Grid', showGrid, setShowGrid, Grid3X3],
               ['Snap to grid', snapToGrid, setSnapToGrid, Magnet],
@@ -2010,7 +2015,7 @@ function EditableIntegrationArchitectureCanvasInner({
                 {Icon ? <Icon className="h-4 w-4 text-slate-500" /> : null}{label as string}
               </button>
             ))}
-          </div>
+          </DiagramEditorSubmenu>
         ) : null}
       </div>
       <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'layout' } : current)}>
@@ -2018,39 +2023,40 @@ function EditableIntegrationArchitectureCanvasInner({
           <span className="flex items-center gap-2"><LayoutTemplate className="h-4 w-4" /> Layout</span><ChevronRight className="h-4 w-4" />
         </button>
         {canvasMenu.submenu === 'layout' ? (
-          <div className="absolute bottom-0 left-full w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+          <DiagramEditorSubmenu className="w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
             <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('horizontal')}><ArrowRightLeft className="h-4 w-4" />Horizontal flow</button>
             <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('vertical')}><ArrowDown className="h-4 w-4" />Vertical flow</button>
             <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('circle')}><Circle className="h-4 w-4" />Circle</button>
-          </div>
+          </DiagramEditorSubmenu>
         ) : null}
       </div>
       </>}
-    </div>
+    </DiagramEditorMenu>
   ) : null
 
   const edgeContextMenu = edgeMenu ? (
-    <div
+    <DiagramEditorMenu
       className="absolute z-50 w-60 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
       data-diagram-context-menu=""
-      style={{ left: Math.max(8, edgeMenu.x), top: Math.max(8, edgeMenu.y) }}
+      boundaryRef={reactFlowWrapperRef} point={{ x: edgeMenu.x, y: edgeMenu.y }}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="px-3 py-2 text-xs font-semibold text-slate-500">Line</div>
       <div className="my-1 border-t border-slate-200" />
-      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setIsPropertiesPanelOpen(true); setEdgeMenu(null) }}>
+      <button disabled={!canDiagramEdgeAction(selectedEdge, 'format')} title={!canDiagramEdgeAction(selectedEdge, 'format') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { if (!canDiagramEdgeAction(selectedEdge, 'format')) return; setIsPropertiesPanelOpen(true); setEdgeMenu(null) }}>
         <Settings2 className="h-4 w-4" /> Format...
       </button>
-      <button
+      <button disabled={!canDiagramEdgeAction(selectedEdge, 'reverse')} title={!canDiagramEdgeAction(selectedEdge, 'reverse') ? 'Disabled by connector properties' : undefined}
         type="button"
         className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
         onClick={() => {
           const edgeId = edgeMenu.edgeId
+          if (!canDiagramEdgeAction(selectedEdge, 'reverse')) return
           markCustomized()
           setEdges((current) => current.map((edge) => (
             edge.id === edgeId
-              ? { ...edge, source: edge.target, target: edge.source, sourceHandle: edge.targetHandle, targetHandle: edge.sourceHandle }
+              ? reverseDiagramEdge(edge)
               : edge
           )))
           setEdgeMenu(null)
@@ -2058,18 +2064,19 @@ function EditableIntegrationArchitectureCanvasInner({
       >
         <ArrowRightLeft className="h-4 w-4" /> Reverse
       </button>
-      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeMenu(null) }}>
+      <button disabled={!canDiagramEdgeAction(selectedEdge, 'clearWaypoints')} title={!canDiagramEdgeAction(selectedEdge, 'clearWaypoints') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeMenu(null) }}>
         <Waypoints className="h-4 w-4" /> Clear Waypoints
       </button>
-      <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeMenu(null) }}>
+      <button disabled={!canDiagramEdgeAction(selectedEdge, 'unpin')} title={!canDiagramEdgeAction(selectedEdge, 'unpin') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { unpinSelectedEdgeEnds(); setEdgeMenu(null) }}>
         <Unlink className="h-4 w-4" /> Unpin Connector Ends
       </button>
       <div className="my-1 border-t border-slate-200" />
-      <button
+      <button disabled={!canDiagramEdgeAction(selectedEdge, 'delete')} title={!canDiagramEdgeAction(selectedEdge, 'delete') ? 'Disabled by connector properties' : undefined}
         type="button"
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50"
         onClick={() => {
           const edgeId = edgeMenu.edgeId
+          if (!canDiagramEdgeAction(selectedEdge, 'delete')) return
           markCustomized()
           setEdges((current) => current.filter((edge) => edge.id !== edgeId))
           setSelectedEdgeId(null)
@@ -2078,7 +2085,7 @@ function EditableIntegrationArchitectureCanvasInner({
       >
         <Trash2 className="h-4 w-4" /> Delete
       </button>
-    </div>
+    </DiagramEditorMenu>
   ) : null
 
   const notationPanelBody = (
@@ -2301,6 +2308,12 @@ function EditableIntegrationArchitectureCanvasInner({
               onDrop={handleCanvasDrop}
             >
               {flowCanvas}
+              {clipboardError ? (
+                <div role="alert" className="absolute bottom-4 left-4 z-50 flex max-w-sm items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 shadow-sm">
+                  <span>{clipboardError}</span>
+                  <button type="button" aria-label="Dismiss clipboard error" className="shrink-0 font-semibold" onClick={() => setClipboardError(null)}>×</button>
+                </div>
+              ) : null}
               {canvasContextMenu}
               {edgeContextMenu}
             </div>
@@ -2551,6 +2564,12 @@ function EditableIntegrationArchitectureCanvasInner({
             onDrop={handleCanvasDrop}
           >
             {flowCanvas}
+              {clipboardError ? (
+                <div role="alert" className="absolute bottom-4 left-4 z-50 flex max-w-sm items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 shadow-sm">
+                  <span>{clipboardError}</span>
+                  <button type="button" aria-label="Dismiss clipboard error" className="shrink-0 font-semibold" onClick={() => setClipboardError(null)}>×</button>
+                </div>
+              ) : null}
             {canvasContextMenu}
               {edgeContextMenu}
           </div>

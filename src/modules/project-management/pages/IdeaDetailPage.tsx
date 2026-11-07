@@ -2372,7 +2372,7 @@ type DiagramStudioSession = {
   ideaId: string
   diagramKey: string
   diagramSource?: string
-  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd' | 'use-case'
   savedGraph?: C4CanvasGraph
   onPersistGraph?: (graph: C4CanvasGraph) => void
   title: string
@@ -2447,7 +2447,7 @@ function DiagramGalleryCard({
   ideaId: string
   diagramKey: string
   diagramSource?: string
-  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd' | 'use-case'
   savedGraph?: C4CanvasGraph
   onPersistGraph?: (graph: C4CanvasGraph) => void
   title: string
@@ -14356,7 +14356,7 @@ export function IdeaDetailPage() {
               ) : null}
 
               {(showTechnicalDiagrams ? technicalGallery.filter(diagram => diagram.kind !== 'c4' || diagram.source) : []).map((diagram) => {
-                const canvasFormat = diagram.kind === 'c4'
+                const canvasFormat = diagram.kind === 'use-case' ? 'use-case' : diagram.kind === 'c4'
                   ? 'c4'
                   : diagram.kind === 'class'
                     ? 'class'
@@ -14364,7 +14364,7 @@ export function IdeaDetailPage() {
                       ? 'erd'
                       : 'plantuml'
                 const technicalKey = diagram.persistKey
-                const technicalMeta = diagram.kind === 'c4'
+                const technicalMeta = diagram.kind === 'use-case' ? { icon: Workflow, description: 'Aktor, tujuan pengguna, batas sistem, dan relasi UML. Tinjau draft sebelum digunakan.' } : diagram.kind === 'c4'
                   ? { icon: Layers, description: 'Gambaran sistem dan container.' }
                   : diagram.kind === 'class'
                     ? { icon: Boxes, description: 'Struktur class dan relasinya.' }

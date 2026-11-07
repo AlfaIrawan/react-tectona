@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import './scrollbars.css'
 import App from './App.tsx'
 import { initializeAnimationSpeed } from './lib/animationUtils'
 import { initTelemetry } from './lib/tracing'

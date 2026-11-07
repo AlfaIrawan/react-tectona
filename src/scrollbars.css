@@ -1,0 +1,100 @@
+/*
+ * One native-scrollbar policy for the Tectona document, including body portals.
+ * Keep the same scrollbar box in every interaction state; only its paint changes.
+ * This preserves the content width/height on hover, even in browsers without
+ * scrollbar-gutter support. Do not set a stable gutter on every element: that
+ * would also reserve space in overflow:hidden cards and diagram canvases.
+ *
+ * !important intentionally supersedes older scrollbar-hide utilities, inline
+ * scrollbarWidth:none, and third-party component scrollbar rules. Overflow,
+ * scrolling, focus, and application themes remain owned by each component.
+ */
+:root,
+:root * {
+  scrollbar-width: thin !important;
+  scrollbar-color: transparent transparent !important;
+  -ms-overflow-style: auto !important;
+}
+
+:root:hover,
+:root:focus-within,
+:root *:hover,
+:root *:focus-within {
+  scrollbar-color: hsl(var(--muted-foreground, 215 16% 47%) / 0.75) transparent !important;
+}
+
+/* Older WebKit fallback. Dimensions never change when a thumb is revealed. */
+:root::-webkit-scrollbar,
+:root *::-webkit-scrollbar {
+  display: block !important;
+  width: 8px !important;
+  height: 8px !important;
+  background: transparent !important;
+}
+
+:root::-webkit-scrollbar-track,
+:root *::-webkit-scrollbar-track,
+:root::-webkit-scrollbar-corner,
+:root *::-webkit-scrollbar-corner {
+  background: transparent !important;
+}
+
+:root::-webkit-scrollbar-thumb,
+:root *::-webkit-scrollbar-thumb {
+  background: transparent !important;
+  border-radius: 9999px !important;
+}
+
+:root::-webkit-scrollbar-button,
+:root *::-webkit-scrollbar-button {
+  display: none !important;
+}
+
+:root:hover::-webkit-scrollbar-thumb,
+:root:focus-within::-webkit-scrollbar-thumb,
+:root *:hover::-webkit-scrollbar-thumb,
+:root *:focus-within::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground, 215 16% 47%) / 0.75) !important;
+}
+
+/* Touch users must not depend on hover. No animations are used, so reduced-motion
+ * users get the same immediate reveal without any motion or delayed hiding. */
+@media (hover: none), (pointer: coarse) {
+  :root,
+  :root * {
+    scrollbar-color: hsl(var(--muted-foreground, 215 16% 47%) / 0.75) transparent !important;
+  }
+
+  :root::-webkit-scrollbar-thumb,
+  :root *::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground, 215 16% 47%) / 0.75) !important;
+  }
+}
+
+/* High-contrast mode keeps a visible, system-colored scrollbar at all times. */
+@media (forced-colors: active) {
+  :root,
+  :root:hover,
+  :root:focus-within,
+  :root *,
+  :root *:hover,
+  :root *:focus-within {
+    scrollbar-color: auto !important;
+  }
+
+  :root::-webkit-scrollbar-thumb,
+  :root:hover::-webkit-scrollbar-thumb,
+  :root:focus-within::-webkit-scrollbar-thumb,
+  :root *::-webkit-scrollbar-thumb,
+  :root *:hover::-webkit-scrollbar-thumb,
+  :root *:focus-within::-webkit-scrollbar-thumb {
+    background: CanvasText !important;
+  }
+
+  :root::-webkit-scrollbar-track,
+  :root *::-webkit-scrollbar-track,
+  :root::-webkit-scrollbar-corner,
+  :root *::-webkit-scrollbar-corner {
+    background: Canvas !important;
+  }
+}

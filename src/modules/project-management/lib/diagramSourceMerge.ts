@@ -45,9 +45,10 @@ export function mergeDiagramSourceEdges(previous: Edge[], next: Edge[]): Edge[] 
       ?? previous.find(item => item.source === edge.source && item.target === edge.target && item.label === edge.label)
     if (!prior) return edge
     const pinned = hasManualConnectionHandles(prior)
-    if (!pinned && !prior.data?.segmentRoute) return edge
+    if (!pinned && !prior.data?.segmentRoute && prior.data?.erdForeignKey === undefined) return edge
     return { ...edge, ...(pinned ? { sourceHandle: prior.sourceHandle, targetHandle: prior.targetHandle } : {}),
       style: { ...edge.style, ...prior.style }, data: { ...edge.data,
+        ...(prior.data?.erdForeignKey !== undefined ? { erdForeignKey: prior.data.erdForeignKey } : {}),
         ...(pinned ? { manualConnectionHandles: true } : {}),
         ...(prior.data?.segmentRoute ? { segmentRoute: prior.data.segmentRoute } : {}),
         visual: prior.data?.visual ?? edge.data?.visual,

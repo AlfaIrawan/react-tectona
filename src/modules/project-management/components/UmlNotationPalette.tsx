@@ -4,46 +4,12 @@ import { cn } from '@/lib/utils'
 
 export const UML_PALETTE_MIME = 'application/tectona-uml-palette'
 
-export type UmlPaletteNodeKind = 'class' | 'interface' | 'enumeration' | 'entity'
-export type UmlPaletteRelation =
-  | 'association'
-  | 'aggregation'
-  | 'composition'
-  | 'generalization'
-  | 'dependency'
-  | 'one-to-many'
-  | 'one-to-one'
-  | 'many-to-many'
-
-export type UmlPaletteItem = {
-  id: string
-  group: 'element' | 'relation'
-  label: string
-  nodeKind?: UmlPaletteNodeKind
-  relation?: UmlPaletteRelation
-}
-
-const CLASS_ITEMS: UmlPaletteItem[] = [
-  { id: 'class', group: 'element', label: 'Class', nodeKind: 'class' },
-  { id: 'interface', group: 'element', label: 'Interface', nodeKind: 'interface' },
-  { id: 'enumeration', group: 'element', label: 'Enumeration', nodeKind: 'enumeration' },
-  { id: 'association', group: 'relation', label: 'Association', relation: 'association' },
-  { id: 'aggregation', group: 'relation', label: 'Aggregation', relation: 'aggregation' },
-  { id: 'composition', group: 'relation', label: 'Composition', relation: 'composition' },
-  { id: 'generalization', group: 'relation', label: 'Generalization', relation: 'generalization' },
-  { id: 'dependency', group: 'relation', label: 'Dependency', relation: 'dependency' },
-]
-
-const ERD_ITEMS: UmlPaletteItem[] = [
-  { id: 'entity', group: 'element', label: 'Entity', nodeKind: 'entity' },
-  { id: 'one-to-many', group: 'relation', label: 'One to many', relation: 'one-to-many' },
-  { id: 'one-to-one', group: 'relation', label: 'One to one', relation: 'one-to-one' },
-  { id: 'many-to-many', group: 'relation', label: 'Many to many', relation: 'many-to-many' },
-]
+import { CLASS_ITEMS, ERD_ITEMS, USE_CASE_ITEMS, type UmlPaletteItem, type UmlPaletteRelation } from '../lib/umlNotationCatalog'
+export type { UmlPaletteNodeKind, UmlPaletteItem, UmlPaletteRelation } from '../lib/umlNotationCatalog'
 
 function NotationMark({ item }: { item: UmlPaletteItem }) {
   if (item.group === 'relation') {
-    const dashed = item.relation === 'dependency'
+    const dashed = item.relation === 'dependency' || item.relation === 'realization'
     return (
       <span className="relative block h-4 w-8">
         <span
@@ -69,14 +35,14 @@ export function UmlNotationPalette({
   onSelectRelation,
   onAddNode,
 }: {
-  view: 'class' | 'erd'
+  view: 'class' | 'erd' | 'use-case'
   selectedRelation: string
   onDragStart: (event: DragEvent<HTMLButtonElement>, item: UmlPaletteItem) => void
   onSelectRelation: (relation: UmlPaletteRelation) => void
   onAddNode: (item: UmlPaletteItem) => void
 }) {
   const [query, setQuery] = useState('')
-  const items = view === 'erd' ? ERD_ITEMS : CLASS_ITEMS
+  const items = view === 'use-case' ? USE_CASE_ITEMS : view === 'erd' ? ERD_ITEMS : CLASS_ITEMS
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     if (!needle) return items

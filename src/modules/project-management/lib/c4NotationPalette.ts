@@ -26,6 +26,10 @@ export type C4PaletteItem = {
 
 export const C4_PALETTE_ITEMS: C4PaletteItem[] = [
   { id: 'person', label: 'Person', defaultTitle: 'Person', kind: 'Person', fill: '#08427B', shape: 'person' },
+  { id: 'person-ext', label: 'External Person', defaultTitle: 'External Person', kind: 'Person_Ext', fill: '#6C6C6C', shape: 'person' },
+  { id: 'system-db', label: 'System Database', defaultTitle: 'System Database', kind: 'SystemDb', fill: '#1168BD', shape: 'cylinder' },
+  { id: 'component-ext', label: 'External Component', defaultTitle: 'External Component', kind: 'Component_Ext', fill: '#999999', shape: 'box' },
+  { id: 'component-db', label: 'Component Database', defaultTitle: 'Component Database', kind: 'ComponentDb', fill: '#85BBF0', shape: 'cylinder' },
   { id: 'system', label: 'Software System', defaultTitle: 'Software System', kind: 'System', fill: '#1168BD', shape: 'box' },
   { id: 'system-ext', label: 'External System', defaultTitle: 'External System', kind: 'System_Ext', fill: '#999999', shape: 'box' },
   { id: 'container', label: 'Container', defaultTitle: 'Container', kind: 'Container', fill: '#438DD5', shape: 'box' },
@@ -69,7 +73,7 @@ export function createC4NodeFromPaletteItem(
   }
 
   const external = isC4External(item.kind)
-  const isContainerLike = item.kind.startsWith('Container') || item.kind === 'Component'
+  const isContainerLike = item.kind.startsWith('Container') || item.kind.startsWith('Component')
   return {
     id,
     type: 'c4Element',

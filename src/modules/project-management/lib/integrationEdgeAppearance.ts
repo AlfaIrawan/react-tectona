@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import type {
   IntegrationEdgeArrangeOptions,
+  IntegrationEdgeArrow,
   IntegrationEdgeData,
   IntegrationEdgeLinePattern,
   IntegrationEdgeTextStyle,
@@ -83,8 +84,21 @@ export function readEdgeData(edge: { data?: unknown }): IntegrationEdgeData {
   return edge.data && typeof edge.data === 'object' ? (edge.data as IntegrationEdgeData) : {}
 }
 
+function decorationVisual(decoration: unknown): { arrow: IntegrationEdgeArrow; filled: boolean } | undefined {
+  switch (decoration) {
+    case 'none': return { arrow: 'none', filled: false }
+    case 'arrow': return { arrow: 'open', filled: false }
+    case 'triangle': return { arrow: 'block', filled: false }
+    case 'diamond': return { arrow: 'diamond', filled: false }
+    case 'filled-diamond': return { arrow: 'diamond', filled: true }
+    default: return undefined
+  }
+}
+
 export function resolveEdgeVisual(edge: { style?: CSSProperties; data?: unknown }): Required<IntegrationEdgeVisualStyle> {
   const data = readEdgeData(edge)
+  const notation = data as IntegrationEdgeData & { sourceDecoration?: unknown; targetDecoration?: unknown; lineStyle?: unknown }
+  const start = decorationVisual(notation.sourceDecoration), end = decorationVisual(notation.targetDecoration)
   const style = edge.style ?? {}
   const stroke = typeof style.stroke === 'string' ? style.stroke : undefined
   const width = Number(style.strokeWidth)
@@ -95,7 +109,11 @@ export function resolveEdgeVisual(edge: { style?: CSSProperties; data?: unknown 
     ...data.visual,
     lineColor: data.visual?.lineColor ?? stroke ?? base.lineColor,
     lineWidth: data.visual?.lineWidth ?? (Number.isFinite(width) && width > 0 ? width : base.lineWidth),
-    lineStyle: data.visual?.lineStyle ?? (dashed ? 'dashed' : base.lineStyle),
+    lineStyle: data.visual?.lineStyle ?? (notation.lineStyle === 'dashed' || notation.lineStyle === 'solid' ? notation.lineStyle : dashed ? 'dashed' : base.lineStyle),
+    startArrow: data.visual?.startArrow ?? start?.arrow ?? base.startArrow,
+    endArrow: data.visual?.endArrow ?? end?.arrow ?? base.endArrow,
+    startFill: data.visual?.startFill ?? start?.filled ?? base.startFill,
+    endFill: data.visual?.endFill ?? end?.filled ?? base.endFill,
   }
 }
 

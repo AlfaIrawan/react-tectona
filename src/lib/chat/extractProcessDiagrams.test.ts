@@ -24,10 +24,10 @@ describe('process diagram editor helpers', () => {
 
   it('lists every technical slot without relying on a browser brainstorming cache', () => {
     const gallery = technicalDiagramGallery([], {})
-    expect(gallery.map(d => d.label)).toEqual(['C4 Level 1', 'C4 Level 2', 'Sequence', 'Class', 'ERD'])
+    expect(gallery.map(d => d.label)).toEqual(['C4 Level 1', 'C4 Level 2', 'Sequence', 'Use Case', 'Class', 'ERD'])
     expect(gallery.every(d => d.source === '')).toBe(true)
     expect(TECHNICAL_DIAGRAM_SLOTS.map(d => d.persistKey)).toEqual([
-      'brainstorm-c4-level-1', 'brainstorm-c4-level-2', 'brainstorm-sequence', 'brainstorm-class', 'brainstorm-erd',
+      'brainstorm-c4-level-1', 'brainstorm-c4-level-2', 'brainstorm-sequence', 'brainstorm-use-case', 'brainstorm-class', 'brainstorm-erd',
     ])
   })
 
@@ -39,7 +39,7 @@ describe('process diagram editor helpers', () => {
     })
     expect(gallery.find(d => d.kind === 'sequence')?.source).toBe(sequence)
     expect(gallery.find(d => d.kind === 'erd')?.source).toBe(erd)
-    expect(gallery).toHaveLength(5)
+    expect(gallery).toHaveLength(6)
   })
 
   it('removes fenced implementation source from the editor prose', () => {

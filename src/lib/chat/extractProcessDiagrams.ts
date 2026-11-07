@@ -1,5 +1,5 @@
-export type ProcessDiagramKind = 'as_is' | 'to_be' | 'c4' | 'class' | 'erd' | 'sequence' | 'unlabeled'
-export type TechnicalDiagramKind = 'c4' | 'class' | 'erd' | 'sequence'
+export type ProcessDiagramKind = 'as_is' | 'to_be' | 'c4' | 'class' | 'erd' | 'use-case' | 'sequence' | 'unlabeled'
+export type TechnicalDiagramKind = 'c4' | 'class' | 'erd' | 'use-case' | 'sequence'
 
 export type ExtractedProcessDiagram = {
   kind: ProcessDiagramKind
@@ -10,20 +10,20 @@ export type ExtractedProcessDiagram = {
 const DIAGRAM_FENCE_RE = /```[ \t]*(?:mermaid|plantuml|tecchart|bpmn)\b[ \t]*\r?\n?[\s\S]*?```/gi
 const PROCESS_FENCE_RE = /```[ \t]*(?:mermaid|plantuml)\b[ \t]*\r?\n?([\s\S]*?)```/gi
 const TECTONA_DIAGRAM_COMMENT_RE = /<!--tectona-mermaid\b[\s\S]*?-->/gi
-const TECTONA_ENCODED_DIAGRAM_COMMENT_RE = /<!--tectona-process-diagram:(?:(as_is|to_be|c4|class|erd|sequence|unlabeled):)?([^>]+)-->/gi
-const STORED_DIAGRAM_KINDS = new Set<ProcessDiagramKind>(['as_is', 'to_be', 'c4', 'class', 'erd', 'sequence', 'unlabeled'])
+const TECTONA_ENCODED_DIAGRAM_COMMENT_RE = /<!--tectona-process-diagram:(?:(as_is|to_be|c4|class|erd|use-case|sequence|unlabeled):)?([^>]+)-->/gi
+const STORED_DIAGRAM_KINDS = new Set<ProcessDiagramKind>(['as_is', 'to_be', 'c4', 'class', 'erd', 'use-case', 'sequence', 'unlabeled'])
 
 function storedDiagramKind(raw: string | undefined): ProcessDiagramKind {
   return raw && STORED_DIAGRAM_KINDS.has(raw as ProcessDiagramKind) ? raw as ProcessDiagramKind : 'unlabeled'
 }
 
 function emptyKindCounts(): Record<ProcessDiagramKind, number> {
-  return { as_is: 0, to_be: 0, c4: 0, class: 0, erd: 0, sequence: 0, unlabeled: 0 }
+  return { as_is: 0, to_be: 0, c4: 0, class: 0, erd: 0, 'use-case': 0, sequence: 0, unlabeled: 0 }
 }
 
 const AS_IS_RE = /\b(as[\s-]?is|proses\s+saat\s+ini|kondisi\s+saat\s+ini)\b/i
 const TO_BE_RE = /\b(to[\s-]?be|proses\s+target|kondisi\s+target|expected|diharapkan)\b/i
-const NON_PROCESS_DIAGRAM_RE = /!include\s*<\s*(?:c4|archimate)|tectona-view:|tectona-dimension:|^\s*(?:class|entity)\b|sequenceDiagram|^\s*(?:participant|actor)\b/im
+const NON_PROCESS_DIAGRAM_RE = /!include\s*<\s*(?:c4|archimate)|tectona-view:|tectona-dimension:|^\s*(?:class|entity|usecase)\b|sequenceDiagram|^\s*(?:participant|actor)\b/im
 
 function classifyPrefix(prefix: string): ProcessDiagramKind {
   const window = prefix.slice(-500)
@@ -47,6 +47,7 @@ function labelFor(kind: ProcessDiagramKind, index: number, counts: Record<Proces
       : kind === 'c4' ? 'C4'
         : kind === 'class' ? 'Class'
           : kind === 'erd' ? 'ERD'
+            : kind === 'use-case' ? 'Use Case'
             : kind === 'sequence' ? 'Sequence'
             : 'Diagram proses bisnis'
   return counts[kind] > 1 ? `${base} #${index}` : base
@@ -54,6 +55,7 @@ function labelFor(kind: ProcessDiagramKind, index: number, counts: Record<Proces
 
 export function technicalDiagramKind(source: string): TechnicalDiagramKind | null {
   const text = source || ''
+  if (/tectona-view:\s*use[-_ ]?case|^\s*usecase\b|^\s*\([^)]+\)\s+as\s+/im.test(text)) return 'use-case'
   if (/tectona-view:\s*erd/i.test(text) || /^\s*entity\s+/m.test(text)) return 'erd'
   if (/tectona-view:\s*class/i.test(text) || /^\s*class\s+/m.test(text)) return 'class'
   if (/!include\s*<\s*C4\/|tectona-view:\s*c4/i.test(text)) return 'c4'
@@ -169,12 +171,14 @@ const TECHNICAL_LABEL: Record<TechnicalDiagramKind, string> = {
   class: 'Class',
   erd: 'ERD',
   sequence: 'Sequence',
+  'use-case': 'Use Case',
 }
 
 export const TECHNICAL_DIAGRAM_SLOTS = [
   { kind: 'c4', label: 'C4 Level 1', persistKey: 'brainstorm-c4-level-1' },
   { kind: 'c4', label: 'C4 Level 2', persistKey: 'brainstorm-c4-level-2' },
   { kind: 'sequence', label: 'Sequence', persistKey: 'brainstorm-sequence' },
+  { kind: 'use-case', label: 'Use Case', persistKey: 'brainstorm-use-case' },
   { kind: 'class', label: 'Class', persistKey: 'brainstorm-class' },
   { kind: 'erd', label: 'ERD', persistKey: 'brainstorm-erd' },
 ] as const
@@ -190,7 +194,7 @@ export function brainstormTechnicalPersistKey(diagram: ExtractedProcessDiagram):
 export function latestValidatedTechnicalDiagrams(text: string): ExtractedProcessDiagram[] {
   const latest = new Map<string, ExtractedProcessDiagram>()
   for (const diagram of extractProcessDiagramsFromText(text)) {
-    const kind = diagram.kind === 'c4' || diagram.kind === 'class' || diagram.kind === 'erd' || diagram.kind === 'sequence'
+    const kind = diagram.kind === 'c4' || diagram.kind === 'class' || diagram.kind === 'erd' || diagram.kind === 'use-case' || diagram.kind === 'sequence'
       ? diagram.kind
       : technicalDiagramKind(diagram.source)
     if (!kind) continue

@@ -1,3 +1,15 @@
+import { remapErdForeignKey } from '../lib/erdForeignKeyMapping'
+import { erdEntityDefaultSize } from '../lib/erdEntityLayout'
+import { createUseCaseNode, parseUseCaseDiagram, serializeUseCaseDiagram, getUseCaseConnectionStyle } from '../lib/useCasePlantUml'
+import { ErdDdlImportDialog } from './ErdDdlImportDialog'
+import type { ErdDdlImportResult } from '../lib/erdDdlImport'
+import { ErdDdlDialog } from './ErdDdlDialog'
+import { selectErdDdlScope, type ErdDdlSelection } from '../lib/erdDdl'
+import { arrangeDiagramSelection, canCutDiagramSelection, deletableDiagramNodeIds, copyDiagramSelection, diagramSelectedRoots, DIAGRAM_ARRANGE_ACTIONS, pasteDiagramSelection, type DiagramArrangeAction, type DiagramClipboard } from '../lib/diagramSelectionActions'
+import { DiagramEditorMenu, DiagramEditorSubmenu } from '@/components/DiagramEditorMenu'
+import { pasteDiagramNodes, removeDiagramNodes } from '../lib/diagramNodeActions'
+import { canDiagramEdgeAction, clearDiagramEdgeWaypoints, reverseDiagramEdge, unpinDiagramEdgeEnds } from '../lib/diagramEdgeActions'
+import { orderDiagramNode, listenForDiagramMenuDismissal } from '@/modules/project-management/lib/diagramContextMenuActions'
 import { c4GraphFromCanvas, mapC4Relations } from '@/modules/project-management/lib/c4CanvasPersistence'
 import { mergeDiagramSourceNodes, mergeDiagramSourceEdges } from '@/modules/project-management/lib/diagramSourceMerge'
 import { isStoredDiagramGraph } from '@/modules/project-management/lib/diagramGraphPersistence'
@@ -36,7 +48,7 @@ import { C4_APPLICATION_CATALOG_MIME, C4_PALETTE_MIME, C4_PALETTE_ITEMS, createC
 import { type DiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
 import { isArchimateElementData, type ArchimateElementNodeData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, parseC4Graph, serializeC4Graph, type C4ElementKind, type C4ParsedGraph } from '@/modules/project-management/lib/c4PlantUml'
-import { parseUmlDiagram, serializeUmlDiagram, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
+import { parseUmlDiagram, serializeUmlDiagram, umlRelationDefaults, umlLinkToCanvasData, umlLinkFromCanvasEdge, erdRelationDefaults, type UmlDiagram, type UmlRelation, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
 import { isCanvasViewport, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
 import { defaultIntegrationNodeTextStyle, defaultIntegrationNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
 import { pickCenteredAnchoredHandles, type NodeGeometry } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
@@ -59,10 +71,10 @@ import {
   printDiagram,
 } from '@/modules/project-management/lib/diagramCanvasExport'
 
-type DiagramFormat = 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
+type DiagramFormat = 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd' | 'use-case'
 type ParsedKind = 'activity' | 'decision' | 'start' | 'end'
 type ParsedNode = { id: string; label: string; kind: ParsedKind; bpmnType?: string; lane?: string }
-type ParsedGraph = { nodes: ParsedNode[]; edges: Array<{ id: string; source: string; target: string; label?: string }> }
+type ParsedGraph = { nodes: ParsedNode[]; edges: Array<{ id: string; source: string; target: string; label?: string; bpmnFlowType?: string }> }
 type DiagramStore = Record<string, { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source?: string; viewport?: CanvasViewport; snapToGrid?: boolean }>
 
 const STORAGE_KEY = 'tectona-idea-editable-diagrams-v2'
@@ -119,43 +131,31 @@ function bpmnConnectEdgeStyle(flowType: string): Pick<Edge, 'style' | 'markerEnd
   }
 }
 
-function umlConnectionStyle(format: DiagramFormat, relation: string): Pick<Edge, 'type' | 'style' | 'markerEnd' | 'markerStart' | 'data'> {
+function umlConnectionStyle(format: DiagramFormat, relation: string): Pick<Edge, 'type' | 'style' | 'markerEnd' | 'markerStart' | 'data' | 'label'> {
+  if (format === 'use-case') return getUseCaseConnectionStyle(relation)
   if (format === 'c4') return { type: 'smoothstep', ...c4RelationEdgeStyle() }
   if (format === 'bpmn') return { type: 'smoothstep', ...bpmnConnectEdgeStyle(relation) }
   if (format === 'erd') {
-    const sourceMany = relation === 'many-to-many'
-    const targetMany = relation !== 'one-to-one'
-    return {
-      type: 'erd',
-      style: { stroke: '#C4A35A', strokeWidth: 1.5 },
-      data: { sourceMany, targetMany, sourceOptional: sourceMany, targetOptional: false },
-    }
+    return { type: 'erd', style: { stroke: '#C4A35A', strokeWidth: 1.5 }, data: erdRelationDefaults(relation) }
   }
-  const stroke = '#4B5563'
-  const line = { stroke, strokeWidth: 1.15, strokeDasharray: relation === 'dependency' ? '5 4' : undefined }
-  if (relation === 'aggregation') {
-    return { type: 'smoothstep', style: line, markerStart: { type: MarkerType.ArrowClosed, color: '#ffffff', width: 14, height: 14 } }
-  }
-  if (relation === 'composition') {
-    return { type: 'smoothstep', style: line, markerStart: { type: MarkerType.ArrowClosed, color: stroke, width: 14, height: 14 } }
-  }
-  if (relation === 'generalization') {
-    return { type: 'smoothstep', style: line, markerEnd: { type: MarkerType.ArrowClosed, color: '#ffffff', width: 14, height: 14 } }
-  }
-  if (relation === 'dependency') {
-    return { type: 'smoothstep', style: line, markerEnd: { type: MarkerType.Arrow, color: stroke, width: 12, height: 12 } }
-  }
-  return { type: 'smoothstep', style: line }
+  const defaults = umlRelationDefaults(relation as UmlRelation)
+  return { type: 'smoothstep', style: { stroke: '#4B5563', strokeWidth: 1.15, strokeDasharray: defaults.lineStyle === 'dashed' ? '5 4' : undefined },
+    data: { ...umlLinkToCanvasData({ source: '', target: '', label: '', ...defaults }) } }
 }
 
 function createUmlPaletteNode(item: UmlPaletteItem, position: { x: number; y: number }, existingIds: string[]): Node<ArchimateNodeData> {
   const kind = item.nodeKind ?? 'class'
+  if (kind === 'actor' || kind === 'usecase' || kind === 'system-boundary') {
+    let index = existingIds.length + 1
+    while (existingIds.includes(`uc_${index}`)) index++
+    return createUseCaseNode(kind, item.label, `uc_${index}`, position)
+  }
   const base = kind === 'entity' ? 'Entity' : kind === 'interface' ? 'Interface' : kind === 'enumeration' ? 'Enumeration' : 'Class'
   let index = existingIds.length + 1
-  let id = `${kind}-${index}`
+  let id = `${kind}_${index}`
   while (existingIds.includes(id)) {
     index += 1
-    id = `${kind}-${index}`
+    id = `${kind}_${index}`
   }
   const title = `New${base}`
   const description = kind === 'enumeration' ? ['VALUE'] : kind === 'entity' ? ['* id'] : []
@@ -711,8 +711,8 @@ function entityReferences(fromMembers: string[], toId: string, toTitle: string):
   return fromMembers.some((member) => keys.has(erdMemberName(member)))
 }
 
-function graphFromUml(source: string, view: UmlView): { nodes: Node<ArchimateNodeData>[]; edges: Edge[] } {
-  const parsed = parseUmlDiagram(source, view)
+function graphFromUml(source: string, view: UmlView, diagram?: UmlDiagram): { nodes: Node<ArchimateNodeData>[]; edges: Edge[] } {
+  const parsed = diagram ?? parseUmlDiagram(source, view)
   const erd = view === 'erd'
   const stroke = erd ? '#C4A35A' : '#4B5563'
   const placed: Node<ArchimateNodeData>[] = []
@@ -724,14 +724,14 @@ function graphFromUml(source: string, view: UmlView): { nodes: Node<ArchimateNod
   for (const box of parsed.boxes) {
     const attributes = box.members.filter((line) => !line.includes('('))
     const methods = box.members.filter((line) => line.includes('('))
-    const rowCount = erd ? Math.max(1, box.members.length) : attributes.length
     const boxKind = erd ? 'entity' : box.kind === 'interface' || box.kind === 'enumeration' ? box.kind : 'class'
     const stereotypeExtra = boxKind === 'interface' || boxKind === 'enumeration' ? 14 : 0
     const longest = Math.max(box.title.length + 2, ...box.members.map((line) => erdMemberName(line).length + (erd ? 0 : 10)))
-    const width = Math.min(280, Math.max(erd ? 168 : 148, longest * 6.6 + (erd ? 28 : 40)))
+    const erdSize = erdEntityDefaultSize(box.title, box.members)
+    const width = erd ? erdSize.width : Math.min(280, Math.max(148, longest * 6.6 + 40))
     const memberLines = (members: string[]) => members.reduce((total, line) => total + Math.max(1, Math.ceil(line.length * 6.6 / (width - 48))), 0)
     const height = erd
-      ? 34 + rowCount * 18 + 10
+      ? erdSize.height
       : 32 + stereotypeExtra + (attributes.length ? memberLines(attributes) * 16 + 8 : 0) + (methods.length ? memberLines(methods) * 16 + 8 : 0)
     if (column === columns) {
       column = 0
@@ -785,6 +785,8 @@ function graphFromUml(source: string, view: UmlView): { nodes: Node<ArchimateNod
         label: link.label || undefined,
         type: 'erd' as const,
         data: {
+          ...umlLinkToCanvasData(link),
+          ...(link.erdForeignKey ? { erdForeignKey: link.erdForeignKey } : {}),
           sourceMany: sourceEnd.many,
           sourceOptional: sourceEnd.optional,
           targetMany: targetEnd.many,
@@ -798,14 +800,15 @@ function graphFromUml(source: string, view: UmlView): { nodes: Node<ArchimateNod
       target: link.target,
       label: link.label || undefined,
       type: 'smoothstep' as const,
-      markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 12, height: 12 },
-      style: { stroke, strokeWidth: 1.75 },
+      data: umlLinkToCanvasData(link),
+      style: { stroke, strokeWidth: 1.75, strokeDasharray: link.lineStyle === 'dashed' ? '5 4' : undefined },
     }
   }))
   return { nodes: placed, edges }
 }
 
 function parseSource(source: string, format: DiagramFormat) {
+  if (format === 'use-case') { const graph = parseUseCaseDiagram(source); return { ...graph, edges: withFacingHandles(graph.nodes, graph.edges) } }
   if (format === 'class' || format === 'erd') return graphFromUml(source, format)
   if (format === 'c4') return graphFromC4(source)
   if (format === 'bpmn') {
@@ -869,7 +872,7 @@ type C4NodeContextMenuState = {
   nodeId: string
   x: number
   y: number
-  submenu?: 'order'
+  submenu?: 'order' | 'arrange'
 }
 
 type EdgeContextMenuState = {
@@ -978,7 +981,7 @@ function EditableDiagramCanvasInner({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(
-    format === 'c4' || format === 'class' || format === 'erd' ? 'diagram' : 'source',
+    format === 'c4' || format === 'class' || format === 'erd' || format === 'use-case' ? 'diagram' : 'source',
   )
   const [sourceDraft, setSourceDraft] = useState(() => 'source' in initial && typeof initial.source === 'string' ? initial.source : bpmnEditorSource)
   const c4Level = c4LevelFromDiagramKey(diagramKey)
@@ -998,8 +1001,11 @@ function EditableDiagramCanvasInner({
   const [isStudioPanelResizing, setIsStudioPanelResizing] = useState(false)
   const [isPropertiesPanelDragging, setIsPropertiesPanelDragging] = useState(false)
   const [isPropertiesPanelResizing, setIsPropertiesPanelResizing] = useState(false)
+  const [erdDdlImportOpen, setErdDdlImportOpen] = useState(false)
+  const [erdDdlSelection, setErdDdlSelection] = useState<ErdDdlSelection | null>(null)
   const [canvasMenu, setCanvasMenu] = useState<CanvasContextMenuState | null>(null)
   const [hasPasteableContent, setHasPasteableContent] = useState(false)
+  const [clipboardError, setClipboardError] = useState<string | null>(null)
   const [edgeContextMenu, setEdgeContextMenu] = useState<EdgeContextMenuState | null>(null)
   const [c4NodeMenu, setC4NodeMenu] = useState<C4NodeContextMenuState | null>(null)
   const [pendingChatDraft, setPendingChatDraft] = useState<DiagramChatDraft | null>(null)
@@ -1025,6 +1031,31 @@ function EditableDiagramCanvasInner({
     setEdges(snapshot.edges)
     setSourceDraft(snapshot.source)
   }, storageKey, reactFlowWrapperRef, editable)
+
+  const applyErdDdlImport = (result: ErdDdlImportResult) => {
+    if (!editable || format !== 'erd' || result.errors.length || !result.diagram.boxes.length) return
+    const graph = graphFromUml('', 'erd', result.diagram)
+    const usedIds = new Set([...nodes.map(node => node.id), ...edges.map(edge => edge.id)])
+    const uniqueId = (base: string) => {
+      let id = base, index = 1
+      while (usedIds.has(id)) id = `${base}_${index++}`
+      usedIds.add(id)
+      return id
+    }
+    const ids = new Map(graph.nodes.map(node => [node.id, uniqueId(`import_${node.id}`)]))
+    const bottom = nodes.reduce((max, node) => Math.max(max, node.position.y + Number(node.height ?? node.style?.height ?? 100)), 0)
+    const addedNodes = graph.nodes.map((node, index) => ({
+      ...node, id: ids.get(node.id)!, selected: true,
+      position: { ...node.position, y: node.position.y + (nodes.length ? bottom + 72 : 0) },
+      data: { ...node.data, erdDdlImport: result.tables[index] },
+    }))
+    const addedEdges = graph.edges.map(edge => ({ ...edge, id: uniqueId(`import_${edge.id}`), source: ids.get(edge.source)!, target: ids.get(edge.target)!, selected: true, ...(edge.data?.erdForeignKey !== undefined ? { data: { ...edge.data, erdForeignKey: remapErdForeignKey(edge.data.erdForeignKey, ids) } } : {}) }))
+    setNodes(current => [...current.map(node => ({ ...node, selected: false })), ...addedNodes])
+    setEdges(current => [...current.map(edge => ({ ...edge, selected: false })), ...addedEdges])
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setErdDdlImportOpen(false)
+  }
 
   const canvasZoneRef = useRef<HTMLDivElement | null>(null)
   const studioPanelShellRef = useRef<HTMLDivElement | null>(null)
@@ -1055,7 +1086,7 @@ function EditableDiagramCanvasInner({
   const onPersistGraphRef = useRef(onPersistGraph)
   onPersistGraphRef.current = onPersistGraph
   const appliedStorageKeyRef = useRef<string | null>(null)
-  const nodeClipboardRef = useRef<Node<ArchimateNodeData> | null>(null)
+  const nodeClipboardRef = useRef<DiagramClipboard<ArchimateNodeData> | null>(null)
   const appliedSavedGraphRef = useRef(false)
   const applicationCatalogRequestRef = useRef(0)
 
@@ -1189,15 +1220,11 @@ function EditableDiagramCanvasInner({
   }, [format, nodes, setNodes])
   useEffect(() => {
     if (!canvasMenu && !c4NodeMenu && !edgeContextMenu) return
-    const close = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Element && target.closest('[data-diagram-context-menu]')) return
+    return listenForDiagramMenuDismissal(() => {
       setCanvasMenu(null)
       setC4NodeMenu(null)
       setEdgeContextMenu(null)
-    }
-    window.addEventListener('pointerdown', close)
-    return () => window.removeEventListener('pointerdown', close)
+    })
   }, [canvasMenu, c4NodeMenu, edgeContextMenu])
   useEffect(() => {
     if (format !== 'c4' || c4Level !== 'L1' || c4DrilldownTargets.length === 0) return
@@ -1251,6 +1278,7 @@ function EditableDiagramCanvasInner({
     })
   }, [c4Level, edges, format, nodes])
   useEffect(() => {
+    if (format === 'use-case') { setSourceDraft(serializeUseCaseDiagram(nodes, edges)); return }
     if (format !== 'class' && format !== 'erd') return
     setSourceDraft((current) => {
       const boxes = nodes
@@ -1263,11 +1291,7 @@ function EditableDiagramCanvasInner({
             ? node.data.stereotype
             : undefined,
         }))
-      const links = edges.map((edge) => ({
-        source: edge.source,
-        target: edge.target,
-        label: String(edge.label ?? ''),
-      }))
+      const links = edges.map((edge) => umlLinkFromCanvasEdge(edge, format))
       const next = serializeUmlDiagram({ view: format, boxes, links })
       return next === current ? current : next
     })
@@ -1290,8 +1314,13 @@ function EditableDiagramCanvasInner({
       const size = squareSize(change.dimensions.width, change.dimensions.height)
       return { ...change, dimensions: { width: size, height: size } }
     })
-    onNodesChange(nextChanges)
-  }, [onNodesChange])
+    const removed = deletableDiagramNodeIds(nodesRef.current, edges, new Set(nextChanges.filter(change => change.type === 'remove').map(change => change.id)))
+    if (removed.size) {
+      setNodes(current => removeDiagramNodes(current, removed))
+      setEdges(current => current.filter(edge => !removed.has(edge.source) && !removed.has(edge.target)))
+    }
+    onNodesChange(nextChanges.filter(change => change.type !== 'remove'))
+  }, [edges, onNodesChange, setEdges, setNodes])
   const nodeLayoutKey = nodes
     .map((node) => `${node.id}:${Math.round(node.position.x)}:${Math.round(node.position.y)}:${Math.round(Number(node.width ?? 0))}:${Math.round(Number(node.height ?? 0))}:${node.parentNode ?? ''}`)
     .join('|')
@@ -1331,6 +1360,7 @@ function EditableDiagramCanvasInner({
 
   const onEdgeUpdate = useCallback(
     (oldEdge: Edge, connection: Connection) => {
+      if (!canDiagramEdgeAction(oldEdge, 'reconnect')) return
       setEdges((current) => {
         const next = reconnectDiagramEdge(oldEdge, connection, current).map((edge) => (
           edge.id === oldEdge.id ? { ...edge, selected: true } : edge
@@ -1375,6 +1405,14 @@ function EditableDiagramCanvasInner({
     if (!wrapper) return
     const bounds = wrapper.getBoundingClientRect()
     setCanvasMenu(null)
+    const selectedEntity = format === 'erd' && edge.selected ? nodes.find(n => n.selected && n.type === 'erdEntity') : undefined
+    if (selectedEntity) {
+      setEdgeContextMenu(null)
+      setSelectedNodeId(selectedEntity.id)
+      setSelectedEdgeId(null)
+      setC4NodeMenu({ nodeId: selectedEntity.id, x: event.clientX - bounds.left, y: event.clientY - bounds.top })
+      return
+    }
     setC4NodeMenu(null)
     setNodes((current) => current.map((node) => ({ ...node, selected: false })))
     setEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
@@ -1382,10 +1420,10 @@ function EditableDiagramCanvasInner({
     setSelectedEdgeId(edge.id)
     setEdgeContextMenu({
       edgeId: edge.id,
-      x: Math.min(event.clientX - bounds.left, bounds.width - 260),
-      y: Math.min(event.clientY - bounds.top, bounds.height - 300),
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
     })
-  }, [setEdges, setNodes])
+  }, [format, nodes, setEdges, setNodes])
 
   const handlePaletteDragStart = useCallback((event: DragEvent<HTMLButtonElement>, item: C4PaletteItem) => {
     event.dataTransfer.setData(C4_PALETTE_MIME, JSON.stringify(item))
@@ -1481,11 +1519,11 @@ function EditableDiagramCanvasInner({
     const spot = bounds
       ? screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + Math.min(180, bounds.height / 3) })
       : { x: 80, y: 80 }
-    const newNode = createUmlPaletteNode(item, spot, nodes.map((node) => node.id))
+    const newNode = applyDefaultElementStyle(createUmlPaletteNode(item, spot, nodes.map((node) => node.id)))
     setNodes((current) => [...current, newNode])
     setSelectedNodeId(newNode.id)
     setSelectedEdgeId(null)
-  }, [nodes, reactFlowWrapperRef, screenToFlowPosition, setNodes])
+  }, [applyDefaultElementStyle, nodes, reactFlowWrapperRef, screenToFlowPosition, setNodes])
 
   const handleCanvasDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -1505,7 +1543,7 @@ function EditableDiagramCanvasInner({
         }
         if (!item.nodeKind) return
         const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-        const newNode = createUmlPaletteNode(item, position, nodes.map((node) => node.id))
+        const newNode = applyDefaultElementStyle(createUmlPaletteNode(item, position, nodes.map((node) => node.id)))
         setNodes((current) => [...current, newNode])
         setSelectedNodeId(newNode.id)
         setSelectedEdgeId(null)
@@ -1634,26 +1672,32 @@ function EditableDiagramCanvasInner({
   }, [selectedEdgeId, setEdges])
 
   const clearSelectedEdgeWaypoints = useCallback(() => {
-    if (!selectedEdgeId) return
+    if (!selectedEdgeId || !canDiagramEdgeAction(selectedEdge, 'clearWaypoints')) return
+    setEdges((current) => current.map((edge) => edge.id === selectedEdgeId ? clearDiagramEdgeWaypoints(edge) : edge))
+  }, [selectedEdge, selectedEdgeId, setEdges])
+
+  const unpinSelectedEdgeEnds = useCallback(() => {
+    if (!selectedEdgeId || !canDiagramEdgeAction(selectedEdge, 'unpin')) return
     setEdges((current) => withFacingHandles(nodes, current.map((edge) => (
-      edge.id === selectedEdgeId ? { ...edge, sourceHandle: undefined, targetHandle: undefined, data: { ...edge.data, manualConnectionHandles: false } } : edge
+      edge.id === selectedEdgeId ? unpinDiagramEdgeEnds(edge) : edge
     ))))
-  }, [nodes, selectedEdgeId, setEdges])
+  }, [nodes, selectedEdge, selectedEdgeId, setEdges])
 
   const reverseSelectedEdge = useCallback(() => {
-    if (!selectedEdgeId) return
+    if (!selectedEdgeId || !canDiagramEdgeAction(selectedEdge, 'reverse')) return
     setEdges((current) => withFacingHandles(nodes, current.map((edge) => (
       edge.id === selectedEdgeId
-        ? { ...edge, source: edge.target, target: edge.source, sourceHandle: edge.targetHandle, targetHandle: edge.sourceHandle }
+        ? reverseDiagramEdge(edge)
         : edge
     ))))
     setEdgeContextMenu(null)
-  }, [nodes, selectedEdgeId, setEdges])
+  }, [nodes, selectedEdge, selectedEdgeId, setEdges])
 
   const openSelectedEdgeProperties = useCallback(() => {
+    if (!canDiagramEdgeAction(selectedEdge, 'format')) return
     setIsPropertiesPanelOpen(true)
     setEdgeContextMenu(null)
-  }, [])
+  }, [selectedEdge])
 
   const applySource = useCallback((next: string) => {
     const normalized = format === 'c4'
@@ -1694,18 +1738,7 @@ function EditableDiagramCanvasInner({
 
   const handleLayerAction = useCallback((action: 'front' | 'back' | 'forward' | 'backward') => {
     if (!selectedNodeId) return
-    setNodes((current) => {
-      const ordered = [...current].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
-      const index = ordered.findIndex((node) => node.id === selectedNodeId)
-      if (index < 0) return current
-      const next = [...ordered]
-      const [selected] = next.splice(index, 1)
-      if (action === 'front') next.push(selected)
-      else if (action === 'back') next.unshift(selected)
-      else if (action === 'forward') next.splice(Math.min(index + 1, next.length), 0, selected)
-      else next.splice(Math.max(index - 1, 0), 0, selected)
-      return next.map((node, zIndex) => ({ ...node, zIndex }))
-    })
+    setNodes((current) => orderDiagramNode(current, selectedNodeId, action))
   }, [selectedNodeId, setNodes])
 
   const handleRotateSelectedNode90 = useCallback(() => {
@@ -1715,64 +1748,86 @@ function EditableDiagramCanvasInner({
   }, [selectedNode, updateSelectedNodeData])
 
   const deleteSelected = useCallback(() => {
-    if (selectedNodeId) {
-      setNodes((current) => current.filter((item) => item.id !== selectedNodeId))
-      setEdges((current) => current.filter((item) => item.source !== selectedNodeId && item.target !== selectedNodeId))
-      setSelectedNodeId(null)
-      return
+    let nodeIds = new Set(nodes.filter(node => node.selected).map(node => node.id))
+    const edgeIds = new Set(edges.filter(edge => edge.selected).map(edge => edge.id))
+    if (!nodeIds.size && !edgeIds.size) {
+      if (selectedNodeId) nodeIds.add(selectedNodeId)
+      else if (selectedEdgeId) edgeIds.add(selectedEdgeId)
     }
-    if (selectedEdgeId) {
-      setEdges((current) => current.filter((item) => item.id !== selectedEdgeId))
-      setSelectedEdgeId(null)
-    }
-  }, [selectedEdgeId, selectedNodeId, setEdges, setNodes])
-
-  const copyNodeToClipboard = useCallback((nodeId: string) => {
-    const node = nodes.find((item) => item.id === nodeId)
-    if (!node) return
-    nodeClipboardRef.current = structuredClone(node)
-    setHasPasteableContent(true)
-    setC4NodeMenu(null)
-  }, [nodes])
-
-  const deleteNode = useCallback((nodeId: string) => {
-    setNodes((current) => current.filter((node) => node.id !== nodeId))
-    setEdges((current) => current.filter((edge) => edge.source !== nodeId && edge.target !== nodeId))
+    nodeIds = deletableDiagramNodeIds(nodes, edges, nodeIds)
+    setNodes(current => removeDiagramNodes(current, nodeIds))
+    setEdges(current => current.filter(edge => (!edgeIds.has(edge.id) || !canDiagramEdgeAction(edge, 'delete')) && !nodeIds.has(edge.source) && !nodeIds.has(edge.target)))
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
+  }, [edges, nodes, selectedEdgeId, selectedNodeId, setEdges, setNodes])
+
+  const insertCopiedSelection = useCallback((clipboard: DiagramClipboard<ArchimateNodeData>, at?: { x: number; y: number }) => {
+    if (!clipboard.nodes.length) return
+    const pasted = pasteDiagramSelection(clipboard, crypto.randomUUID(), at)
+    setNodes(current => [...current.map(node => ({ ...node, selected: false })), ...pasted.nodes])
+    setEdges(current => [...current.map(edge => ({ ...edge, selected: false })), ...pasted.edges])
+    setSelectedNodeId(pasted.nodes[0]?.id ?? null)
+    setSelectedEdgeId(null)
+    setClipboardError(null)
     setC4NodeMenu(null)
   }, [setEdges, setNodes])
 
-  const duplicateNode = useCallback((nodeId: string) => {
-    const node = nodes.find((item) => item.id === nodeId)
-    if (!node) return
-    const id = `${node.id}-copy-${crypto.randomUUID()}`
-    const duplicate: Node<ArchimateNodeData> = {
-      ...structuredClone(node),
-      id,
-      position: { x: node.position.x + 32, y: node.position.y + 32 },
-      selected: true,
-    }
-    setNodes((current) => [...current.map((item) => ({ ...item, selected: false })), duplicate])
-    setSelectedNodeId(id)
+  const copyNodeToClipboard = useCallback((nodeId: string) => {
+    const copied = copyDiagramSelection(nodes, edges, nodeId)
+    if (!copied.nodes.length) { setClipboardError('This selection cannot be copied.'); return }
+    nodeClipboardRef.current = copied
+    setHasPasteableContent(true)
+    setC4NodeMenu(null)
+  }, [edges, nodes])
+
+  const deleteNode = useCallback((nodeId: string) => {
+    const clicked = nodes.find(node => node.id === nodeId)
+    const requested = new Set(clicked?.selected ? nodes.filter(node => node.selected).map(node => node.id) : [nodeId])
+    const ids = deletableDiagramNodeIds(nodes, edges, requested)
+    if (!ids.size) { setClipboardError('This selection is protected from deletion.'); return }
+    setNodes(current => removeDiagramNodes(current, ids))
+    setEdges(current => current.filter(edge => !ids.has(edge.source) && !ids.has(edge.target)))
+    setSelectedNodeId(null)
     setSelectedEdgeId(null)
     setC4NodeMenu(null)
-  }, [nodes, setNodes])
+  }, [edges, nodes, setEdges, setNodes])
 
-  const pasteCopiedNode = useCallback(() => {
-    const copied = nodeClipboardRef.current
-    if (!copied) return
-    const id = `${copied.id}-copy-${crypto.randomUUID()}`
-    const duplicate: Node<ArchimateNodeData> = {
-      ...structuredClone(copied),
-      id,
-      position: { x: copied.position.x + 32, y: copied.position.y + 32 },
-      selected: true,
+  const cutNode = useCallback((nodeId: string) => {
+    const copied = copyDiagramSelection(nodes, edges, nodeId)
+    if (!canCutDiagramSelection(copied, nodes, edges)) {
+      setClipboardError('This selection contains protected objects or connections and cannot be cut.')
+      setC4NodeMenu(null)
+      return
     }
-    setNodes((current) => [...current.map((item) => ({ ...item, selected: false })), duplicate])
-    setSelectedNodeId(id)
+    nodeClipboardRef.current = copied
+    setHasPasteableContent(true)
+    const ids = new Set(copied.nodes.map(node => node.id))
+    setNodes(current => removeDiagramNodes(current, ids))
+    setEdges(current => current.filter(edge => !ids.has(edge.source) && !ids.has(edge.target)))
+    setSelectedNodeId(null)
     setSelectedEdgeId(null)
-  }, [setNodes])
+    setC4NodeMenu(null)
+  }, [edges, nodes, setEdges, setNodes])
+
+  const duplicateNode = useCallback((nodeId: string) => {
+    const copied = copyDiagramSelection(nodes, edges, nodeId)
+    if (!copied.nodes.length) { setClipboardError('This selection cannot be duplicated.'); return }
+    insertCopiedSelection(copied)
+  }, [edges, insertCopiedSelection, nodes])
+
+  const pasteCopiedNode = useCallback((at?: { x: number; y: number }) => {
+    if (nodeClipboardRef.current) insertCopiedSelection(nodeClipboardRef.current, at)
+  }, [insertCopiedSelection])
+
+  const arrangeSelection = useCallback((action: DiagramArrangeAction) => {
+    const next = arrangeDiagramSelection(nodes, edges, action)
+    if (next.nodes === nodes) return
+    setNodes(next.nodes)
+    setEdges(next.edges)
+    setC4NodeMenu(null)
+  }, [edges, nodes, setEdges, setNodes])
+  const erdMultiSelection = format === 'erd' && nodes.filter(n => n.selected).length + edges.filter(e => e.selected).length > 1
+  const arrangeSelectionCount = diagramSelectedRoots(nodes).length
 
   const setNodeAsDefaultStyle = useCallback((nodeId: string) => {
     const node = nodes.find((item) => item.id === nodeId)
@@ -1784,23 +1839,11 @@ function EditableDiagramCanvasInner({
     setC4NodeMenu(null)
   }, [nodes])
 
-  const refreshPasteAvailability = useCallback(async () => {
-    if (nodeClipboardRef.current) {
-      setHasPasteableContent(true)
-      return
-    }
-    if (!navigator.clipboard?.readText) {
-      setHasPasteableContent(false)
-      return
-    }
-    try {
-      const source = await navigator.clipboard.readText()
-      const parsed = parseSource(format === 'c4' ? normalizeC4PlantUml(source, c4Level) : source, format)
-      setHasPasteableContent(parsed.nodes.length > 0)
-    } catch {
-      setHasPasteableContent(false)
-    }
-  }, [c4Level, format])
+  const refreshPasteAvailability = useCallback(() => {
+    // Clipboard contents are unknown until the user explicitly chooses Paste.
+    // Reading here would prompt for permission and blur/dismiss the context menu.
+    setHasPasteableContent(Boolean(nodeClipboardRef.current || navigator.clipboard?.readText))
+  }, [])
 
   const handlePaneContextMenu = useCallback((event: ReactMouseEvent | MouseEvent) => {
     event.preventDefault()
@@ -1810,8 +1853,8 @@ function EditableDiagramCanvasInner({
     if (!wrapper) return
     const bounds = wrapper.getBoundingClientRect()
     setCanvasMenu({
-      x: Math.min(event.clientX - bounds.left, bounds.width - 280),
-      y: Math.min(event.clientY - bounds.top, bounds.height - 280),
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
       flowPosition: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
       submenu: null,
     })
@@ -1824,14 +1867,14 @@ function EditableDiagramCanvasInner({
     const bounds = wrapper.getBoundingClientRect()
     setCanvasMenu(null)
     setEdgeContextMenu(null)
-    setNodes((current) => current.map((item) => ({ ...item, selected: item.id === node.id })))
-    setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
+    setNodes((current) => node.selected ? current : current.map((item) => ({ ...item, selected: item.id === node.id })))
+    setEdges((current) => node.selected ? current : current.map((edge) => ({ ...edge, selected: false })))
     setSelectedNodeId(node.id)
     setSelectedEdgeId(null)
     setC4NodeMenu({
       nodeId: node.id,
-      x: Math.min(event.clientX - bounds.left, bounds.width - 260),
-      y: Math.min(event.clientY - bounds.top, bounds.height - 360),
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
     })
   }, [setEdges, setNodes])
 
@@ -1847,9 +1890,11 @@ function EditableDiagramCanvasInner({
   }, [format, onOpenC4Drilldown])
 
   const openNodeProperties = useCallback(() => {
+    setNodes(current => current.map(node => ({ ...node, selected: node.id === selectedNodeId })))
+    setEdges(current => current.map(edge => ({ ...edge, selected: false })))
     setIsPropertiesPanelOpen(true)
     setC4NodeMenu(null)
-  }, [])
+  }, [selectedNodeId, setEdges, setNodes])
 
   const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>) => {
     const selected = node ?? nodes.find((item) => item.selected && item.data.kind === 'element')
@@ -2068,38 +2113,15 @@ function EditableDiagramCanvasInner({
   }, [edges, nodes, setEdges, setNodes])
 
   const clearDefaultStyle = useCallback(() => {
-    const selectedIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id))
-    setNodes((current) => current.map((node) => {
-      if (selectedIds.size > 0 && !selectedIds.has(node.id)) return node
-      if (node.data.kind !== 'element') return node
-      return {
-        ...node,
-        data: {
-          ...node.data,
-          visual: { ...node.data.visual, fillEnabled: false, shadow: false },
-        },
-      }
-    }))
+    setDefaultElementStyle(null)
     setCanvasMenu(null)
-  }, [nodes, setNodes])
+  }, [])
 
   const pasteSourceAtCursor = useCallback(async () => {
+    setClipboardError(null)
     if (!canvasMenu) return
-    const copiedNode = nodeClipboardRef.current
-    if (copiedNode) {
-      const id = `${copiedNode.id}-copy-${crypto.randomUUID()}`
-      const pastedNode: Node<ArchimateNodeData> = {
-        ...structuredClone(copiedNode),
-        id,
-        parentNode: undefined,
-        extent: undefined,
-        position: { ...canvasMenu.flowPosition },
-        selected: true,
-      }
-      setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), pastedNode])
-      setEdges((current) => current.map((edge) => ({ ...edge, selected: false })))
-      setSelectedNodeId(id)
-      setSelectedEdgeId(null)
+    if (nodeClipboardRef.current) {
+      pasteCopiedNode(canvasMenu.flowPosition)
       setCanvasMenu(null)
       return
     }
@@ -2107,22 +2129,13 @@ function EditableDiagramCanvasInner({
     try {
       const text = await navigator.clipboard.readText()
       const parsed = parseSource(format === 'c4' ? normalizeC4PlantUml(text, c4Level) : text, format)
-      if (parsed.nodes.length === 0) return
-      const minX = Math.min(...parsed.nodes.map((node) => node.position.x))
-      const minY = Math.min(...parsed.nodes.map((node) => node.position.y))
+      if (parsed.nodes.length === 0) {
+        setClipboardError('Clipboard does not contain valid diagram source.')
+        return
+      }
       const idSuffix = crypto.randomUUID()
       const idMap = new Map(parsed.nodes.map((node) => [node.id, `${node.id}-paste-${idSuffix}`]))
-      const pastedNodes = parsed.nodes.map((node) => ({
-        ...node,
-        id: idMap.get(node.id) ?? node.id,
-        parentNode: node.parentNode ? idMap.get(node.parentNode) : undefined,
-        extent: node.extent,
-        selected: true,
-        position: {
-          x: canvasMenu.flowPosition.x + node.position.x - minX,
-          y: canvasMenu.flowPosition.y + node.position.y - minY,
-        },
-      }))
+      const pastedNodes = pasteDiagramNodes(parsed.nodes, canvasMenu.flowPosition, idMap)
       const pastedEdges = withFacingHandles(pastedNodes, parsed.edges.map((edge) => ({
         ...edge,
         id: `${edge.id}-paste-${idSuffix}`,
@@ -2133,10 +2146,12 @@ function EditableDiagramCanvasInner({
       setEdges((current) => [...current.map((edge) => ({ ...edge, selected: false })), ...pastedEdges])
       setSelectedNodeId(pastedNodes[0]?.id ?? null)
       setSelectedEdgeId(null)
+    } catch {
+      setClipboardError('Could not paste. Check clipboard access and copy valid diagram source, then try again.')
     } finally {
       setCanvasMenu(null)
     }
-  }, [c4Level, canvasMenu, format, setEdges, setNodes])
+  }, [c4Level, canvasMenu, format, pasteCopiedNode, setEdges, setNodes])
 
   const renderCanvasImage = useCallback(
     (nodeIds?: string[]) => renderDiagramViewportImage(reactFlowWrapperRef.current, nodes, edges, nodeIds),
@@ -2223,8 +2238,7 @@ function EditableDiagramCanvasInner({
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'x' && selectedNodeId) {
         event.preventDefault()
-        copyNodeToClipboard(selectedNodeId)
-        deleteNode(selectedNodeId)
+        cutNode(selectedNodeId)
         return
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') {
@@ -2268,7 +2282,7 @@ function EditableDiagramCanvasInner({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [clearDefaultStyle, copyNodeToClipboard, deleteNode, deleteSelected, duplicateNode, editable, pasteCopiedNode, selectCanvasElements, selectedNodeId, setNodeAsDefaultStyle])
+  }, [clearDefaultStyle, copyNodeToClipboard, cutNode, deleteNode, deleteSelected, duplicateNode, editable, pasteCopiedNode, selectCanvasElements, selectedNodeId, setNodeAsDefaultStyle])
 
   const clampStudioPanelPosition = useCallback((x: number, y: number, width: number, height: number) => {
     const zone = canvasZoneRef.current
@@ -2482,9 +2496,9 @@ function EditableDiagramCanvasInner({
   const flowCanvas = (
     <IntegrationArchitectureFlow
       nodes={previewNodes}
-      edges={previewEdges}
+      edges={previewEdges.map(edge => ({ ...edge, deletable: canDiagramEdgeAction(edge, 'delete') }))}
       onNodesChange={editable ? handleNodesChange : () => undefined}
-      onEdgesChange={editable ? onEdgesChange : () => undefined}
+      onEdgesChange={editable ? (changes) => onEdgesChange(changes.filter(change => change.type !== 'remove' || canDiagramEdgeAction(edges.find(edge => edge.id === change.id), 'delete'))) : () => undefined}
       onConnect={editable ? onConnect : () => undefined}
       onUndo={history.undo}
       onRedo={history.redo}
@@ -2494,10 +2508,10 @@ function EditableDiagramCanvasInner({
       onSelectionChange={editable ? handleSelectionChange : () => undefined}
       onEdgeClick={editable ? handleEdgeClick : undefined}
       onPaneClick={editable ? clearCanvasSelection : undefined}
-      onPaneContextMenu={handlePaneContextMenu}
-      onNodeContextMenu={handleNodeContextMenu}
+      onPaneContextMenu={editable ? handlePaneContextMenu : undefined}
+      onNodeContextMenu={editable ? handleNodeContextMenu : undefined}
       onNodeDoubleClick={format === 'c4' ? handleNodeDoubleClick : undefined}
-      onEdgeContextMenu={handleEdgeContextMenu}
+      onEdgeContextMenu={editable ? handleEdgeContextMenu : undefined}
       showGrid={studioMode && showGrid}
       showGuides={studioMode && showGuides}
       snapToGrid={studioMode && snapToGrid}
@@ -2527,6 +2541,12 @@ function EditableDiagramCanvasInner({
     return (
       <div className={cn('relative h-full min-h-0 overflow-hidden rounded-lg bg-white/75', className)}>
         {flowCanvas}
+              {clipboardError ? (
+                <div role="alert" className="absolute bottom-4 left-4 z-50 flex max-w-sm items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 shadow-sm">
+                  <span>{clipboardError}</span>
+                  <button type="button" aria-label="Dismiss clipboard error" className="shrink-0 font-semibold" onClick={() => setClipboardError(null)}>×</button>
+                </div>
+              ) : null}
       </div>
     )
   }
@@ -2582,11 +2602,14 @@ function EditableDiagramCanvasInner({
 
   return (
     <div className={cn('relative flex h-full min-h-0 flex-col overflow-hidden border border-border/40', className)}>
+      {editable && erdDdlSelection ? <ErdDdlDialog selection={erdDdlSelection} onClose={() => setErdDdlSelection(null)} /> : null}
+      {editable && format === 'erd' && erdDdlImportOpen ? <ErdDdlImportDialog key={storageKey} onClose={() => setErdDdlImportOpen(false)} onApply={applyErdDdlImport} /> : null}
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageInputChange} />
       {!hideStudioHeader ? (
         <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-3">
           <p className="text-xs font-medium text-slate-700">Process diagram</p>
           <div className="flex items-center gap-2">
+            {editable && format === 'erd' ? <Button type="button" size="sm" variant="outline" onClick={() => setErdDdlImportOpen(true)}>Import SQL DDL</Button> : null}
             {isC4 ? <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={() => setIsChatAuditOpen(true)}><History className="h-3.5 w-3.5" /> AI history</Button> : null}
             {lastAppliedChatDraft ? <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={undoLastChatDraft}><RotateCcw className="h-3.5 w-3.5" /> Undo AI batch</Button> : null}
           </div>
@@ -2600,15 +2623,23 @@ function EditableDiagramCanvasInner({
           onDrop={handleCanvasDrop}
         >
           {flowCanvas}
-          {canvasMenu ? (
-            <div
+              {clipboardError ? (
+                <div role="alert" className="absolute bottom-4 left-4 z-50 flex max-w-sm items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 shadow-sm">
+                  <span>{clipboardError}</span>
+                  <button type="button" aria-label="Dismiss clipboard error" className="shrink-0 font-semibold" onClick={() => setClipboardError(null)}>×</button>
+                </div>
+              ) : null}
+          {editable && canvasMenu ? (
+            <DiagramEditorMenu
               className="absolute z-50 w-64 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
               data-diagram-context-menu=""
-              style={{ left: Math.max(8, canvasMenu.x), top: Math.max(8, canvasMenu.y) }}
+              boundaryRef={reactFlowWrapperRef} point={{ x: canvasMenu.x, y: canvasMenu.y }}
               onContextMenu={(event) => event.preventDefault()}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
+              {format === 'erd' ? <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setCanvasMenu(null); setErdDdlImportOpen(true) }}>Import SQL DDL</button> : null}
+              {format === 'erd' && nodes.some(n => n.selected && n.type === 'erdEntity') ? <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => { const entity = nodes.find(n => n.selected && n.type === 'erdEntity'); if (entity) setErdDdlSelection(selectErdDdlScope(nodes, edges, entity.id)); setCanvasMenu(null) }}>Generate DDL for selection</button> : null}
               <button type="button" disabled={!hasPasteableContent} className={cn('flex w-full items-center gap-2 px-3 py-2 text-left', hasPasteableContent ? 'hover:bg-slate-100' : 'cursor-not-allowed text-slate-400 opacity-50')} onClick={() => void pasteSourceAtCursor()}>
                 <Copy className="h-4 w-4" /> Paste here
               </button>
@@ -2636,7 +2667,7 @@ function EditableDiagramCanvasInner({
                   <span className="flex items-center gap-2"><Settings2 className="h-4 w-4" /> Options</span><ChevronRight className="h-4 w-4" />
                 </button>
                 {canvasMenu.submenu === 'options' ? (
-                  <div className="absolute left-full top-0 w-64 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+                  <DiagramEditorSubmenu className="w-64 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
                     {[
                       ['Grid', showGrid, setShowGrid, Grid3X3],
                       ['Snap to grid', snapToGrid, setSnapToGrid, Magnet],
@@ -2655,7 +2686,7 @@ function EditableDiagramCanvasInner({
                         {Icon ? <Icon className="h-4 w-4 text-slate-500" /> : null}{label as string}
                       </button>
                     ))}
-                  </div>
+                  </DiagramEditorSubmenu>
                 ) : null}
               </div>
               <div className="relative" onMouseEnter={() => setCanvasMenu((current) => current ? { ...current, submenu: 'layout' } : current)}>
@@ -2663,53 +2694,57 @@ function EditableDiagramCanvasInner({
                   <span className="flex items-center gap-2"><LayoutTemplate className="h-4 w-4" /> Layout</span><ChevronRight className="h-4 w-4" />
                 </button>
                 {canvasMenu.submenu === 'layout' ? (
-                  <div className="absolute bottom-0 left-full w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+                  <DiagramEditorSubmenu className="w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('horizontal')}><ArrowRightLeft className="h-4 w-4" />Horizontal flow</button>
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('vertical')}><ArrowDown className="h-4 w-4" />Vertical flow</button>
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => applyCanvasLayout('circle')}><Circle className="h-4 w-4" />Circle</button>
-                  </div>
+                  </DiagramEditorSubmenu>
                 ) : null}
               </div>
-            </div>
+            </DiagramEditorMenu>
           ) : null}
-          {edgeContextMenu ? (
-            <div
+          {editable && edgeContextMenu ? (
+            <DiagramEditorMenu
               className="absolute z-50 w-60 overflow-hidden rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
               data-diagram-context-menu=""
-              style={{ left: Math.max(8, edgeContextMenu.x), top: Math.max(8, edgeContextMenu.y) }}
+              boundaryRef={reactFlowWrapperRef} point={{ x: edgeContextMenu.x, y: edgeContextMenu.y }}
               onContextMenu={(event) => event.preventDefault()}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
               <div className="px-3 py-2 text-xs font-semibold text-slate-500">Line</div>
               <div className="my-1 border-t border-slate-200" />
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={openSelectedEdgeProperties}>
+              <button disabled={!canDiagramEdgeAction(selectedEdge, 'format')} title={!canDiagramEdgeAction(selectedEdge, 'format') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={openSelectedEdgeProperties}>
                 <Settings2 className="h-4 w-4" /> Format...
               </button>
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={reverseSelectedEdge}>
+              <button disabled={!canDiagramEdgeAction(selectedEdge, 'reverse')} title={!canDiagramEdgeAction(selectedEdge, 'reverse') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={reverseSelectedEdge}>
                 <ArrowRightLeft className="h-4 w-4" /> Reverse
               </button>
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeContextMenu(null) }}>
+              <button disabled={!canDiagramEdgeAction(selectedEdge, 'clearWaypoints')} title={!canDiagramEdgeAction(selectedEdge, 'clearWaypoints') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeContextMenu(null) }}>
                 <Waypoints className="h-4 w-4" /> Clear Waypoints
               </button>
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { clearSelectedEdgeWaypoints(); setEdgeContextMenu(null) }}>
+              <button disabled={!canDiagramEdgeAction(selectedEdge, 'unpin')} title={!canDiagramEdgeAction(selectedEdge, 'unpin') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { unpinSelectedEdgeEnds(); setEdgeContextMenu(null) }}>
                 <Unlink className="h-4 w-4" /> Unpin Connector Ends
               </button>
               <div className="my-1 border-t border-slate-200" />
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50" onClick={() => { deleteSelected(); setEdgeContextMenu(null) }}>
+              <button disabled={!canDiagramEdgeAction(selectedEdge, 'delete')} title={!canDiagramEdgeAction(selectedEdge, 'delete') ? 'Disabled by connector properties' : undefined} type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-red-700 hover:bg-red-50" onClick={() => { deleteSelected(); setEdgeContextMenu(null) }}>
                 <Trash2 className="h-4 w-4" /> Delete
               </button>
-            </div>
+            </DiagramEditorMenu>
           ) : null}
-          {c4NodeMenu && c4MenuNode && c4MenuNode.data.kind !== 'legend' ? (
-            <div
+          {editable && c4NodeMenu && c4MenuNode && c4MenuNode.data.kind !== 'legend' ? (
+            <DiagramEditorMenu
               className="absolute z-50 w-60 rounded-md border border-slate-200 bg-white py-1 text-sm text-slate-700 shadow-xl"
               data-diagram-context-menu=""
-              style={{ left: Math.max(8, c4NodeMenu.x), top: Math.max(8, c4NodeMenu.y) }}
+              boundaryRef={reactFlowWrapperRef} point={{ x: c4NodeMenu.x, y: c4NodeMenu.y }}
               onContextMenu={(event) => event.preventDefault()}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
             >
+              {format === 'erd' && c4MenuNode.type === 'erdEntity' ? <>
+                <div className="px-3 py-2 text-xs font-semibold text-slate-500">{erdMultiSelection ? `Selection: ${nodes.filter(n => n.selected && n.type === 'erdEntity').length} entities, ${edges.filter(e => e.selected).length} relationships` : 'Entity'}</div>
+                <button type="button" className="flex w-full px-3 py-2 text-left hover:bg-slate-100" onClick={() => { setErdDdlSelection(selectErdDdlScope(nodes, edges, c4MenuNode.id)); setC4NodeMenu(null) }}>{erdMultiSelection ? 'Generate DDL for selection' : 'Generate DDL for this entity'}</button>
+              </> : null}
               <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => copyNodeToClipboard(c4MenuNode.id)}>
                 <span className="flex items-center gap-2"><Copy className="h-4 w-4" /> Copy</span><span className="text-xs text-slate-400">Ctrl+C</span>
               </button>
@@ -2717,21 +2752,20 @@ function EditableDiagramCanvasInner({
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
                 onClick={() => {
-                  void copyCanvasAsImage([c4MenuNode.id])
+                  void copyCanvasAsImage(copyDiagramSelection(nodes, edges, c4MenuNode.id).nodes.map(node => node.id))
                   setC4NodeMenu(null)
                 }}
               >
                 <ImageDown className="h-4 w-4" /> Copy as image
               </button>
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => openDiagramChat(c4MenuNode)}>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" disabled={erdMultiSelection} title={erdMultiSelection ? 'Select one entity to ask about its notation' : undefined} onClick={() => openDiagramChat(c4MenuNode)}>
                 <Sparkles className="h-4 w-4" /> Ask Gen AI about this notation
               </button>
               <button
                 type="button"
                 className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100"
                 onClick={() => {
-                  copyNodeToClipboard(c4MenuNode.id)
-                  deleteNode(c4MenuNode.id)
+                  cutNode(c4MenuNode.id)
                 }}
               >
                 <span className="flex items-center gap-2"><Scissors className="h-4 w-4" /> Cut</span><span className="text-xs text-slate-400">Ctrl+X</span>
@@ -2741,32 +2775,45 @@ function EditableDiagramCanvasInner({
                 <span className="flex items-center gap-2"><Copy className="h-4 w-4" /> Duplicate</span><span className="text-xs text-slate-400">Ctrl+D</span>
               </button>
               <div className="my-1 border-t border-slate-200" />
-              <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => deleteNode(c4MenuNode.id)}>
+              <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => { if (c4MenuNode.selected && nodes.filter(n => n.selected).length + edges.filter(e => e.selected).length > 1) { deleteSelected(); setC4NodeMenu(null) } else deleteNode(c4MenuNode.id) }}>
                 <span className="flex items-center gap-2"><Trash2 className="h-4 w-4" /> Delete</span><span className="text-xs text-slate-400">Delete</span>
               </button>
               <div className="my-1 border-t border-slate-200" />
-              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={openNodeProperties}>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" disabled={erdMultiSelection} title={erdMultiSelection ? "Select one entity to edit its styles" : "Styles apply to the right-clicked object"} onClick={openNodeProperties}>
                 <Paintbrush className="h-4 w-4" /> Styles &amp; formatting
               </button>
               {c4MenuNode.data.kind === 'element' ? (
-                <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setNodeAsDefaultStyle(c4MenuNode.id)}>
+                <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" disabled={erdMultiSelection} title="Use the right-clicked object as the insertion default" onClick={() => setNodeAsDefaultStyle(c4MenuNode.id)}>
                   <span className="flex items-center gap-2"><Paintbrush className="h-4 w-4" /> Set as default style</span><span className="text-xs text-slate-400">Ctrl+Shift+D</span>
                 </button>
               ) : null}
               <div className="my-1 border-t border-slate-200" />
-              <div className="relative" onMouseEnter={() => setC4NodeMenu((current) => current ? { ...current, submenu: 'order' } : current)}>
+              <div className="relative" onMouseEnter={() => setC4NodeMenu((current) => current ? { ...current, submenu: 'arrange' } : current)}>
+                <button type="button" aria-haspopup="menu" aria-expanded={c4NodeMenu.submenu === 'arrange'} className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100" onClick={() => setC4NodeMenu((current) => current ? { ...current, submenu: 'arrange' } : current)}>
+                  <span>Align / Distribute</span><ChevronRight className="h-4 w-4" />
+                </button>
+                {c4NodeMenu.submenu === 'arrange' ? (
+                  <DiagramEditorSubmenu className="w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+                    {DIAGRAM_ARRANGE_ACTIONS.map(({ action, label, minimum }) => (
+                      <button key={action} type="button" disabled={arrangeSelectionCount < minimum} title={arrangeSelectionCount < minimum ? `Select at least ${minimum} movable objects` : label} className="flex w-full px-3 py-2 text-left hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => arrangeSelection(action)}>{label}</button>
+                    ))}
+                  </DiagramEditorSubmenu>
+                ) : null}
+              </div>
+              {!erdMultiSelection ? <div className="relative" onMouseEnter={() => setC4NodeMenu((current) => current ? { ...current, submenu: 'order' } : current)}>
                 <button type="button" className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-100">
-                  <span className="flex items-center gap-2"><Layers className="h-4 w-4" /> Order</span><ChevronRight className="h-4 w-4" />
+                  <span title="Order applies to the right-clicked object" className="flex items-center gap-2"><Layers className="h-4 w-4" /> Order</span><ChevronRight className="h-4 w-4" />
                 </button>
                 {c4NodeMenu.submenu === 'order' ? (
-                  <div className="absolute left-full top-0 w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
+                  <DiagramEditorSubmenu className="w-56 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('front'); setC4NodeMenu(null) }}><ChevronsUp className="h-4 w-4" />Bring to front</button>
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('forward'); setC4NodeMenu(null) }}><ArrowRight className="h-4 w-4" />Bring forward</button>
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('backward'); setC4NodeMenu(null) }}><ArrowDown className="h-4 w-4" />Send backward</button>
                     <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100" onClick={() => { handleLayerAction('back'); setC4NodeMenu(null) }}><ChevronsDown className="h-4 w-4" />Send to back</button>
-                  </div>
+                  </DiagramEditorSubmenu>
                 ) : null}
               </div>
+              : null}
               {format === 'c4' && c4Level === 'L1' && c4MenuNode.data.kind === 'element' ? (
                 <>
                   <div className="my-1 border-t border-slate-200" />
@@ -2815,7 +2862,7 @@ function EditableDiagramCanvasInner({
                   ) : null}
                 </>
               ) : null}
-            </div>
+            </DiagramEditorMenu>
           ) : null}
         </div>
 
@@ -2915,7 +2962,7 @@ function EditableDiagramCanvasInner({
                     selectedFlowType={bpmnFlowType}
                     onSelectFlow={(item) => setBpmnFlowType(item.bpmnType)}
                   />
-                ) : format === 'class' || format === 'erd' ? (
+                ) : format === 'class' || format === 'erd' || format === 'use-case' ? (
                   <UmlNotationPalette
                     view={format}
                     selectedRelation={umlRelation}
@@ -3037,6 +3084,7 @@ function EditableDiagramCanvasInner({
           </div>
         ) : null}
       </div>
+      {editable && format === 'erd' && hideStudioHeader ? <div className="absolute right-3 top-3 z-30 flex gap-2"><Button type="button" size="sm" variant="outline" className="bg-white/95 shadow-sm" onClick={() => setErdDdlImportOpen(true)}>Import SQL DDL</Button></div> : null}
       {isC4 && hideStudioHeader ? (
         <div className="pointer-events-none absolute right-3 top-3 z-30 flex gap-2">
           <Button type="button" size="icon" variant="outline" className="pointer-events-auto h-8 w-8 bg-white/95 shadow-sm" title="AI history" onClick={() => setIsChatAuditOpen(true)}><History className="h-4 w-4" /></Button>
