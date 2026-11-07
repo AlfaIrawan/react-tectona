@@ -177,6 +177,32 @@ describe('real endpoint pointer interactions',()=>{
 describe('orthogonal segment pointer interactions',()=>{
  const segment=(horizontal:boolean)=>[...host.querySelectorAll<SVGLineElement>('[data-diagram-segment]')].find(line=>(Number(line.getAttribute('y1'))===Number(line.getAttribute('y2')))===horizontal)!
  const center=(line:SVGLineElement)=>({x:(Number(line.getAttribute('x1'))+Number(line.getAttribute('x2')))/2,y:(Number(line.getAttribute('y1'))+Number(line.getAttribute('y2')))/2})
+ it('removes temporary crossing detours for both axes across zoom, pan and persisted reloads',async()=>{
+  for(const zoom of [0.25,0.55,1,2,4])for(const horizontal of [false,true]){
+   state.zoom=zoom;state.panX=63;state.panY=-27
+   initial=[{...structuredClone(original),sourceHandle:horizontal?'source-bottom':'source-right',targetHandle:horizontal?'target-top':'target-left'}]
+   await act(async()=>root.render(createElement(Harness,{key:`detour-${zoom}-${horizontal}`})))
+   const before=path().getAttribute('d'),savedHandles=[initial[0].sourceHandle,initial[0].targetHandle]
+   const longSpan=()=>[...host.querySelectorAll<SVGLineElement>('[data-diagram-segment]')]
+    .filter(line=>(Number(line.getAttribute('y1'))===Number(line.getAttribute('y2')))===horizontal)
+    .sort((a,b)=>Math.hypot(Number(b.getAttribute('x2'))-Number(b.getAttribute('x1')),Number(b.getAttribute('y2'))-Number(b.getAttribute('y1')))-Math.hypot(Number(a.getAttribute('x2'))-Number(a.getAttribute('x1')),Number(a.getAttribute('y2'))-Number(a.getAttribute('y1'))))[0]
+   const initialCenter=center(longSpan()),axis=horizontal?'y':'x'
+   const source=rawPoint(fixtureNodes[0],savedHandles[0]!),target=rawPoint(fixtureNodes[1],savedHandles[1]!)
+   const coordinates=[source[axis]-70,initialCenter[axis],target[axis]+70,initialCenter[axis]]
+   for(const [step,coordinate] of coordinates.entries()){
+    const span=longSpan(),p=center(span),drop={...p,[axis]:coordinate}
+    await act(async()=>span.dispatchEvent(pointer('pointerdown',screen(p.x,p.y))))
+    await act(async()=>window.dispatchEvent(pointer('pointermove',screen(drop.x,drop.y))))
+    await act(async()=>window.dispatchEvent(pointer('pointerup',screen(drop.x,drop.y))))
+    expect([current[0].sourceHandle,current[0].targetHandle]).toEqual(savedHandles)
+    if(step%2===1){expect(current[0].data.segmentRoute.points).toHaveLength(4);expect(path().getAttribute('d')).toBe(before)}
+    initial=JSON.parse(JSON.stringify(current));state.panX+=20;state.panY-=15
+    const savedPath=path().getAttribute('d')
+    await act(async()=>root.render(createElement(Harness,{key:`detour-reload-${zoom}-${horizontal}-${step}`})))
+    expect(path().getAttribute('d')).toBe(savedPath)
+   }
+  }
+ })
  it('keeps the original route and style on click without an actual drag',async()=>{
   await act(async()=>root.render(createElement(Harness)))
   const line=segment(true),point=center(line),before=path().getAttribute('d'),style=path().getAttribute('style')

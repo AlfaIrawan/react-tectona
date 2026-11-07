@@ -4,6 +4,7 @@ export type RoutePoint = { x: number; y: number }
 export type DiagramSegmentRoute = { routingVersion?:2; points: RoutePoint[]; controls?: import('./diagramManualControls').RouteControl[] }
 export type SegmentPathArgs = { sourceX: number; sourceY: number; targetX: number; targetY: number; sourcePosition: Position; targetPosition: Position }
 const EPS = 0.001
+const TERMINAL_STUB_LENGTH = 18
 export const DIAGRAM_CORNER_RADIUS = 12
 const directions = { left: { x: -1, y: 0 }, right: { x: 1, y: 0 }, top: { x: 0, y: -1 }, bottom: { x: 0, y: 1 } }
 const same = (a: RoutePoint, b: RoutePoint) => Math.abs(a.x-b.x)<EPS && Math.abs(a.y-b.y)<EPS
@@ -63,7 +64,7 @@ export function readSegmentRoute(value: unknown): DiagramSegmentRoute | undefine
   const routingVersion=(value as DiagramSegmentRoute).routingVersion===2?2:undefined
   return { routingVersion, points: compactRoute(points,controls,routingVersion!==2), ...(controls?.length?{controls}:{}) }
 }
-const stub = (p: RoutePoint, side: Position) => ({x:p.x+directions[side].x*18,y:p.y+directions[side].y*18})
+const stub = (p: RoutePoint, side: Position) => ({x:p.x+directions[side].x*TERMINAL_STUB_LENGTH,y:p.y+directions[side].y*TERMINAL_STUB_LENGTH})
 const facingTerminal=(points:RoutePoint[],side:Position,pinned:RoutePoint[]=[]):RoutePoint[]=>{
   if(points.length<2)return points
   const [anchor,next,following=next]=points,dir=directions[side]
@@ -71,13 +72,35 @@ const facingTerminal=(points:RoutePoint[],side:Position,pinned:RoutePoint[]=[]):
   const outward=stub(anchor,side)
   // A dragged track may pass behind its node. Go around it rather than
   // reversing on the same line or changing the arrowhead's facing direction.
-  const offset=dir.x?{x:0,y:following.y>next.y?-18:18}:{x:following.x>next.x?-18:18,y:0}
+  const offset=dir.x?{x:0,y:following.y>next.y?-TERMINAL_STUB_LENGTH:TERMINAL_STUB_LENGTH}:{x:following.x>next.x?-TERMINAL_STUB_LENGTH:TERMINAL_STUB_LENGTH,y:0}
   const a={x:outward.x+offset.x,y:outward.y+offset.y}
   const b=dir.x?{x:next.x,y:a.y}:{x:a.x,y:next.y}
   return compactRoute([anchor,outward,a,b,...points.slice(1)],pinned,false)
 }
 const pinnedTerminals=(points:RoutePoint[],sourcePosition:Position,targetPosition:Position,pinned:RoutePoint[]=[])=>
   facingTerminal(facingTerminal(points,sourcePosition,pinned).slice().reverse(),targetPosition,pinned).reverse()
+
+/** Undo only the small safety adapter inserted by facingTerminal when its track returns.
+ * Keep authored bends and manual helpers; do not globally minimize a user's route.
+ */
+function releaseTerminalDetour(points:RoutePoint[],side:Position,axis:'x'|'y',coordinate:number,pinned:RoutePoint[]):RoutePoint[] {
+  if(points.length<5)return points
+  const [anchor,outward,turn,start,end]=points,dir=directions[side]
+  const normal=dir.x?'x':'y',across=dir.x?'y':'x'
+  if(axis!==normal || Math.abs(start[axis]-coordinate)>EPS || Math.abs(end[axis]-coordinate)>EPS)return points
+  if(!same(outward,stub(anchor,side)) || Math.abs(turn[normal]-outward[normal])>EPS
+    || Math.abs(Math.abs(turn[across]-outward[across])-TERMINAL_STUB_LENGTH)>EPS
+    || Math.abs(start[across]-turn[across])>EPS)return points
+  const junction={...anchor,[axis]:coordinate}
+  // The shortcut must face out from the same anchor and meet the moved span.
+  if((junction.x-anchor.x)*dir.x+(junction.y-anchor.y)*dir.y<=EPS || !onSegment(junction,start,end))return points
+  const adapter=[anchor,outward,turn,start]
+  // Even a helper at an adapter corner may constrain the old leg's axis.
+  // Keep it rather than projecting it onto a different span after shortening.
+  if(pinned.some(p=>adapter.slice(1).some((q,i)=>onSegment(p,adapter[i],q))
+    || onSegment(p,start,end) && !onSegment(p,junction,end)))return points
+  return compactRoute([anchor,junction,...points.slice(4)],pinned,false)
+}
 
 
 /** Rebuild terminal legs from the current node anchors, including after node moves or resize. */
@@ -112,7 +135,9 @@ export function moveRouteSegment(points: RoutePoint[], index: number, coordinate
   const shift=(p:RoutePoint)=>({...p,[axis]:coordinate})
   const start=index===0 ? [a,stub(a,sourcePosition),shift(stub(a,sourcePosition))] : controls.some(p=>same(p,a)) ? [...points.slice(0,index+1),shift(a)] : [...points.slice(0,index),shift(a)]
   const end=endIndex===points.length-1 ? [shift(stub(b,targetPosition)),stub(b,targetPosition),b] : controls.some(p=>same(p,b)) ? [shift(b),...points.slice(endIndex)] : [shift(b),...points.slice(endIndex+1)]
-  return pinnedTerminals(compactRoute([...start,...end],controls,false),sourcePosition,targetPosition,controls)
+  const moved=pinnedTerminals(compactRoute([...start,...end],controls,false),sourcePosition,targetPosition,controls)
+  const sourceReleased=releaseTerminalDetour(moved,sourcePosition,axis,coordinate,controls)
+  return releaseTerminalDetour(sourceReleased.slice().reverse(),targetPosition,axis,coordinate,controls).reverse()
 }
 
 /** Removing a helper releases its old bend pattern, not just its painted dot. */

@@ -100,6 +100,40 @@ describe('whole spans without hidden helper bends',()=>{
  })
 })
 
+describe('temporary terminal detours',()=>{
+ const original=[{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:200,y:100}]
+ const transforms=([false,true] as const).flatMap(transposed=>[1,-1].flatMap(flipX=>[1,-1].map(flipY=>({transposed,flipX,flipY}))))
+ it.each(transforms)('removes obsolete source and target safety bends after crossing and returning ($transposed/$flipX/$flipY)',({transposed,flipX,flipY})=>{
+  const initial=original.map(p=>({x:(transposed?p.y:p.x)*flipX||0,y:(transposed?p.x:p.y)*flipY||0}))
+  const source=transposed?(flipY===1?Position.Bottom:Position.Top):(flipX===1?Position.Right:Position.Left)
+  const target=transposed?(flipY===1?Position.Top:Position.Bottom):(flipX===1?Position.Left:Position.Right)
+  const direction=transposed?flipY:flipX
+  let points=initial
+  for(const coordinate of [-50,100,250,100,-30,100].map(value=>value*direction)){
+   const index=points.findIndex((p,i)=>i<points.length-1 && (transposed?p.y===points[i+1].y:p.x===points[i+1].x)
+    && Math.abs(transposed?points[i+1].x-p.x:points[i+1].y-p.y)>=100)
+   points=moveRouteSegment(points,index,coordinate,source,target)
+   expect(points[0]).toEqual(initial[0]);expect(points.at(-1)).toEqual(initial.at(-1))
+   expect(orthogonal(points)).toBe(true)
+   if(coordinate===100*direction)expect(points).toEqual(initial)
+   const route=readSegmentRoute(JSON.parse(JSON.stringify({points,routingVersion:2})))!
+   const pathArgs={sourceX:initial[0].x,sourceY:initial[0].y,targetX:initial.at(-1)!.x,targetY:initial.at(-1)!.y,sourcePosition:source,targetPosition:target}
+   expect(segmentRoutePoints(pathArgs,route)).toEqual(points)
+  }
+ })
+ it('preserves explicit helpers on the generated detour',()=>{
+  const detour=moveRouteSegment(original,1,-50,Position.Right,Position.Left)
+  for(const control of [{x:18,y:-10},{x:18,y:0}]){
+   const result=moveRouteSegment(detour,3,100,Position.Right,Position.Left,[control])
+   expect(result).toEqual([{x:0,y:0},{x:18,y:0},{x:18,y:-18},{x:100,y:-18},{x:100,y:100},{x:200,y:100}])
+  }
+ })
+ it('does not collapse an intentionally sized terminal route',()=>{
+  const authored=[{x:0,y:0},{x:18,y:0},{x:18,y:-35},{x:100,y:-35},{x:100,y:100},{x:200,y:100}]
+  expect(moveRouteSegment(authored,3,120,Position.Right,Position.Left)).toEqual(authored.map((p,i)=>i===3||i===4?{...p,x:120}:p))
+ })
+})
+
 describe('explicit points bound a span',()=>{
  it('keeps a manual point fixed while only its adjoining span is moved',()=>{
   const control={x:100,y:50,id:'kept',axis:'x' as const}
