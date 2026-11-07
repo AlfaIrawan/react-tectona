@@ -137,7 +137,7 @@ describe('confirmation presentation for existing transcripts', () => {
     expect(container.querySelector('[role=alert]')?.textContent).toContain('Jawaban yang perlu dikonfirmasi belum tersedia')
     expect(container.textContent).not.toContain('Yang ingin aku konfirmasi:')
     expect(container.textContent).toContain('Jawaban belum tersedia.')
-    expect(container.querySelector('p.text-amber-900.font-semibold')?.textContent).toBe(topic)
+    expect(container.querySelector('div.text-amber-900.font-semibold')?.textContent).toBe(topic)
     expect(container.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled).toBe(true)
     await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
     expect(onSubmit).not.toHaveBeenCalled()
@@ -150,7 +150,7 @@ describe('confirmation presentation for existing transcripts', () => {
         text: stored, question: 'Apakah sudah tepat?', indonesian: true,
         renderText: (value: string) => createElement('p', null, value),
       })))
-      const title = Array.from(container.querySelectorAll('p')).find(p => p.textContent === topic)!
+      const title = Array.from(container.querySelectorAll('.font-semibold')).find(p => p.textContent === topic)!
       expect(title).toBeTruthy()
       const body = title.nextElementSibling!
       if (!topicStyle) { topicStyle = title.className; answerStyle = body.className }

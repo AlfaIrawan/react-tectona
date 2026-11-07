@@ -124,7 +124,7 @@ import { BrainstormPainPointOptions } from '../components/BrainstormPainPointOpt
 import { BrainstormCatalogComparison } from '../components/BrainstormCatalogComparison'
 import { IdeaWorkflowDecisionDialog } from '../components/IdeaWorkflowDecisionDialog'
 import { loadIdeaDecisionGates, type IdeaDecisionMode } from '../lib/ideaWorkflowDecisions'
-import { normalizeBrainstormMarkdown, parseNotedAnswer } from '../lib/brainstormMarkdown'
+import { parseNotedAnswer } from '../lib/brainstormMarkdown'
 import { brainstormConfirmationAnswerMissing, brainstormConfirmationContent } from '../lib/brainstormConfirmationContent'
 import { fetchAllIdeaFolders, type IdeaFolderApi } from '@/lib/api/ideaFolderApi'
 import {
@@ -488,115 +488,6 @@ function friendlyBrainstormError(rawMessage: string): string {
 
 // A process diagram drawn in the reply (approved or awaiting approval).
 const BRAINSTORM_DIAGRAM_RE = /```(?:mermaid|plantuml)|@startuml|tectona-process-diagram/i
-
-type BrainstormTextBlock =
-  | { type: 'paragraph'; text: string }
-  | { type: 'list'; items: string[] }
-  // Lines that are already markdown structure — bullets, table rows, headings.
-  // AssistantChatMarkdown renders these properly (react-markdown + remark-gfm,
-  // table styling included); they only ever looked broken because the paragraph
-  // branch below merged them into one run-on line before they got there.
-  | { type: 'markdown'; lines: string[] }
-
-/** Turn inline "(1) … (2) …" / "1. …" into paragraph + ordered-list blocks for chat rendering. */
-function parseBrainstormAssistantBlocks(text: string): BrainstormTextBlock[] {
-  const normalized = text
-    .replace(/\s*(?:atau|or|,)?\s*\((\d+)\)\s+/gi, '\n$1. ')
-    // "- Aktor: … - Sistem: … - Alur: …" arrives as ONE line and has to become
-    // three bullets. Only split a line that already begins with a bullet, so a
-    // hyphen used mid-sentence in ordinary prose is left alone.
-    .split('\n')
-    .map((line) =>
-      /^\s*[-*•]\s+/.test(line) ? line.replace(/\s+[-*•]\s+/g, '\n- ') : line,
-    )
-    .join('\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-
-  if (!normalized) return []
-
-  const lines = normalized.split('\n')
-  const blocks: BrainstormTextBlock[] = []
-  let paragraphParts: string[] = []
-  let listItems: string[] = []
-  let markdownLines: string[] = []
-
-  const flushParagraph = () => {
-    const joined = paragraphParts.join(' ').replace(/\s+/g, ' ').trim()
-    if (joined) blocks.push({ type: 'paragraph', text: joined })
-    paragraphParts = []
-  }
-  const flushList = () => {
-    if (listItems.length > 0) blocks.push({ type: 'list', items: listItems })
-    listItems = []
-  }
-  const flushMarkdown = () => {
-    if (markdownLines.length > 0) blocks.push({ type: 'markdown', lines: markdownLines })
-    markdownLines = []
-  }
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim()
-    if (!line) {
-      flushList()
-      flushMarkdown()
-      flushParagraph()
-      continue
-    }
-    const numbered = line.match(/^\d+[\.\)]\s+(.+)$/)
-    if (numbered?.[1]) {
-      flushParagraph()
-      flushMarkdown()
-      listItems.push(numbered[1].trim())
-      continue
-    }
-    // Bullets, table rows and headings pass through verbatim so remark-gfm can
-    // render them; joining them into a paragraph is what produced the run-on
-    // "- Aktor: … - Sistem: …" line.
-    if (/^[-*•]\s+/.test(line) || line.startsWith('|') || /^#{1,6}\s+/.test(line)) {
-      flushList()
-      flushParagraph()
-      markdownLines.push(line)
-      continue
-    }
-    flushList()
-    flushMarkdown()
-    paragraphParts.push(line)
-  }
-
-  // Peel a trailing question off the last list item so it stays as its own paragraph.
-  if (listItems.length >= 2) {
-    const last = listItems[listItems.length - 1]
-    const sentences = last.split(/(?<=[.!])\s+(?=[A-ZÀ-ÖØ-Þ])/u)
-    if (sentences.length >= 2) {
-      const maybeQuestion = sentences[sentences.length - 1]?.trim() ?? ''
-      if (maybeQuestion.endsWith('?')) {
-        listItems[listItems.length - 1] = sentences.slice(0, -1).join(' ').trim()
-        flushList()
-        paragraphParts.push(maybeQuestion)
-      }
-    }
-  }
-
-  flushList()
-  flushMarkdown()
-  flushParagraph()
-  return blocks
-}
-
-function formatBrainstormProse(chunk: string): string {
-  chunk = normalizeBrainstormMarkdown(chunk)
-  const blocks = parseBrainstormAssistantBlocks(chunk)
-  if (blocks.length === 0) return chunk
-  return blocks
-    .map((block) => {
-      if (block.type === 'paragraph') return block.text
-      if (block.type === 'markdown') return block.lines.join('\n')
-      return block.items.map((item, index) => `${index + 1}. ${item}`).join('\n')
-    })
-    .join('\n\n')
-}
 
 const BRAINSTORM_DIAGRAM_APPROVAL_RE =
   /(?:sudah sesuai|sudah (?:ok|oke|benar|betul)|setuju|sepakat|approve(?:d)?|looks good|that(?:'s| is) (?:correct|right|fine)|ya[,!]?\s*(?:sudah|benar|ok|oke)|ok(?:e)?(?:\s*,)?\s*(?:lanjut|generate|sip)|ok(?:e)?(?:\s+\w+){0,8}\s*(?:aja|saja|lanjut|ikut|setuju|sip|gas)|ikut\s+(?:kamu|saja|aja)|baik(?:lah)?|silakan|boleh\s+(?:lanjut|terus|ya)|gas(?:\s+aja)?|iya[,!]?\s*(?:lanjut|setuju|ok|oke)?|sip[,!]?\s*(?:lanjut|sudah)|validated|validation ok|go\s*ahead|lgtm|sounds good|yes(?:[,!]?\s*(?:please|go\s*ahead|continue|ok|okay))?|yep|yeah|yup|sure|alright|all right|fine by me|agreed|ok je|okay je|teruskan|de acuerdo|está bien|vale|correcto|perfecto|sí|está correto|pode seguir|concordo|d'accord|oui|parfait|c'est bon|stimmt|in ordnung|genau|va bene|perfetto|sì|akkoord|sige|tama|okay lang|đúng|được|ok luôn|vâng|はい|大丈夫|好的|可以|没问题|沒問題|네|좋아요|حسنا|موافق|تمام|نعم|(?:^|\s)(?:ok|okay|oke|y|yy|👍|👌|✅)(?:$|[\s,.!]))/i
@@ -1191,10 +1082,10 @@ function BrainstormProseSegments({ text }: { text: string }) {
           if (segment.type === 'tecchart') {
             return null
           }
-          const prose = formatBrainstormProse(segment.text).trim()
+          const prose = segment.text.trim()
           if (!prose) return null
           return (
-            <AssistantChatMarkdown
+            <BrainstormMarkdown
               key={`p-${index}`}
               content={prose}
               className={BRAINSTORM_MARKDOWN_CLASS}
@@ -1205,8 +1096,8 @@ function BrainstormProseSegments({ text }: { text: string }) {
     )
   }
   return (
-    <AssistantChatMarkdown
-      content={formatBrainstormProse(normalizeMermaidFences(text))}
+    <BrainstormMarkdown
+      content={normalizeMermaidFences(text)}
       className={BRAINSTORM_MARKDOWN_CLASS}
     />
   )
@@ -1315,22 +1206,22 @@ const BRAINSTORM_QUESTION_KIND: Record<'challenge' | 'extended' | 'extended_busi
   challenge: {
     label: 'Challenge Question',
     badge: 'border-amber-200 bg-amber-50 text-amber-800',
-    text: '[&_*]:!text-amber-800',
+    text: '[&_[data-brainstorm-question]]:border-amber-400',
   },
   extended: {
     label: 'Extended Question',
     badge: 'border-violet-200 bg-violet-50 text-violet-800',
-    text: '[&_*]:!text-violet-800',
+    text: '[&_[data-brainstorm-question]]:border-violet-400',
   },
   extended_business: {
     label: 'Extended Question · Business',
     badge: 'border-teal-200 bg-teal-50 text-teal-800',
-    text: '[&_*]:!text-teal-800',
+    text: '[&_[data-brainstorm-question]]:border-teal-400',
   },
   extended_technical: {
     label: 'Extended Question · Technical',
     badge: 'border-indigo-200 bg-indigo-50 text-indigo-800',
-    text: '[&_*]:!text-indigo-800',
+    text: '[&_[data-brainstorm-question]]:border-indigo-400',
   },
 }
 
@@ -1406,7 +1297,7 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
       ) : null}
       {question && !isConfirmation ? (
         <div className={kind?.text}>
-          <p className="my-3 font-semibold">{question}</p>
+          <BrainstormQuestion text={question} />
         </div>
       ) : null}
       {message.suggestion_multiple && message.suggestion_options?.length && onConfirm ? (
@@ -1467,7 +1358,7 @@ import {
   type ExtractedProcessDiagram,
 } from '@/lib/chat/extractProcessDiagrams'
 import { normalizeMermaidFences, splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
-import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
+import { BrainstormMarkdown, BrainstormQuestion } from '../components/BrainstormMarkdown'
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import { IdeaUploadReviewPanel } from '@/modules/project-management/components/IdeaUploadReviewPanel'
 import { IdeaBacklogFoldersSection } from '@/modules/project-management/components/IdeaBacklogFoldersSection'

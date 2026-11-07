@@ -1,6 +1,9 @@
+import { useTenantContext } from '@/auth/TenantContext'
+import { OnboardingUnavailable } from '@/auth/OnboardingUnavailable'
+import { onboardingReturnPath } from '@/auth/onboardingReturnPath'
 import { useState } from 'react'
 import { Loader2, LogOut, MailCheck, ShieldCheck } from 'lucide-react'
-import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { logoutAsync, getSession } from '@/auth/authService'
 import { useCorporateOnboardingRouting } from '@/auth/useCorporateOnboardingRouting'
@@ -19,6 +22,8 @@ import { authCardButtonClass } from '@/lib/authUiClasses'
 export function OnboardingStatusPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const { slug } = useTenantContext()
   const session = getSession()
   const subjectId = session?.user.id ?? ''
   const reason = searchParams.get('reason')
@@ -26,6 +31,9 @@ export function OnboardingStatusPage() {
   const pendingJoinFromNavigation = reason === 'join_pending'
   const {
     loading,
+    statusUnavailable,
+    retryStatus,
+    retrying,
     bypass,
     status,
     progress,
@@ -40,6 +48,10 @@ export function OnboardingStatusPage() {
   const [switchingToAdmin, setSwitchingToAdmin] = useState(false)
   const [switchError, setSwitchError] = useState('')
 
+  if (!bypass && statusUnavailable) {
+    return <OnboardingUnavailable onRetry={retryStatus} retrying={retrying} />
+  }
+
   if (
     !loading &&
     !bypass &&
@@ -48,11 +60,11 @@ export function OnboardingStatusPage() {
     !pendingEmailFromNavigation &&
     !pendingJoinFromNavigation
   ) {
-    return <Navigate to="/onboarding" replace />
+    return <Navigate to="/onboarding" replace state={location.state} />
   }
 
   if (!loading && !bypass && canAccessMainApp) {
-    return <Navigate to="/idea-backlog" replace />
+    return <Navigate to={onboardingReturnPath(location.state, slug)} replace state={location.state} />
   }
 
   const emailVerificationPathActive =
@@ -66,7 +78,7 @@ export function OnboardingStatusPage() {
     !emailVerificationPathActive &&
     pendingEmailFromNavigation
   ) {
-    return <Navigate to="/onboarding" replace />
+    return <Navigate to="/onboarding" replace state={location.state} />
   }
 
   const isBlocked = status === 'blocked'

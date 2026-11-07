@@ -102,3 +102,17 @@ describe('confirmation answer Markdown', () => {
     expect(container.textContent).toContain('Simbol \u2022 digunakan')
   })
 })
+
+
+it('keeps a long legacy understanding collapsed but fully recoverable', async () => {
+  const text = 'Fakta dan asumsi belum dikonfirmasi. '.repeat(35)
+  await act(async () => root.render(createElement(BrainstormSummaryBox, { text, indonesian: true })))
+  const toggle = container.querySelector('button')!
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(container.textContent).not.toContain(text)
+  await act(async () => toggle.click())
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  expect(container.textContent).toContain(text.trim())
+  await act(async () => toggle.click())
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+})

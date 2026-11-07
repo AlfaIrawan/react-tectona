@@ -1,6 +1,8 @@
+import { OnboardingUnavailable } from '@/auth/OnboardingUnavailable'
+import { onboardingReturnPath } from '@/auth/onboardingReturnPath'
 import { useEffect, useState } from 'react'
 import { LogOut } from 'lucide-react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { getSession, logoutAsync } from '@/auth/authService'
 import { useTenantContext } from '@/auth/TenantContext'
@@ -30,10 +32,14 @@ type WizardStep = 'intent' | 'personal' | 'corporate'
 
 export function OnboardingPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
   const session = getSession()
   const {
     loading,
+    statusUnavailable,
+    retryStatus,
+    retrying,
     bypass,
     isCorporateEmail,
     shouldShowOnboardingStatus,
@@ -43,7 +49,7 @@ export function OnboardingPage() {
     progress,
   } = useCorporateOnboardingRouting()
   const appAccess = useAppAccessGate()
-  const { setActiveTenant } = useTenantContext()
+  const { setActiveTenant, slug } = useTenantContext()
 
   const [step, setStep] = useState<WizardStep>(() =>
     session?.user.email && !isConsumerEmail(session.user.email) ? 'corporate' : 'intent',
@@ -64,6 +70,10 @@ export function OnboardingPage() {
     else setStep('corporate')
   }, [intent, isCorporateEmail, progress?.matched])
 
+  if (!bypass && (statusUnavailable || appAccess.statusUnavailable)) {
+    return <OnboardingUnavailable onRetry={() => { retryStatus(); appAccess.refetch() }} retrying={retrying || appAccess.retrying} />
+  }
+
   if (loading || (appAccess.gateEnabled && appAccess.loading && !bypass)) {
     return (
       <PlatformRouteLoadingFallback
@@ -75,7 +85,7 @@ export function OnboardingPage() {
 
   if (!bypass && shouldShowOnboardingStatus) {
     const reason = onboardingStatusReason ?? 'join_pending'
-    return <Navigate to={`/onboarding/status?reason=${reason}`} replace />
+    return <Navigate to={`/onboarding/status?reason=${reason}`} replace state={location.state} />
   }
 
   if (
@@ -84,7 +94,11 @@ export function OnboardingPage() {
     !shouldShowOnboardingWizard &&
     (!appAccess.gateEnabled || appAccess.hasAppAccess)
   ) {
-    return <Navigate to="/idea-backlog" replace />
+    return <Navigate to={onboardingReturnPath(location.state, slug)} replace state={location.state} />
+  }
+
+  if (!bypass && canAccessMainApp && appAccess.gateEnabled && !appAccess.hasAppAccess) {
+    return <Navigate to="/no-workspace-access" replace />
   }
 
   const userEmail = session?.user.email ?? ''
@@ -124,7 +138,7 @@ export function OnboardingPage() {
       clearCorporateEmailVerificationPending(subjectId)
     }
     void queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
-    navigate('/idea-backlog', { replace: true })
+    navigate(onboardingReturnPath(location.state, slug), { replace: true })
   }
 
   const handleCreateOrgPersonal = async (input: { displayName: string; slug: string }) => {
@@ -175,7 +189,7 @@ export function OnboardingPage() {
     }
     void queryClient.invalidateQueries({ queryKey: ['tectona-onboarding-status'] })
     void queryClient.invalidateQueries({ queryKey: ['corporate-onboarding-progress'] })
-    navigate('/idea-backlog', { replace: true })
+    navigate(onboardingReturnPath(location.state, slug), { replace: true })
   }
 
   const handleJoinSubmit = async (input: {

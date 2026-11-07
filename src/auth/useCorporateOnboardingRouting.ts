@@ -50,12 +50,21 @@ export function useCorporateOnboardingRouting() {
   })
 
   const progress = progressQuery.data ?? null
+  // WAC is authoritative for existing users. A directory outage must not turn
+  // an active member into a new user, or a missing status into `none`.
+  const needsProgress = isCorporateEmail &&
+    (onboarding.status === 'none' || onboarding.status === 'corporate_setup_pending')
+  const statusUnavailable = onboarding.enabled && !onboarding.bypass && (
+    onboarding.statusUnavailable ||
+    (!onboarding.loading && onboarding.status == null) ||
+    (needsProgress && (progressQuery.isError || (progressQuery.isFetched && typeof progress?.matched !== 'boolean')))
+  )
   // Do not treat background refetches as a full-page load: that unmounts the
   // onboarding wizard and restarts it on step 1 after "Create and continue".
   // isFetching, not isPending: a query that never starts must not spin forever.
   const loading =
     (onboarding.loading && onboarding.status == null) ||
-    (isCorporateEmail && progressQuery.isFetching && !progressQuery.isFetched)
+    (needsProgress && progressQuery.isFetching && !progressQuery.isFetched)
   const emailVerificationRequired = isCorporateEmailVerificationRequired()
   const adminApprovalRequired = isCorporateAdminApprovalRequired()
   const emailVerificationPathActive = isEmailVerificationPathActive(
@@ -68,8 +77,7 @@ export function useCorporateOnboardingRouting() {
   const limitedShellWhileJoinPending =
     onboarding.status === 'join_pending' &&
     (onboarding.limitedShellAllowed ||
-      onboarding.activeMembershipCount > 0 ||
-      Boolean(progress?.personal_workspace_created))
+      onboarding.activeMembershipCount > 0)
 
   /**
    * WAC status drives completion: `active` = done (including legacy users who onboarded
@@ -109,7 +117,7 @@ export function useCorporateOnboardingRouting() {
 
   const unmatchedSetupIncomplete =
     isCorporateEmail &&
-    !progress?.matched &&
+    progress?.matched === false &&
     Boolean(subjectId) &&
     (!isCorporatePersonalWorkspaceCreated(subjectId) ||
       !isCorporateJoinStepCompleted(subjectId) ||
@@ -132,6 +140,7 @@ export function useCorporateOnboardingRouting() {
     Boolean(progress?.org_workspace_joined)
 
   const shouldShowEmailVerification =
+    onboarding.status !== 'active' &&
     emailVerificationPathActive &&
     (joinStepResolved ||
       onboarding.status === 'email_verify_pending' ||
@@ -155,6 +164,7 @@ export function useCorporateOnboardingRouting() {
         : null
 
   const shouldShowOnboardingWizard =
+    !statusUnavailable &&
     !shouldShowEmailVerification &&
     onboarding.status !== 'email_verify_pending' &&
     onboarding.status !== 'active' &&
@@ -180,7 +190,7 @@ export function useCorporateOnboardingRouting() {
   const requiresOnboardingGate =
     !onboarding.bypass &&
     onboarding.enabled &&
-    (onboarding.statusUnavailable ||
+    (statusUnavailable ||
       (emailVerificationPathActive && onboarding.status === 'email_verify_pending') ||
       onboarding.status === 'corporate_setup_pending' ||
       (emailVerificationPathActive && onboarding.status === 'join_pending') ||
@@ -198,6 +208,12 @@ export function useCorporateOnboardingRouting() {
 
   return {
     loading,
+    statusUnavailable,
+    retrying: onboarding.retrying || (needsProgress && progressQuery.isFetching),
+    retryStatus: () => {
+      onboarding.refetch()
+      void progressQuery.refetch({ cancelRefetch: false })
+    },
     bypass: onboarding.bypass,
     status: onboarding.status,
     progress,

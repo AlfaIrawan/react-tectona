@@ -1,6 +1,6 @@
 import { useId, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
+import { BrainstormMarkdown } from './BrainstormMarkdown'
 import { cn } from '@/lib/utils'
 import { normalizeBrainstormSummary } from '../lib/normalizeBrainstormSummary'
 import { normalizeBrainstormMarkdown } from '../lib/brainstormMarkdown'
@@ -23,7 +23,8 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
     indonesian,
   )
   const long = understandingStartsCollapsed(notes)
-  const [open, setOpen] = useState(true)
+  // Very long legacy summaries remain available without burying the current question.
+  const [open, setOpen] = useState(text.length <= 900)
   const [expanded, setExpanded] = useState(!long)
   const [seen, setSeen] = useState(text)
   if (text !== seen) {
@@ -36,7 +37,7 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
   const visible = !open ? [] : expanded || !long ? notes : previewUnderstandingNotes(notes, UNDERSTANDING_PREVIEW_COUNT)
   const hiddenCount = total - countUnderstandingNotes(visible)
   return (
-    <div className="my-2 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/30">
+    <div className="my-2 min-w-0 max-w-full rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/30">
       <button
         type="button"
         onClick={() => setOpen(value => !value)}
@@ -58,7 +59,7 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
           {notes.length > 0 ? (
             <UnderstandingNoteList notes={visible} plain={notes.length === 1 && notes[0].children.length === 0} />
           ) : (
-            <AssistantChatMarkdown content={normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))} className={className} />
+            <BrainstormMarkdown content={normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))} className={className} />
           )}
           {open && long ? (
             <button
@@ -84,9 +85,9 @@ export function BrainstormNotedAnswer({ question, answer, tone = 'sky' }: { ques
   const ruleColor = { sky: 'border-sky-400', amber: 'border-amber-400', emerald: 'border-emerald-400' }[tone]
   return (
     <div className="my-3">
-      <p className={cn('text-[13px] font-semibold leading-5', topicColor)}>{question}</p>
+      <BrainstormMarkdown content={question} className={cn('text-[13px] font-semibold leading-6', topicColor)} />
       <div className={cn('mt-1 w-fit max-w-full border-b pb-1 text-[15px] leading-7 text-foreground', ruleColor)}>
-        <AssistantChatMarkdown content={formatBrainstormFeatureAnswer(question, normalizeBrainstormMarkdown(normalizeBrainstormSummary(answer)))} className="text-[15px] leading-7 [&_p]:m-0 [&_li]:leading-7 [&_strong]:!text-inherit dark:[&_strong]:!text-inherit" />
+        <BrainstormMarkdown content={formatBrainstormFeatureAnswer(question, normalizeBrainstormMarkdown(normalizeBrainstormSummary(answer)))} className="text-[15px] leading-7 [&_p]:m-0 [&_li]:leading-7 [&_strong]:!text-inherit dark:[&_strong]:!text-inherit" />
       </div>
     </div>
   )
@@ -99,7 +100,7 @@ export function BrainstormDecisionNote({ title, text }: { title: string; text: s
   return (
     <div className="my-2 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-950/40">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">{title}</p>
-      <AssistantChatMarkdown content={body} className="mt-1 text-[13px] leading-6 text-slate-900 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 dark:text-slate-50" />
+      <BrainstormMarkdown content={body} className="mt-1 text-[13px] leading-6 text-slate-900 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 dark:text-slate-50" />
     </div>
   )
 }
@@ -113,7 +114,7 @@ export function BrainstormRevisionNote({ text, indonesian }: { text: string; ind
       <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
         {indonesian ? 'Revisi' : 'Revision'}
       </p>
-      <AssistantChatMarkdown content={body} className="mt-1 text-[13px] leading-6 text-amber-950 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 dark:text-amber-50" />
+      <BrainstormMarkdown content={body} className="mt-1 text-[13px] leading-6 text-amber-950 [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 dark:text-amber-50" />
     </div>
   )
 }
@@ -135,7 +136,7 @@ function UnderstandingNoteList({ notes, prefix = '', plain = false }: { notes: U
                 </span>
               )}
               <div className="min-w-0 flex-1">
-                <AssistantChatMarkdown content={note.text} className={NOTE_CLASS} />
+                <BrainstormMarkdown content={note.text} className={NOTE_CLASS} />
                 {note.children.length > 0 ? <UnderstandingNoteList notes={note.children} prefix={number} /> : null}
               </div>
             </div>

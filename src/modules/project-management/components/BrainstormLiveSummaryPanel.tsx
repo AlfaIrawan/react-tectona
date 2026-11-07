@@ -2,7 +2,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { BookOpenText, ChevronDown, Loader2, PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import { useMobileLayout } from '@/hooks/useMobileLayout'
-import { AssistantChatMarkdown } from '@/modules/core-shell/components/AssistantChatMarkdown'
+import { BrainstormMarkdown } from './BrainstormMarkdown'
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import type { IdeaDraftJobStatusResponse } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
@@ -71,10 +71,10 @@ function AnimatedSummaryText({ text, reduced, active }: { text: string; reduced:
   return (
     <div data-summary-phase={phase} className={cn('grid rounded-sm transition-colors motion-reduce:transition-none', highlight && 'bg-emerald-50 dark:bg-emerald-950/30')}>
       <div className="invisible col-start-1 row-start-1" aria-hidden="true">
-        <AssistantChatMarkdown content={normalizeBrainstormSummary(text)} className={MARKDOWN_CLASS} />
+        <BrainstormMarkdown content={normalizeBrainstormSummary(text)} className={MARKDOWN_CLASS} />
       </div>
       <div className="col-start-1 row-start-1" aria-hidden="true">
-        <AssistantChatMarkdown content={normalizeBrainstormSummary(reduced ? text : display)} className={MARKDOWN_CLASS} />
+        <BrainstormMarkdown content={normalizeBrainstormSummary(reduced ? text : display)} className={MARKDOWN_CLASS} />
       </div>
       <span className="sr-only">{text}</span>
     </div>

@@ -1,3 +1,4 @@
+import { BrainstormQuestion } from './BrainstormMarkdown'
 import type { ReactNode } from 'react'
 import { CircleCheck, Clock3 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -38,7 +39,7 @@ export function BrainstormConfirmationPanel({ text, question, decisionText, deci
       {missing ? <p role="alert" className="mt-3 text-sm leading-6 text-amber-800 dark:text-amber-200">
         {indonesian ? 'Jawaban yang perlu dikonfirmasi belum tersedia. Muat ulang sesi untuk memulihkannya; jangan menyetujui sebelum jawabannya terlihat.' : 'The answer to confirm is unavailable. Reload the session to recover it; do not approve before the answer is visible.'}
       </p> : null}
-      {question ? <p className="mt-3 text-sm font-semibold leading-6">{question}</p> : null}
+      {question ? <BrainstormQuestion text={question} /> : null}
       {missing ? <fieldset disabled className="m-0 min-w-0 border-0 p-0">{children}</fieldset> : children}
     </section>
   )
