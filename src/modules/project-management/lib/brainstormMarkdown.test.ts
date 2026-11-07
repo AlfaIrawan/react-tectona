@@ -68,3 +68,32 @@ it('shows a newly drawn diagram as awaiting confirmation, not automatically conf
     { role: 'assistant', text: 'AS-IS — revisi:\n\n```mermaid\nflowchart LR\nA-->D\n```' }]
   expect(latestSummaryDiagrams(revised).as_is?.status).toBe('awaiting_confirmation')
 })
+
+
+describe('structured question visibility independent of prose', () => {
+  it('keeps code untouched when its literal text matches the question', () => {
+    const text = '```text\nApakah sudah tepat?\n```'
+    expect(splitBrainstormQuestion(text, 'Apakah sudah tepat?')).toEqual({ rest: text, question: 'Apakah sudah tepat?' })
+  })
+  it('removes only the emphasized prose question and preserves surrounding instructions', () => {
+    expect(splitBrainstormQuestion('Konteks.\n\nApakah **Gen AI** sudah tepat?\n\nJelaskan alasannya.', 'Apakah Gen AI sudah tepat?'))
+      .toEqual({ rest: 'Konteks.\n\n\n\nJelaskan alasannya.', question: 'Apakah Gen AI sudah tepat?' })
+  })
+  it('matches literal punctuation and wrapped question words without using them as regex', () => {
+    expect(splitBrainstormQuestion('Pilih A+B (opsi 1)\natau C?\n\nSebutkan alasannya.', 'Pilih A+B (opsi 1) atau C?'))
+      .toEqual({ rest: 'Sebutkan alasannya.', question: 'Pilih A+B (opsi 1) atau C?' })
+  })
+})
+
+it('does not erase a quoted question from a recorded answer', () => {
+  const text = 'Untuk pertanyaan "Siapa penggunanya?", dari ceritamu aku catat: petugas.'
+  expect(splitBrainstormQuestion(text, 'Siapa penggunanya?')).toEqual({ rest: text, question: 'Siapa penggunanya?' })
+})
+
+it.each([
+  'Sebutkan sistem produksi yang dibutuhkan.',
+  'Sebutkan sistem produksi yang dibutuhkan?',
+  'Sebutkan sistem produksi yang dibutuhkan.\n\nJangan mengarang fakta.',
+])('preserves a distinct longer instruction: %s', text => {
+  expect(splitBrainstormQuestion(text, 'Sebutkan sistem')).toEqual({ rest: text, question: 'Sebutkan sistem' })
+})

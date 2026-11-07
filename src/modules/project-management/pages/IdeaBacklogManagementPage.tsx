@@ -1206,7 +1206,7 @@ function brainstormQuestionKind(message: IdeaDraftBrainstormMessage) {
 
 /** An assistant reply: the summary of what was understood in a titled box, and a challenge or
  *  extended question badged and coloured. The text itself is the server's, unchanged. */
-function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [], followupWhileMandatory = false, confirmationStatus = 'pending' }: {
+export function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, diagrams = [], followupWhileMandatory = false, confirmationStatus = 'pending' }: {
   message: IdeaDraftBrainstormMessage; indonesian: boolean
   onConfirm?: (choice: string) => Promise<void> | void; disabled?: boolean
   diagrams?: SummaryDiagramAttachment[]
@@ -1234,6 +1234,11 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
         <span className={cn('mb-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold', kind.badge)}>
           {kind.label}
         </span>
+      ) : null}
+      {question && !isConfirmation ? (
+        <div className={kind?.text}>
+          <BrainstormQuestion text={question} />
+        </div>
       ) : null}
       {hasSummary && !summaryRepeatsNotedAnswer ? (
         <>
@@ -1265,11 +1270,6 @@ function BrainstormAssistantContent({ message, indonesian, onConfirm, disabled, 
           title={message.decision_label || (indonesian ? 'Batasan fase' : 'Phase scope')}
           text={message.decision_text}
         />
-      ) : null}
-      {question && !isConfirmation ? (
-        <div className={kind?.text}>
-          <BrainstormQuestion text={question} />
-        </div>
       ) : null}
       {message.suggestion_multiple && message.suggestion_options?.length && onConfirm ? (
         <BrainstormPainPointOptions key={message.text} options={message.suggestion_options} baseline={message.suggestion_baseline} indonesian={indonesian} disabled={disabled} onSubmit={onConfirm} />
@@ -4530,7 +4530,7 @@ export function IdeaBacklogManagementPage() {
       const lastAssistantIndex = mergedMessages.findLastIndex((item) => item.role === 'assistant')
       // Render the reply's diagram while its text is still being typed, not after.
       if (lastAssistantIndex >= 0) prefetchBrainstormDiagrams(mergedMessages[lastAssistantIndex].text)
-      setBrainstormAnimatingAssistantIndex(lastAssistantIndex >= 0 ? lastAssistantIndex : null)
+      setBrainstormAnimatingAssistantIndex(lastAssistantIndex >= 0 && !mergedMessages[lastAssistantIndex].question_text?.trim() ? lastAssistantIndex : null)
       // Sticky: further answers can only add context, so never drop back to
       // not-ready and pull the Generate draft button out from under the user.
       // An edit replaced later answers, so readiness is what the replayed session says.
@@ -7371,7 +7371,7 @@ export function IdeaBacklogManagementPage() {
                                   </div>
                                   <div className="min-w-0 flex-1 pt-0.5">
                                     <div className="text-[15px] leading-7 text-foreground">
-                                      {index === brainstormAnimatingAssistantIndex ? (
+                                      {index === brainstormAnimatingAssistantIndex && !message.question_text?.trim() ? (
                                         <BrainstormAssistantTypingMessage
                                           text={message.text}
                                           animate

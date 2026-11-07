@@ -84,11 +84,40 @@ export function splitBrainstormQuestion(text: string, questionText?: string | nu
   const last = paragraphs.at(-1) ?? ''
   const cleanLast = last.replace(/(?<!\\)\*\*/g, '').trim()
   const asked = questionText?.replace(/(?<!\\)\*\*/g, '').trim() ?? ''
-  if (last.includes('```') || last.includes('~~~')) return { rest: text, question: '' }
+  const lastHasFence = last.includes('```') || last.includes('~~~')
+  if (lastHasFence && !asked) return { rest: text, question: '' }
   const lastAsks = isClosingQuestion(cleanLast)
-  if (lastAsks && (!asked || cleanLast === asked || cleanLast.startsWith(asked))) {
+  if (!lastHasFence && lastAsks && (!asked || cleanLast === asked || (asked.endsWith('?') && cleanLast.startsWith(asked) && /^\s*(?:\([^)]*\)\s*)+$/.test(cleanLast.slice(asked.length))))) {
     return { rest: paragraphs.slice(0, -1).join('\n\n'), question: cleanLast }
   }
   if (!asked) return { rest: text, question: '' }
-  return { rest: cleanLast === asked ? paragraphs.slice(0, -1).join('\n\n') : text, question: asked }
+  // Structured questions may be absent from prose, precede an instruction, or
+  // follow a diagram. Never suppress them because a different field contains code.
+  // Remove a matching prose occurrence only; leave every surrounding instruction.
+  let offset = 0
+  for (const [index, part] of text.split(/(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]+`)/g).entries()) {
+    if (index % 2 === 0) {
+      const pattern = asked.split(/\s+/).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')
+      const plain = part.replace(/(?<!\\)\*\*/g, '')
+      const match = new RegExp(pattern).exec(plain)
+      // A quoted question inside a recorded answer/instruction is meaningful context.
+      // Deduplicate only a question starting its own prose line.
+      const suffix = match ? plain.slice(match.index + match[0].length) : ''
+      const endsPrompt = /^(?:[^\S\n]*\n|\s*$)/.test(suffix)
+        || (/[?!.]$/.test(asked) && /^\s/.test(suffix))
+      if (match && endsPrompt && !plain.slice(0, match.index).split('\n').at(-1)?.trim()) {
+        // Map the emphasis-free match back to original offsets, retaining other Markdown.
+        const positions: number[] = []
+        for (let at = 0; at < part.length; at += 1) {
+          if (part.slice(at, at + 2) === '**' && part[at - 1] !== '\\') { at += 1; continue }
+          positions.push(at)
+        }
+        let start = positions[match.index], end = positions[match.index + match[0].length - 1] + 1
+        if (part.slice(Math.max(0, start - 2), start) === '**' && part.slice(end, end + 2) === '**') { start -= 2; end += 2 }
+        return { rest: (text.slice(0, offset + start) + text.slice(offset + end)).trim(), question: asked }
+      }
+    }
+    offset += part.length
+  }
+  return { rest: text, question: asked }
 }
