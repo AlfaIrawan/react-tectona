@@ -618,6 +618,8 @@ export interface IdeaDraftBrainstormMessage {
   conversation_action?: 'navigation' | 'defer' | 'discovery_question' | 'revision_pending' | 'question_explanation' | 'analysis_request' | 'analysis_resume' | null
   /** Basis of a sub-question (the user's quoted words and the question they answered), set by the server. */
   evidence?: string | null
+  /** Server-marked full source recap; preserve source sections and all content. */
+  summary_mode?: 'complete_sources' | null
   /** The part of the text that summarises what was understood, shown in a "Rangkuman Pemahaman" box. */
   summary?: string | null
   intake_review_ready?: boolean
@@ -2882,7 +2884,7 @@ export async function restoreIdeaDraftBrainstormSession(
         ...payload,
         messages: payload.messages.map((message) => ({
           ...message,
-          summary: fitBrainstormSummary(message.summary),
+          summary: message.role === 'assistant' && message.summary_mode === 'complete_sources' ? message.summary : fitBrainstormSummary(message.summary),
         })),
       }),
     },

@@ -1243,7 +1243,7 @@ export function BrainstormAssistantContent({ message, indonesian, onConfirm, dis
       {hasSummary && !summaryRepeatsNotedAnswer ? (
         <>
           {before ? <BrainstormNotedProse text={before} /> : null}
-          <BrainstormSummaryBox text={summary} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS}>
+          <BrainstormSummaryBox text={summary} summaryMode={message.summary_mode} indonesian={indonesian} className={BRAINSTORM_MARKDOWN_CLASS}>
             <BrainstormSummaryDiagrams diagrams={diagrams} indonesian={indonesian} />
           </BrainstormSummaryBox>
           {message.revision_text && !revisionInConfirmation ? <BrainstormRevisionNote text={message.revision_text} indonesian={indonesian} /> : null}

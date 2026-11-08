@@ -12,14 +12,17 @@ const NOTE_CLASS = 'text-[13px] leading-6 text-sky-950 [&_p]:m-0 [&_strong]:font
 
 /** The "Rangkuman Pemahaman" box: numbered notes, not the Live AI Summary sections.
  *  A long note list starts collapsed to the first few. */
-export function BrainstormSummaryBox({ text, indonesian, className, children }: {
+export function BrainstormSummaryBox({ text, summaryMode, indonesian, className, children }: {
   text: string
+  summaryMode?: 'complete_sources' | null
   indonesian: boolean
   className?: string
   children?: ReactNode
 }) {
-  const notes = classifyUnderstandingNotes(
-    parseUnderstandingNotes(normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))),
+  const normalized = normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))
+  const sectioned = summaryMode === 'complete_sources'
+  const notes = sectioned ? [] : classifyUnderstandingNotes(
+    parseUnderstandingNotes(normalized),
     indonesian,
   )
   const long = understandingStartsCollapsed(notes)
@@ -56,10 +59,14 @@ export function BrainstormSummaryBox({ text, indonesian, className, children }: 
       </button>
       {open ? (
         <div id={contentId} className="mt-2">
-          {notes.length > 0 ? (
+          {sectioned ? (
+            <div data-brainstorm-sectioned-summary>
+              <BrainstormMarkdown content={normalized} className={cn(className, '[&_p:has(>em:only-child)]:!mt-1 [&_p:has(>em:only-child)]:text-sm [&_p:has(+p>em:only-child)]:!mb-1')} />
+            </div>
+          ) : notes.length > 0 ? (
             <UnderstandingNoteList notes={visible} plain={notes.length === 1 && notes[0].children.length === 0} />
           ) : (
-            <BrainstormMarkdown content={normalizeBrainstormMarkdown(normalizeBrainstormSummary(text))} className={className} />
+            <BrainstormMarkdown content={normalized} className={className} />
           )}
           {open && long ? (
             <button
