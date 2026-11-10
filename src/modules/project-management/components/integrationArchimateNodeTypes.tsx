@@ -804,11 +804,12 @@ export function ArchimateLegendNode() {
   )
 }
 
-function classMember(raw: string): { label: string; isMethod: boolean } {
+function classMember(raw: string, inferType = true): { label: string; isMethod: boolean } {
   const text = raw.trim().replace(/^[+\-#~]\s*/, '')
   if (text.includes('(')) return { label: text, isMethod: true }
   const typed = text.match(/^([^:]+):\s*(.+)$/)
   if (typed) return { label: `${typed[1].trim()} : ${typed[2].trim()}`, isMethod: false }
+  if (!inferType) return { label: text, isMethod: false }
   const typeName = /(?:^id|_id)$/i.test(text) ? 'Id' : 'String'
   return { label: `${text} : ${typeName}`, isMethod: false }
 }
@@ -836,7 +837,7 @@ function memberTypography(textStyle: ArchimateElementNodeData['textStyle']): CSS
 
 export function UmlClassNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
   const layoutKey = `${width ?? 0}x${height ?? 0}`
-  const members = data.description.map(classMember).filter((member) => member.label)
+  const members = data.description.map(raw => classMember(raw, data.umlStereotype !== 'field_sketch')).filter((member) => member.label)
   const attributes = members.filter((member) => !member.isMethod)
   const methods = members.filter((member) => member.isMethod)
   const border = selected ? '#2E86C1' : '#7F8C9B'
@@ -852,6 +853,7 @@ export function UmlClassNode({ id, data, selected, width, height }: NodeProps<Ar
         <div className="flex items-center gap-1.5 px-2 py-1.5" style={{ borderBottom: members.length ? '1px solid #C5CED6' : undefined }}>
           <UmlClassGlyph />
           <div className="min-w-0 flex-1 text-center">
+            {data.umlStereotype ? <div className="text-[10px] font-normal leading-[14px] text-slate-500">{`<<${data.umlStereotype}>>`}</div> : null}
             {data.stereotype === 'interface' || data.stereotype === 'enumeration' ? (
               <div className="text-[10px] font-normal leading-3 text-slate-500">«{data.stereotype}»</div>
             ) : null}
@@ -884,14 +886,14 @@ export function UmlClassNode({ id, data, selected, width, height }: NodeProps<Ar
   )
 }
 
-function erdColumn(raw: string): { name: string; label: string; pk: boolean; fk: boolean } {
+function erdColumn(raw: string, inferForeignKey = true): { name: string; label: string; pk: boolean; fk: boolean } {
   const pk = /^\*/.test(raw.trim()) || /<<\s*PK\s*>>/i.test(raw)
   const markedFk = /<<\s*FK\s*>>/i.test(raw)
   const cleaned = raw.replace(/^\*\s*/, '').replace(/<<[^>]+>>/g, '').trim()
   const typed = cleaned.match(/^([^:]+):\s*(.+)$/)
   const name = (typed ? typed[1] : cleaned).trim()
   const typeName = typed ? typed[2].trim() : ''
-  const fk = markedFk || (!pk && /_id$/i.test(name) && !/^id$/i.test(name))
+  const fk = markedFk || (inferForeignKey && !pk && /_id$/i.test(name) && !/^id$/i.test(name))
   return { name, label: typeName ? `${name} : ${typeName}` : name, pk, fk }
 }
 
@@ -899,7 +901,7 @@ export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<A
   const layoutKey = `${width ?? 0}x${height ?? 0}`
   const fill = data.visual?.fillColor || '#FFF4CC'
   const stroke = data.visual?.lineColor || '#C4A35A'
-  const columns = data.description.map(erdColumn).filter((column) => column.name)
+  const columns = data.description.map(raw => erdColumn(raw, data.umlStereotype !== 'field_sketch')).filter((column) => column.name)
   return (
     <div className="group relative h-full w-full overflow-visible">
       <SelectionResizer selected={selected} minWidth={150} minHeight={64} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
@@ -909,6 +911,7 @@ export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<A
         style={{ ...buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: stroke, lineWidth: 1.5, rounded: false, ...data.visual }), fontFamily: 'Arial, Helvetica, sans-serif' }}
       >
         <div className="shrink-0 break-words px-2 py-1.5 text-center text-[13px] font-bold" style={{ ...(data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle) : {}), borderBottom: `1.5px solid ${stroke}` }}>
+          {data.umlStereotype ? <div className="text-[10px] font-normal leading-[14px]">{`<<${data.umlStereotype}>>`}</div> : null}
           <InlineDiagramNodeTitle nodeId={id} value={data.title} />
         </div>
         <div data-erd-column-compartment="" className="nowheel min-h-0 flex-1 overflow-auto px-2 py-1 text-[11px] leading-[18px]">

@@ -31,7 +31,7 @@ export type IdeaDraftBrainstormPointer = {
   pendingIdeaLink?: boolean
   status?: string
   composerDraft?: string
-  form?: { description: string; html?: string; type: string; reviewer: string }
+  form?: { description: string; html?: string; type: string; reviewer: string; sourceSelectionVersion?: 1 }
   /** Recovery snapshot — everything restoreIdeaDraftBrainstormSession needs. */
   tags?: string[]
   workspaceId?: string | null

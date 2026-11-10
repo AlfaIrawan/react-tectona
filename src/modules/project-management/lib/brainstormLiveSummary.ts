@@ -1,4 +1,5 @@
 import type { IdeaDraftJobStatusResponse } from '@/lib/api/tectonaAgentRuntimeApi'
+import { hasUploadReviewMetadata, uploadReviewEvents } from './uploadReviewProjection'
 
 export type LiveSummarySection = {
   id: string
@@ -12,9 +13,13 @@ export function confirmedSummaryDiagramTimeline(messages: IdeaDraftJobStatusResp
   const pending: Partial<Record<'as_is' | 'to_be', string>> = {}
   const confirmed: typeof pending = {}
   const timeline: Array<typeof pending> = []
-  for (const message of messages ?? []) {
+  const uploadEvents = uploadReviewEvents(messages ?? [])
+  for (const [index, message] of (messages ?? []).entries()) {
+    for (const event of uploadEvents.get(index) ?? []) {
+      if (event.kind === 'approved') { confirmed[event.lane] = event.source; pending[event.lane] = event.source }
+    }
     for (const lane of message.invalidated_process_lanes ?? []) { delete pending[lane]; delete confirmed[lane] }
-    if (message.role !== 'assistant' || typeof message.text !== 'string') { timeline.push({ ...confirmed }); continue }
+    if (hasUploadReviewMetadata(message) || message.role !== 'assistant' || typeof message.text !== 'string') { timeline.push({ ...confirmed }); continue }
     const text = message.text.replace(/\r\n/g, '\n')
     for (const fence of text.matchAll(/```(?:plantuml|mermaid|bpmn)\s*\n([\s\S]*?)```/gi)) {
       const headings = [...text.slice(0, fence.index).matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?(AS-IS|TO-BE)\s*[\u2014\u2013:-]/gi)]
@@ -45,9 +50,23 @@ export function confirmedSummaryDiagrams(messages: IdeaDraftJobStatusResponse['b
 export function latestSummaryDiagrams(messages: IdeaDraftJobStatusResponse['brainstorm_messages']) {
   const latest: Partial<Record<'as_is' | 'to_be', NonNullable<LiveSummarySection['diagram']>>> = {}
   const confirmed = confirmedSummaryDiagrams(messages)
+  const uploadEvents = uploadReviewEvents(messages ?? [])
+  const beforeUpload: Partial<Record<'as_is' | 'to_be', NonNullable<LiveSummarySection['diagram']>>> = {}
   for (const [index, message] of (messages ?? []).entries()) {
+    for (const event of uploadEvents.get(index) ?? []) {
+      if (event.kind === 'cancel') {
+        if (beforeUpload[event.lane]) latest[event.lane] = beforeUpload[event.lane]
+        else delete latest[event.lane]
+        delete beforeUpload[event.lane]
+      } else {
+        if (event.kind === 'pending') beforeUpload[event.lane] = latest[event.lane]
+        latest[event.lane] = { source: event.source, lane: event.lane, version: `${index}:${event.lane}:${event.id}`,
+          status: event.kind === 'approved' ? 'confirmed' : 'awaiting_confirmation' }
+        if (event.kind === 'approved') delete beforeUpload[event.lane]
+      }
+    }
     for (const lane of message.invalidated_process_lanes ?? []) delete latest[lane]
-    if (message.role !== 'assistant' || typeof message.text !== 'string') continue
+    if (hasUploadReviewMetadata(message) || message.role !== 'assistant' || typeof message.text !== 'string') continue
     const text = message.text.replace(/\r\n/g, '\n')
     for (const fence of text.matchAll(/```(?:plantuml|mermaid|bpmn)\s*\n([\s\S]*?)```/gi)) {
       const heading = [...text.slice(0, fence.index).matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?(AS-IS|TO-BE)\s*[\u2014\u2013:-]/gi)].at(-1)?.[1].toUpperCase()

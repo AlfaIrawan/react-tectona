@@ -45,7 +45,7 @@ describe('process diagram editor helpers', () => {
   it('removes fenced implementation source from the editor prose', () => {
     const draft = `Ringkasan proses\n\nAS-IS\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\`\n\nTO-BE\n\`\`\`plantuml\n${TO_BE_SOURCE}\n\`\`\``
 
-    expect(stripProcessDiagramsFromText(draft)).toBe('Ringkasan proses\n\nAS-IS\n\nTO-BE')
+    expect(stripProcessDiagramsFromText(draft)).toBe('Ringkasan proses')
   })
 
   it('keeps diagrams as hidden persisted markup that can be extracted later', () => {
@@ -141,4 +141,135 @@ describe('process diagram editor helpers', () => {
     expect(latestValidatedTechnicalDiagrams(text).map((diagram) => diagram.kind)).toEqual(['sequence'])
     expect(latestRevisedProcessDiagrams(text)).toEqual([])
   })
+})
+
+
+describe('captions attached to extracted business-process sources', () => {
+  it.each(['as-is', 'AS-IS', 'AS-IS:', '## AS-IS', '**AS-IS:**', 'AS IS'])('removes only the attached caption %s', caption => {
+    const text = `Perubahan Proses\n\n${caption}\n\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\`\n\nPenjelasan tetap ada.`
+    expect(stripProcessDiagramsFromText(text)).toBe('Perubahan Proses\n\nPenjelasan tetap ada.')
+    expect(latestRevisedProcessDiagrams(text)[0].source).toBe(AS_IS_SOURCE)
+  })
+  it.each(['plantuml', 'PLANTUML', 'mermaid'])('uses supported fence language %s and CRLF', language => {
+    const source = language === 'mermaid' ? 'flowchart LR\nA --> B' : AS_IS_SOURCE
+    const text = `Prosa\n\nAS-IS:\n\`\`\`${language} \n${source}\n\`\`\``.replace(/\n/g, '\r\n')
+    expect(stripProcessDiagramsFromText(text).trim()).toBe('Prosa')
+  })
+  it('removes duplicate same-lane label-only wrappers but preserves other headings', () => {
+    const text = `AS-IS\n\nTO-BE:\n\n**TO-BE**\n\`\`\`plantuml\n${TO_BE_SOURCE}\n\`\`\``
+    expect(stripProcessDiagramsFromText(text)).toBe('AS-IS')
+  })
+  it.each([
+    `<!--tectona-process-diagram:as_is:${encodeURIComponent(AS_IS_SOURCE)}-->`,
+    '<!--tectona-mermaid\nflowchart LR\nA --- B-->',
+  ])('supports valid extracted source comments', block => {
+    expect(stripProcessDiagramsFromText(`Konteks\n\nAS-IS:\n${block}`)).toBe('Konteks')
+  })
+  it.each([
+    'AS-IS:\nProses sekarang tetap manual.',
+    'AS-IS adalah proses manual.',
+    '## AS-IS\n\nPenjelasan proses.',
+    'AS-IS:\n<!--tectona-process-diagram:as_is:%invalid-->',
+    'AS-IS:\n```bpmn\n<definitions/>\n```',
+  ])('preserves meaningful or unsupported label context: %s', text => {
+    expect(stripProcessDiagramsFromText(text)).toContain('AS-IS')
+  })
+  it('does not remove technical captions even when a business-process source follows', () => {
+    expect(stripProcessDiagramsFromText(`Class\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\``)).toBe('Class')
+  })
+  it('does not remove AS-IS labels attached to technical sources', () => {
+    expect(stripProcessDiagramsFromText('AS-IS\n```plantuml\n@startuml\nclass Example\n@enduml\n```')).toBe('AS-IS')
+  })
+  it('keeps non-caption AS-IS prose immediately before a diagram', () => {
+    expect(stripProcessDiagramsFromText(`AS-IS: petugas meninjau manual.\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\``)).toBe('AS-IS: petugas meninjau manual.')
+  })
+})
+
+it('preserves a mismatched lane caption before an explicitly tagged stored source', () => {
+  const text = `TO-BE:\n<!--tectona-process-diagram:as_is:${encodeURIComponent(AS_IS_SOURCE)}-->`
+  expect(stripProcessDiagramsFromText(text)).toBe('TO-BE:')
+})
+it('leaves unsupported fences and non-diagram code unchanged', () => {
+  for (const text of ['AS-IS\n~~~plantuml\nstart\n~~~', 'AS-IS\n```typescript\nconst value = 1\n```']) {
+    expect(extractProcessDiagramsFromText(text)).toEqual([])
+    expect(stripProcessDiagramsFromText(text)).toBe(text)
+  }
+})
+it('does not change extraction or stored source bytes while cleaning visible captions', () => {
+  const draft = `as-is:\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\`\n\nTO-BE:\n\`\`\`plantuml\n${TO_BE_SOURCE}\n\`\`\``
+  const diagrams = latestRevisedProcessDiagrams(draft)
+  const stored = appendProcessDiagramsToText(draft, diagrams)
+  expect(stripProcessDiagramsFromText(stored)).toBe('')
+  expect(extractProcessDiagramsFromText(stored).map(d => [d.kind, d.source])).toEqual(diagrams.map(d => [d.kind, d.source]))
+})
+
+it('retains a caption whose lane the existing gallery cannot recognize', () => {
+  const draft = `__AS-IS__\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\``
+  expect(latestRevisedProcessDiagrams(draft)).toEqual([])
+  expect(stripProcessDiagramsFromText(draft)).toBe('__AS-IS__')
+})
+
+
+describe('exact source identity', () => {
+  const original = '@startuml\nentity "Order  Item" as OrderID {\n id: int\n}\n@enduml'
+  const fence = (source: string) => `\`\`\`plantuml\n${source}\n\`\`\``
+  it.each([
+    ['identifier case', original.replace('OrderID', 'orderid')],
+    ['label case', original.replace('Order  Item', 'order  item')],
+    ['quoted spaces', original.replace('Order  Item', 'Order Item')],
+  ])('preserves distinct %s revisions through extraction, comments and latest selection', (_label, revised) => {
+    const extracted = extractProcessDiagramsFromText(`${fence(original)}\n${fence(revised)}`)
+    expect(extracted.map(item => item.source)).toEqual([original, revised])
+    const saved = appendProcessDiagramsToText('Recap', [{ kind: 'erd', source: original }, { kind: 'erd', source: revised }])
+    expect(extractProcessDiagramsFromText(saved).map(item => item.source)).toEqual([original, revised])
+    expect(latestValidatedTechnicalDiagrams(saved)[0]?.source).toBe(revised)
+    expect(latestValidatedTechnicalDiagrams(`${fence(original)}\n${fence(revised)}`)[0]?.source).toBe(revised)
+  })
+  it('still deduplicates byte-identical source across fences and encoded comments', () => {
+    const saved = appendProcessDiagramsToText('Recap', [{ kind: 'erd', source: original }, { kind: 'erd', source: original }])
+    expect(extractProcessDiagramsFromText(`${fence(original)}\n${saved}`).map(item => item.source)).toEqual([original])
+  })
+})
+
+it('preserves identical bodies explicitly assigned to different process lanes', () => {
+  const source = AS_IS_SOURCE
+  const saved = appendProcessDiagramsToText('Recap', [{ kind: 'as_is', source }, { kind: 'to_be', source }])
+  expect(extractProcessDiagramsFromText(saved).map(item => item.kind)).toEqual(['as_is', 'to_be'])
+  const text = `AS-IS:\n\`\`\`plantuml\n${source}\n\`\`\`\nTO-BE:\n\`\`\`plantuml\n${source}\n\`\`\``
+  expect(latestRevisedProcessDiagrams(text).map(item => item.kind)).toEqual(['as_is','to_be'])
+})
+
+it('does not create distinct identity from ambiguous lane mentions in prose', () => {
+  const source = AS_IS_SOURCE
+  const fence = `\`\`\`plantuml\n${source}\n\`\`\``
+  const text = `We discussed AS-IS as background.\n${fence}\nWe discussed TO-BE as another possibility.\n${fence}`
+  expect(extractProcessDiagramsFromText(text)).toHaveLength(1)
+})
+
+it('preserves same-body opposite lanes under lowercase standalone headings', () => {
+  const fence = `\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\``
+  expect(extractProcessDiagramsFromText(`as-is:\n${fence}\nto-be:\n${fence}`).map(item => item.kind)).toEqual(['as_is','to_be'])
+})
+it('deduplicates omitted and explicit unlabeled kinds that serialize identically', () => {
+  const saved = appendProcessDiagramsToText('Recap', [{ source: AS_IS_SOURCE }, { kind: 'unlabeled', source: AS_IS_SOURCE }])
+  expect((saved.match(/<!--tectona-process-diagram:/g) ?? []).length).toBe(1)
+})
+
+it.each([
+  ['AS IS', 'TO BE'], ['ASIS', 'TOBE'], ['**AS-IS:**', '**TO-BE:**'],
+  ['### AS-IS:', '### TO-BE:'], ['__AS IS:__', '__TO BE:__'],
+])('retains same-body explicit canonical heading forms %s / %s', (asIs, toBe) => {
+  const fence = `\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\``
+  expect(extractProcessDiagramsFromText(`${asIs}\n${fence}\n${toBe}\n${fence}`)).toHaveLength(2)
+})
+
+
+it('removes only the exact internal approved wrapper bound to a process caption', () => {
+  const header = 'DIAGRAM PROSES BISNIS YANG SUDAH DISETUJUI (wajib masuk draft):'
+  const process = `${header}\nAS-IS:\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\``
+  expect(stripProcessDiagramsFromText(process)).toBe('')
+  expect(latestRevisedProcessDiagrams(process)[0].source).toBe(AS_IS_SOURCE)
+  expect(stripProcessDiagramsFromText(`${header}\nAS-IS:\n\`\`\`plantuml\n@startuml\nclass Example\n@enduml\n\`\`\``)).toContain(header)
+  expect(stripProcessDiagramsFromText(`${header}\nAS-IS:\n\`\`\`unknown\nraw\n\`\`\``)).toContain(header)
+  expect(stripProcessDiagramsFromText(`Discuss ${header} with the owner.\nAS-IS:\n\`\`\`plantuml\n${AS_IS_SOURCE}\n\`\`\``)).toContain(`Discuss ${header} with the owner.`)
 })

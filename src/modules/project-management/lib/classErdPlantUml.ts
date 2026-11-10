@@ -8,6 +8,8 @@ export type UmlBox = {
   id: string
   title: string
   members: string[]
+  /** Explicit source annotation; independent of the UML declaration kind. */
+  stereotype?: string
   kind?: 'class' | 'interface' | 'enumeration' | 'entity'
 }
 
@@ -57,8 +59,8 @@ function memberLines(body: string): string[] {
     .filter((line) => line && line !== '--' && line !== '..' && line !== '__' && !line.startsWith("'"))
 }
 
-const BLOCK_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w-]*))(?:\s+as\s+([A-Za-z_][\w-]*))?\s*\{([^}]*)\}/gi
-const BARE_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w-]*))(?:\s+as\s+([A-Za-z_][\w-]*))?\s*$/gim
+const BLOCK_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w-]*))(?:\s+as\s+([A-Za-z_][\w-]*))?(?:[ \t]+<<([A-Za-z_][\w-]*)>>)?\s*\{([^}]*)\}/gi
+const BARE_RE = /(class|entity|interface|enum)\s+(?:"([^"]+)"|([A-Za-z_][\w-]*))(?:\s+as\s+([A-Za-z_][\w-]*))?(?:[ \t]+<<([A-Za-z_][\w-]*)>>)?[ \t]*$/gim
 const REL_RE = /^([A-Za-z_][\w-]*)\s*(?:"([^"]*)"\s*)?([|{}o<>*+]*)(--+|\.\.+)([|{}o<>*+]*)(?:\s*"([^"]*)")?\s*([A-Za-z_][\w-]*)(?:\s*:\s*(.+))?$/
 
 function decoration(token: string): UmlDecoration {
@@ -88,20 +90,20 @@ function parseCardinality(token: string): ErdEnd | undefined {
 export function parseUmlDiagram(source: string, view: UmlView): UmlDiagram {
   const boxes: UmlBox[] = []
   const seen = new Set<string>()
-  const add = (keyword: string, title: string, id: string, members: string) => {
+  const add = (keyword: string, title: string, id: string, members: string, stereotype?: string) => {
     const boxId = id || slug(title)
     if (!title || seen.has(boxId)) return
     seen.add(boxId)
     const kind = keyword === 'enum' ? 'enumeration' : keyword === 'interface' ? 'interface' : keyword === 'entity' ? 'entity' : 'class'
-    boxes.push({ id: boxId, title, members: memberLines(members), kind })
+    boxes.push({ id: boxId, title, members: memberLines(members), kind, ...(stereotype ? { stereotype } : {}) })
   }
 
-  let rest = extractBody(source).replace(BLOCK_RE, (_match, keyword: string, quoted: string, plain: string, alias: string, members: string) => {
-    add(keyword, (quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), members || '')
+  let rest = extractBody(source).replace(BLOCK_RE, (_match, keyword: string, quoted: string, plain: string, alias: string, stereotype: string, members: string) => {
+    add(keyword, (quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), members || '', stereotype)
     return ''
   })
-  rest = rest.replace(BARE_RE, (_match, keyword: string, quoted: string, plain: string, alias: string) => {
-    add(keyword, (quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), '')
+  rest = rest.replace(BARE_RE, (_match, keyword: string, quoted: string, plain: string, alias: string, stereotype: string) => {
+    add(keyword, (quoted || plain || '').trim(), alias || (quoted ? slug(quoted) : plain), '', stereotype)
     return ''
   })
 
@@ -156,11 +158,12 @@ export function serializeUmlDiagram(diagram: UmlDiagram): string {
     const keyword = boxKeyword(diagram.view, box)
     const simple = box.title === box.id && /^[A-Za-z_]\w*$/.test(box.title)
     const name = simple ? box.title : `${quote(box.title)} as ${box.id}`
+    const annotation = box.stereotype ? ` <<${box.stereotype}>>` : ''
     if (box.members.length === 0) {
-      lines.push(`${keyword} ${name}`)
+      lines.push(`${keyword} ${name}${annotation}`)
       continue
     }
-    lines.push(`${keyword} ${name} {`)
+    lines.push(`${keyword} ${name}${annotation} {`)
     for (const member of box.members) lines.push(`  ${member}`)
     lines.push('}')
   }
@@ -215,4 +218,58 @@ export function umlLinkFromCanvasEdge(edge: CanvasUmlEdge, view: UmlView): UmlLi
 export function erdRelationDefaults(relation: string): Record<string, boolean> {
   return { sourceMany: relation === 'many-to-many', targetMany: !['one-to-one', 'one-to-zero-or-one'].includes(relation),
     sourceOptional: false, targetOptional: relation === 'one-to-zero-or-one' || relation === 'one-to-zero-or-many' }
+}
+
+/** Conservative qualification for a declaration-only native preview.
+ * Unknown syntax, relations, annotations and constraints must use source fallback.
+ * This intentionally does not broaden the editor's tolerant parser contract.
+ */
+export function canPreviewUmlLosslessly(source: string, view: UmlView): boolean {
+  const lines = source.replace(/\r\n/g, '\n').trim().split('\n')
+  if (lines.shift()?.trim() !== '@startuml' || lines.pop()?.trim() !== '@enduml') return false
+  const declarations: Array<{ id: string; title: string; members: string[]; stereotype?: string }> = []
+  const ids = new Set<string>()
+  let current: typeof declarations[number] | undefined
+  let styling = false
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line || line.startsWith("'")) continue
+    if (styling) {
+      if (line === '}') { styling = false; continue }
+      if (!/^(?:BackgroundColor|BorderColor|HeaderBackgroundColor|FontColor|AttributeFontColor|StereotypeFontColor) #[0-9A-Fa-f]{6}$/.test(line)
+        && !/^FontName (?:monospace|Arial)$/.test(line)) return false
+      continue
+    }
+    if (current) {
+      if (line === '}') { current = undefined; continue }
+      // No member stereotypes, keys, inferred constraints, methods or separators.
+      if (!/^[A-Za-z_][\w-]*(?:\s*:\s*[A-Za-z_][\w]*(?:\[\])?)?$/.test(line)) return false
+      if (view === 'class' && current.stereotype !== 'field_sketch' && !line.includes(':')) return false
+      // The legacy ERD renderer infers FK emphasis from an _id suffix.
+      if (view === 'erd' && current.stereotype !== 'field_sketch' && /_id$/i.test(line.split(':', 1)[0].trim())) return false
+      current.members.push(line)
+      continue
+    }
+    if (/^skinparam (?:class|entity) \{$/.test(line)) { styling = true; continue }
+    if (/^skinparam (?:shadowing false|roundcorner (?:0|12)|linetype ortho)$/.test(line) || line === 'hide circle') continue
+    if (line === `title ${view === 'class' ? 'Class' : 'ERD'}`) continue
+    const match = line.match(/^(class|entity|interface|enum)\s+(?:"([^"\\]+)"|([A-Za-z_][\w-]*))(?:\s+as\s+([A-Za-z_][\w-]*))?(?:[ \t]+<<([A-Za-z_][\w-]*)>>)?(?:[ \t]*(\{)[ \t]*(\})?)?$/)
+    if (!match || (view === 'erd' ? match[1] !== 'entity' : match[1] === 'entity')) return false
+    const title = match[2] || match[3]
+    const id = match[4] || (match[2] ? slug(match[2]) : match[3])
+    if (ids.has(id)) return false
+    ids.add(id)
+    const box = { id, title, members: [] as string[], ...(match[5] ? { stereotype: match[5] } : {}) }
+    declarations.push(box)
+    if (match[6] && !match[7]) current = box
+  }
+  if (current || styling || !declarations.length) return false
+  const parsed = parseUmlDiagram(source, view)
+  return parsed.links.length === 0 && parsed.boxes.length === declarations.length
+    && declarations.every((expected, index) => {
+      const actual = parsed.boxes[index]
+      return actual.id === expected.id && actual.title === expected.title
+        && actual.stereotype === expected.stereotype
+        && JSON.stringify(actual.members) === JSON.stringify(expected.members)
+    })
 }

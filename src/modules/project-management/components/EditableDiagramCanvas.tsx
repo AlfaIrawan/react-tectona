@@ -48,7 +48,7 @@ import { C4_APPLICATION_CATALOG_MIME, C4_PALETTE_MIME, C4_PALETTE_ITEMS, createC
 import { type DiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
 import { isArchimateElementData, type ArchimateElementNodeData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, parseC4Graph, serializeC4Graph, type C4ElementKind, type C4ParsedGraph } from '@/modules/project-management/lib/c4PlantUml'
-import { parseUmlDiagram, serializeUmlDiagram, umlRelationDefaults, umlLinkToCanvasData, umlLinkFromCanvasEdge, erdRelationDefaults, type UmlDiagram, type UmlRelation, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
+import { parseUmlDiagram, serializeUmlDiagram, umlRelationDefaults, umlLinkToCanvasData, umlLinkFromCanvasEdge, erdRelationDefaults, type UmlBox, type UmlDiagram, type UmlRelation, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
 import { isCanvasViewport, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
 import { defaultIntegrationNodeTextStyle, defaultIntegrationNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
 import { pickCenteredAnchoredHandles, type NodeGeometry } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
@@ -408,6 +408,7 @@ function toBpmnNode(item: ParsedNode, position: { x: number; y: number }): Node<
       title: item.label || bpmnStereotype(bpmnType),
       description: [],
       notationId: bpmnType,
+      bpmnLane: item.lane ?? null,
       visual: {
         fillEnabled: true,
         fillColor: '#ffffff',
@@ -725,13 +726,13 @@ function graphFromUml(source: string, view: UmlView, diagram?: UmlDiagram): { no
     const attributes = box.members.filter((line) => !line.includes('('))
     const methods = box.members.filter((line) => line.includes('('))
     const boxKind = erd ? 'entity' : box.kind === 'interface' || box.kind === 'enumeration' ? box.kind : 'class'
-    const stereotypeExtra = boxKind === 'interface' || boxKind === 'enumeration' ? 14 : 0
+    const stereotypeExtra = (boxKind === 'interface' || boxKind === 'enumeration' ? 14 : 0) + (box.stereotype ? 14 : 0)
     const longest = Math.max(box.title.length + 2, ...box.members.map((line) => erdMemberName(line).length + (erd ? 0 : 10)))
     const erdSize = erdEntityDefaultSize(box.title, box.members)
     const width = erd ? erdSize.width : Math.min(280, Math.max(148, longest * 6.6 + 40))
     const memberLines = (members: string[]) => members.reduce((total, line) => total + Math.max(1, Math.ceil(line.length * 6.6 / (width - 48))), 0)
     const height = erd
-      ? erdSize.height
+      ? erdSize.height + (box.stereotype ? 14 : 0)
       : 32 + stereotypeExtra + (attributes.length ? memberLines(attributes) * 16 + 8 : 0) + (methods.length ? memberLines(methods) * 16 + 8 : 0)
     if (column === columns) {
       column = 0
@@ -750,6 +751,7 @@ function graphFromUml(source: string, view: UmlView, diagram?: UmlDiagram): { no
         kind: 'element',
         layer: 'application',
         stereotype: boxKind,
+        umlStereotype: box.stereotype,
         title: box.title,
         description: box.members,
         notationId: boxKind,
@@ -824,6 +826,11 @@ function parseSource(source: string, format: DiagramFormat) {
   const nodes = parsed.nodes.map((item, index) => toArchimateNode(item, index))
   const edges = withFacingHandles(nodes, toArchimateEdges(parsed))
   return { nodes, edges }
+}
+
+/** Build canonical preview data without mounting editor effects or accessing storage. */
+export function buildReadOnlyDiagramCanvasGraph(source: string, format: DiagramFormat) {
+  return parseSource(source, format)
 }
 
 function loadGraph(key: string, fallback: { nodes: Node<ArchimateNodeData>[]; edges: Edge[] }) {
@@ -1206,7 +1213,7 @@ function EditableDiagramCanvasInner({
         if (node.type !== 'umlClass' || node.data.kind !== 'element') return node
         const attributes = node.data.description.filter((line) => !line.includes('('))
         const methods = node.data.description.filter((line) => line.includes('('))
-        const stereotypeExtra = node.data.stereotype === 'interface' || node.data.stereotype === 'enumeration' ? 14 : 0
+        const stereotypeExtra = (node.data.stereotype === 'interface' || node.data.stereotype === 'enumeration' ? 14 : 0) + (node.data.umlStereotype ? 14 : 0)
         const width = Number(node.style?.width ?? node.width ?? 180)
         const memberLines = (members: string[]) => members.reduce((total, line) => total + Math.max(1, Math.ceil(line.length * 6.6 / Math.max(40, width - 48))), 0)
         const height = 32 + stereotypeExtra + (attributes.length ? memberLines(attributes) * 16 + 8 : 0) + (methods.length ? memberLines(methods) * 16 + 8 : 0)
@@ -1259,7 +1266,7 @@ function EditableDiagramCanvasInner({
     persistTimerRef.current = window.setTimeout(async () => {
       const graph = { nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid }
       try {
-        const canvasPngBase64 = await canvasDocumentSnapshot(reactFlowWrapperRef.current, nodes)
+        const canvasPngBase64 = await canvasDocumentSnapshot(reactFlowWrapperRef.current, nodes, edges)
         if (!cancelled) onPersistGraphRef.current?.({ ...graph, canvasPngBase64 })
       } catch {
         if (!cancelled) onPersistGraphRef.current?.({ ...graph, canvasExportError: true })
@@ -1282,11 +1289,12 @@ function EditableDiagramCanvasInner({
     if (format !== 'class' && format !== 'erd') return
     setSourceDraft((current) => {
       const boxes = nodes
-        .filter((node) => (node.type === 'umlClass' || node.type === 'erdEntity') && node.data.kind === 'element')
-        .map((node) => ({
+        .filter((node): node is Node<ArchimateElementNodeData> => (node.type === 'umlClass' || node.type === 'erdEntity') && node.data.kind === 'element')
+        .map((node): UmlBox => ({
           id: node.id,
           title: node.data.title,
           members: node.data.description,
+          stereotype: node.data.umlStereotype,
           kind: node.data.stereotype === 'interface' || node.data.stereotype === 'enumeration' || node.data.stereotype === 'entity' || node.data.stereotype === 'class'
             ? node.data.stereotype
             : undefined,
@@ -1299,7 +1307,7 @@ function EditableDiagramCanvasInner({
   useEffect(() => {
     if (format !== 'bpmn') return
     setSourceDraft((current) => {
-      const next = serializeBpmnCanvasToPlantUml(nodes, edges)
+      const next = serializeBpmnCanvasToPlantUml(nodes, edges, current)
       return next === current ? current : next
     })
   }, [edges, format, nodes])
@@ -1562,7 +1570,8 @@ function EditableDiagramCanvasInner({
           return
         }
         const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-        const newNode = applyDefaultElementStyle(createBpmnNodeFromPaletteItem(item, position, nodes.map((node) => node.id)))
+        const created = createBpmnNodeFromPaletteItem(item, position, nodes.map((node) => node.id))
+        const newNode = applyDefaultElementStyle(created.data.kind === 'element' ? { ...created, data: { ...created.data, bpmnLane: null } } : created)
         setNodes((current) => [...current, newNode])
         setSelectedNodeId(newNode.id)
         setSelectedEdgeId(null)

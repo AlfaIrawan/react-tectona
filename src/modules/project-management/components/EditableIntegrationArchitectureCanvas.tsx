@@ -321,7 +321,7 @@ function EditableIntegrationArchitectureCanvasInner({
       nextChangeRef.current = null
       window.dispatchEvent(new CustomEvent('tectona-diagram-content-pending', { detail: { ideaId, diagramKey: 'brainstorm-archimate' } }))
       const snapshotRevision = ++snapshotRevisionRef.current
-      void canvasDocumentSnapshot(reactFlowWrapperRef.current, nextNodes).then(
+      void canvasDocumentSnapshot(reactFlowWrapperRef.current, nextNodes, nextEdges).then(
         canvasPngBase64 => { if (snapshotRevision === snapshotRevisionRef.current) onPersistGraph?.({ ...graph, canvasPngBase64 }, change) },
         () => { if (snapshotRevision === snapshotRevisionRef.current) onPersistGraph?.({ ...graph, canvasExportError: true }, change) },
       )

@@ -74,6 +74,13 @@ export function isBusinessProcessSource(source: string): boolean {
   return /process_start|\(\)\s+"|^\s*start\b|^\s*(?:flowchart|graph)\s+|rectangle\s+"/im.test(text)
 }
 
+/** Identity may distinguish lanes only from an attached standalone heading, not prose mentions. */
+function explicitHeadingIdentity(prefix: string): 'as_is' | 'to_be' | 'unlabeled' {
+  const heading = (prefix.trimEnd().split('\n').at(-1)?.trim() ?? '')
+    .replace(/^#{1,6}\s*/, '').replace(/\*\*|__/g, '').replace(/:\s*$/, '').trim()
+  return /^AS[ -]?IS$/i.test(heading) ? 'as_is' : /^TO[ -]?BE$/i.test(heading) ? 'to_be' : 'unlabeled'
+}
+
 /** Extract canonical PlantUML and legacy Mermaid diagrams from idea text. */
 export function extractProcessDiagramsFromText(text: string): ExtractedProcessDiagram[] {
   const input = (text || '').replace(/\r\n?/g, '\n')
@@ -105,16 +112,16 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
   while ((fenceMatch = PROCESS_FENCE_RE.exec(input)) !== null) {
     const source = (fenceMatch[1] || '').trim()
     if (!source) continue
-    const key = source.replace(/\s+/g, ' ').toLowerCase()
+    const kind = classifyPrefix(input.slice(Math.max(0, fenceMatch.index - 500), fenceMatch.index))
+    const key = JSON.stringify([technicalDiagramKind(source) ?? explicitHeadingIdentity(input.slice(0, fenceMatch.index)), source])
     if (seen.has(key)) continue
     seen.add(key)
 
-    const kind = classifyPrefix(input.slice(Math.max(0, fenceMatch.index - 500), fenceMatch.index))
     results.push({ kind, label: '', source })
   }
 
   for (const comment of commentSources) {
-    const key = comment.source.replace(/\s+/g, ' ').toLowerCase()
+    const key = JSON.stringify([technicalDiagramKind(comment.source) ?? comment.kind, comment.source])
     if (seen.has(key)) continue
     seen.add(key)
     results.push({ kind: comment.kind, label: '', source: comment.source })
@@ -219,9 +226,49 @@ export function technicalDiagramGallery(
   }))
 }
 
+/** Remove only same-lane caption wrappers bound to an extracted business-process block. */
+export function stripAttachedProcessCaptions(text: string): string {
+  const blocks = new RegExp([
+    TECTONA_ENCODED_DIAGRAM_COMMENT_RE.source,
+    TECTONA_DIAGRAM_COMMENT_RE.source,
+    DIAGRAM_FENCE_RE.source,
+  ].join('|'), 'gi')
+  let result = text
+  // Work backwards so offsets still refer to the original source, not cleaned prose.
+  for (const match of [...text.matchAll(blocks)].reverse()) {
+    const diagram = extractProcessDiagramsFromText(match[0])[0]
+    if (!diagram || !['as_is', 'to_be', 'unlabeled'].includes(diagram.kind) || !isBusinessProcessSource(diagram.source)) continue
+    const prefix = text.slice(0, match.index)
+    if (diagram.kind === 'unlabeled' && classifyPrefix(prefix) === 'unlabeled') continue
+    const lines = [...prefix.matchAll(/^[^\r\n]*(?:\r?\n|$)/gm)]
+    let start = prefix.length
+    let lane: 'as_is' | 'to_be' | null = diagram.kind === 'as_is' || diagram.kind === 'to_be' ? diagram.kind : null
+    let found = false
+    while (lines.length) {
+      const line = lines.pop()!
+      const clean = line[0].trim().replace(/^#{1,6}\s+/, '').replace(/\*\*|__/g, '').replace(/:\s*$/, '').trim()
+      if (clean) {
+        // Only the known internal wrapper directly attached to a recognized lane.
+        if (found && /^DIAGRAM PROSES BISNIS YANG SUDAH DISETUJUI \(wajib masuk draft\)$/i.test(clean)) {
+          start = line.index!
+          break
+        }
+        const candidate = /^AS[ -]?IS$/i.test(clean) ? 'as_is' : /^TO[ -]?BE$/i.test(clean) ? 'to_be' : null
+        if (!candidate || (lane && lane !== candidate)) break
+        lane = candidate
+        found = true
+      }
+      // Use original line lengths, including CRLF, rather than normalized offsets.
+      start = line.index!
+    }
+    if (found) result = result.slice(0, start) + result.slice(match.index)
+  }
+  return result
+}
+
 /** Remove diagram implementation text from prose that is shown in a rich-text editor. */
 export function stripProcessDiagramsFromText(text: string): string {
-  return (text || '')
+  return stripAttachedProcessCaptions(text || '')
     .replace(TECTONA_ENCODED_DIAGRAM_COMMENT_RE, '')
     .replace(TECTONA_DIAGRAM_COMMENT_RE, '')
     .replace(DIAGRAM_FENCE_RE, '')
@@ -239,7 +286,7 @@ export function appendProcessDiagramsToText(
     .filter((diagram) => {
       const source = diagram.source.trim()
       if (!source) return false
-      const key = source.replace(/\s+/g, ' ').toLowerCase()
+      const key = JSON.stringify([technicalDiagramKind(source) ?? storedDiagramKind(diagram.kind), source])
       if (seen.has(key)) return false
       seen.add(key)
       return true

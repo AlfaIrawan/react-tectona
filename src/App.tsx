@@ -106,9 +106,9 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppBackgroundVideo />
       <ToastProvider>
         <BrowserRouter>
+          <AppBackgroundVideo />
           <AppErrorBoundary>
           <SessionProvider>
             <TectonaNavigateBridge />

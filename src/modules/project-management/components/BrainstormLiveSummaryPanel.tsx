@@ -6,7 +6,7 @@ import { BrainstormMarkdown } from './BrainstormMarkdown'
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import type { IdeaDraftJobStatusResponse } from '@/lib/api/tectonaAgentRuntimeApi'
 import { cn } from '@/lib/utils'
-import { attachLatestSummaryDiagrams, buildBrainstormLiveSummary, summaryTextChange, type LiveSummarySection } from '../lib/brainstormLiveSummary'
+import { attachLatestSummaryDiagrams, buildBrainstormLiveSummary, type LiveSummarySection } from '../lib/brainstormLiveSummary'
 import { normalizeBrainstormSummary } from '../lib/normalizeBrainstormSummary'
 import { BRAINSTORM_FLOATING_HEADER_CLASS, BRAINSTORM_FLOATING_PANEL_CLASS } from '../lib/brainstormFloatingPanel'
 
@@ -26,55 +26,21 @@ function useReducedMotion() {
 const MARKDOWN_CLASS = 'text-sm leading-6 [&_strong]:font-semibold [&_strong]:text-foreground [&_li]:leading-6 [&_li]:my-1 [&_ul]:my-2 [&_ol]:my-2 [&_p]:my-2 [&_em]:text-muted-foreground'
 
 function AnimatedSummaryText({ text, reduced, active }: { text: string; reduced: boolean; active: boolean }) {
-  const [display, setDisplay] = useState('')
-  const displayed = useRef('')
-  const [phase, setPhase] = useState<'idle' | 'deleting' | 'typing'>('idle')
+  const previous = useRef(text)
   const [highlight, setHighlight] = useState(false)
   useEffect(() => {
-    if (!active) return
-    let timer: ReturnType<typeof setTimeout>
-    let highlightTimer: ReturnType<typeof setTimeout>
-    const publish = (value: string) => { displayed.current = value; setDisplay(value) }
-    const finish = () => {
-      publish(text)
-      setPhase('idle')
-      setHighlight(!reduced)
-      highlightTimer = setTimeout(() => setHighlight(false), 1200)
-    }
-    if (reduced || displayed.current === text) {
-      publish(text)
-      setPhase('idle')
-      setHighlight(false)
-      return
-    }
-    const change = summaryTextChange(displayed.current, text)
-    let remaining = change.removed.length
-    let written = 0
-    const eraseStep = Math.max(1, Math.ceil(remaining / 8))
-    const typeStep = Math.max(1, Math.ceil(change.added.length / 20))
-    const tick = () => {
-      if (remaining > 0) {
-        setPhase('deleting')
-        remaining = Math.max(0, remaining - eraseStep)
-        publish(change.prefix + change.removed.slice(0, remaining).join('') + change.suffix)
-      } else {
-        setPhase('typing')
-        written = Math.min(change.added.length, written + typeStep)
-        publish(change.prefix + change.added.slice(0, written).join('') + change.suffix)
-        if (written === change.added.length) { finish(); return }
-      }
-      timer = setTimeout(tick, 24)
-    }
-    tick()
-    return () => { clearTimeout(timer); clearTimeout(highlightTimer) }
+    const changed = previous.current !== text
+    previous.current = text
+    const start = setTimeout(() => setHighlight(changed && active && !reduced), 0)
+    const finish = setTimeout(() => setHighlight(false), 1200)
+    return () => { clearTimeout(start); clearTimeout(finish) }
   }, [text, reduced, active])
+  // Animation readiness must never gate readable content, including on resume.
+  // Keep only a non-blocking update highlight, not deletion/typewriter frames.
   return (
-    <div data-summary-phase={phase} className={cn('grid rounded-sm transition-colors motion-reduce:transition-none', highlight && 'bg-emerald-50 dark:bg-emerald-950/30')}>
-      <div className="invisible col-start-1 row-start-1" aria-hidden="true">
+    <div data-summary-phase="idle" className={cn('rounded-sm transition-colors motion-reduce:transition-none', highlight && active && !reduced && 'bg-emerald-50 dark:bg-emerald-950/30')}>
+      <div aria-hidden="true">
         <BrainstormMarkdown content={normalizeBrainstormSummary(text)} className={MARKDOWN_CLASS} />
-      </div>
-      <div className="col-start-1 row-start-1" aria-hidden="true">
-        <BrainstormMarkdown content={normalizeBrainstormSummary(reduced ? text : display)} className={MARKDOWN_CLASS} />
       </div>
       <span className="sr-only">{text}</span>
     </div>
@@ -94,10 +60,10 @@ function SummarySection({ section, reduced, active }: { section: LiveSummarySect
   )
 }
 
-export function BrainstormLiveSummaryPanel({ job, busy, error, mobileExpanded, onToggleMobile }: {
+export function BrainstormLiveSummaryPanel({ job, busy, requestFailed = false, mobileExpanded, onToggleMobile }: {
   job: IdeaDraftJobStatusResponse | null
   busy: boolean
-  error?: string
+  requestFailed?: boolean
   mobileExpanded?: boolean
   onToggleMobile?: () => void
 }) {
@@ -115,25 +81,35 @@ export function BrainstormLiveSummaryPanel({ job, busy, error, mobileExpanded, o
   const previousSummary = useRef('')
   const panelRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const candidate = JSON.stringify(buildBrainstormLiveSummary(job))
+  const readyRevisionInvalid = job?.live_summary?.status === 'ready'
+    && (!job.revision || job.live_summary.source_revision !== job.revision)
+  const candidate = JSON.stringify(buildBrainstormLiveSummary(readyRevisionInvalid ? null : job))
   const summaryUnavailable = job?.live_summary?.status === 'unavailable'
-    || Boolean(job?.live_summary?.status === 'ready' && job.revision && job.live_summary.source_revision !== job.revision)
-  const [snapshot, setSnapshot] = useState(() => buildBrainstormLiveSummary(null))
+    || readyRevisionInvalid
+  // A remount loses local snapshot state, not the server's validated persisted summary.
+  // Require explicit revision equality before displaying a persisted ready snapshot.
+  const seedCandidate = !busy && job?.live_summary?.status === 'ready'
+    && Boolean(job.revision) && job.live_summary.source_revision === job.revision
+    ? candidate : JSON.stringify(buildBrainstormLiveSummary(null))
+  const [snapshot, setSnapshot] = useState(() => JSON.parse(seedCandidate) as ReturnType<typeof buildBrainstormLiveSummary>)
   const snapshotJob = useRef(job?.job_id)
   const diagramMessages = JSON.stringify(job?.brainstorm_messages ?? [])
   useEffect(() => {
-    // Never publish optimistic edits, partial replies, or failed request results.
+    // Only saved summary status/revision governs publication, not composer request errors.
     if (snapshotJob.current !== job?.job_id) {
       snapshotJob.current = job?.job_id
       setSnapshot(buildBrainstormLiveSummary(null))
       firstSummarySeen.current = false
     }
-    if (busy || error) return
+    if (busy) {
+      // Keep the previous processed snapshot while a request is in flight.
+      return
+    }
     setSnapshot(previous => {
-      const next = !summaryUnavailable || !previous.sections.length ? JSON.parse(candidate) as typeof previous : previous
+      const next = !summaryUnavailable ? JSON.parse(candidate) as typeof previous : previous
       return attachLatestSummaryDiagrams(next, JSON.parse(diagramMessages))
     })
-  }, [candidate, diagramMessages, busy, error, summaryUnavailable, job?.job_id])
+  }, [candidate, seedCandidate, diagramMessages, busy, summaryUnavailable, job?.job_id])
   const hasSummary = snapshot.sections.some(section => Boolean(section.text.trim()))
   const summaryText = snapshot.sections.map(section => section.text + (section.diagram ? section.diagram.source + section.diagram.status : '')).join('\n\n')
   useEffect(() => {
@@ -206,13 +182,14 @@ export function BrainstormLiveSummaryPanel({ job, busy, error, mobileExpanded, o
         <button type="button" title="Collapse summary" aria-label="Collapse summary" onClick={() => { setExpanded(false); setMobileOpen(false) }} className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:inline-flex"><PanelRightClose className="h-4 w-4" /></button>
         <button type="button" title="Close summary" aria-label="Close summary" onClick={() => setMobileOpen(false)} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted min-[1440px]:hidden"><X className="h-4 w-4" /></button>
       </header>}
-      {busy || error || summaryUnavailable ? <div className="shrink-0 border-b border-border/70 px-4 py-3">
-        <p role="status" className={cn('flex items-start gap-1.5 text-xs leading-5', error || summaryUnavailable ? 'text-destructive' : 'text-muted-foreground')}>
+      {busy || summaryUnavailable ? <div className="shrink-0 border-b border-border/70 px-4 py-3">
+        <p role="status" className={cn('flex items-start gap-1.5 text-xs leading-5', summaryUnavailable ? 'text-destructive' : 'text-muted-foreground')}>
           {busy ? <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : null}
           {busy ? 'Updating summary...' : 'Update failed. Showing the last processed summary.'}
         </p>
       </div> : null}
-      {!busy && !error && !summaryUnavailable && job?.live_summary?.recovery_mode === 'evidence_rebuild' ? <p role="status" className="shrink-0 border-b border-border/70 px-4 py-3 text-xs leading-5 text-muted-foreground">Summary rebuilt from saved evidence.</p> : null}
+      {!busy && !summaryUnavailable && requestFailed ? <p role="status" className="shrink-0 border-b border-border/70 px-4 py-3 text-xs leading-5 text-muted-foreground">Showing the last successfully loaded summary. The separate request error is shown in the conversation.</p> : null}
+      {!busy && !summaryUnavailable && job?.live_summary?.recovery_mode === 'evidence_rebuild' ? <p role="status" className="shrink-0 border-b border-border/70 px-4 py-3 text-xs leading-5 text-muted-foreground">Summary rebuilt from saved evidence.</p> : null}
       <div role="region" aria-label="Idea summary" tabIndex={0} className="scrollbar-hide min-h-0 flex-1 overflow-y-auto px-4 pb-5 [overflow-wrap:anywhere]" data-summary-scroll>
         {snapshot.sections.map(section => <SummarySection key={section.id} section={section} reduced={reduced} active={textReady && (expanded || mobileOpen)} />)}
       </div>

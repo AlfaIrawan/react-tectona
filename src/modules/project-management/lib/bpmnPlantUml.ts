@@ -181,11 +181,7 @@ export function parseBpmnXml(source: string): BpmnParsedGraph {
       edges.push({ id: `edge-${edges.length}`, source: sourceId, target: targetId, label })
     }
   }
-  if (!edges.length) {
-    nodes.slice(1).forEach((current, index) => {
-      edges.push({ id: `edge-${index}`, source: nodes[index].id, target: current.id })
-    })
-  }
+  // Disconnected or unsupported relationships are not evidence of sequence flow.
   return { nodes, edges }
 }
 
@@ -479,12 +475,22 @@ function nodeTitle(node: Node<ArchimateNodeData>): string {
     : node.id
 }
 
-export function serializeBpmnCanvasToPlantUml(nodes: Node<ArchimateNodeData>[], edges: Edge[]): string {
+export function serializeBpmnCanvasToPlantUml(nodes: Node<ArchimateNodeData>[], edges: Edge[], originalSource = ''): string {
+  // Only explicit comments/XML membership are recovery evidence, not actor-label heuristics.
+  const originalIds = new Set(parseBpmnSource(originalSource).nodes.map(node => node.id))
+  const originalLanes = new Map<string, string>()
+  if (isBpmnXml(originalSource)) {
+    for (const node of parseBpmnXml(originalSource).nodes) if (node.lane) originalLanes.set(node.id, node.lane)
+  } else {
+    for (const match of originalSource.matchAll(/^\s*'\s*lane\s+([\w.-]+)\s*:\s*(.+)\s*$/gim)) originalLanes.set(match[1], match[2].trim())
+  }
   const elements = nodes.filter((node) => (
     node.type === 'bpmnElement'
     && node.data.kind === 'element'
     && !(node.data.notationId === 'lane' && node.selectable === false)
   ))
+  // A legacy graph with explicit source lanes but no reliable binding must keep its source.
+  if (originalLanes.size && elements.some(node => node.data.kind === 'element' && node.data.bpmnLane === undefined && !originalIds.has(node.id))) return originalSource
   return bpmnGraphToPlantUml({
     nodes: elements.map((node) => {
       const bpmnType = node.data.notationId || 'task'
@@ -495,7 +501,9 @@ export function serializeBpmnCanvasToPlantUml(nodes: Node<ArchimateNodeData>[], 
           : bpmnType === 'endEvent'
             ? 'end'
             : 'activity'
-      return { id: node.id, label: nodeTitle(node), kind, bpmnType }
+      // Explicit source metadata survives geometry edits; lane backgrounds are not parents.
+      const lane = node.data.kind === 'element' && node.data.bpmnLane === null ? undefined : node.data.kind === 'element' && typeof node.data.bpmnLane === 'string' ? node.data.bpmnLane : originalLanes.get(node.id)
+      return { id: node.id, label: nodeTitle(node), kind, bpmnType, lane }
     }),
     edges: edges.map((edge, index) => ({
       id: edge.id || `edge-${index}`,

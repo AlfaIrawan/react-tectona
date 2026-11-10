@@ -1,3 +1,4 @@
+import { readSelectedSourceReferences, supportsReadOnlyTechnicalPreview } from '@/lib/chat/technicalDiagramHandoff'
 
 import { getSession } from '@/auth/authService'
 import { createNotification, TECTONA_APP_ID } from '@/lib/api/notificationApi'
@@ -2638,6 +2639,7 @@ function IdeaDocSourceDiagramPreview({ diagram }: { diagram: ExtractedProcessDia
         <AssistantMermaidBlock
           source={diagram.source}
           notation={isTechnicalViewSource(diagram.source) ? 'plantuml' : 'bpmn'}
+          diagramKind={diagram.kind}
           className="my-0 shadow-none"
         />
       </div>
@@ -14284,6 +14286,24 @@ export function IdeaDetailPage() {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {showTechnicalDiagrams ? (() => {
+                    const retained = readSelectedSourceReferences(idea.description || '')
+                    if (!retained.ok) return <p role="status" className="p-3 text-sm">{retained.reason}</p>
+                    if (!retained.sources.length) return null
+                    return <section aria-label="Retained diagram source references" className="mb-4 space-y-2 rounded border p-3">
+                      <p className="text-sm font-semibold">Diagram source references</p>
+                      <p className="text-xs text-muted-foreground">Read-only sources from the selected description. Review has not been reverified; this is not production approval.</p>
+                      {retained.sources.map((source, index) => <details key={index} className="rounded border p-2">
+                        <summary>{source.kind === 'archimate' ? 'ArchiMate from brainstorming' : (source.kind || source.language)}{source.topic ? ` - ${source.topic}` : ''}</summary>
+                        {supportsReadOnlyTechnicalPreview(source)
+                          ? <AssistantMermaidBlock source={source.source} notation="plantuml" diagramKind={source.kind} diagramLanguage={source.language} compact />
+                          : <p className="text-xs">A diagram preview is not available here. The original source is retained below.</p>}
+                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{source.source}</pre>
+                        {source.shownContext ? <details><summary>Original depiction context (unverified provenance)</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{source.shownContext}</pre></details> : null}
+                      </details>)}
+                    </section>
+                  })() : null}
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
               {(showTechnicalDiagrams && (isIntegrationRefreshing || !integrationLoaded || (integrationLatestGraph?.nodes.length ?? 0) > 0)) ? (
               <div className="order-5 flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">

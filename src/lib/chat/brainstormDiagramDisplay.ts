@@ -45,10 +45,8 @@ export function splitBrainstormDisplayParts(text: string): BrainstormDisplayPart
   if (cursor < input.length) {
     parts.push({ type: 'prose', text: input.slice(cursor) })
   }
-  const filtered = parts.filter((part) => part.type !== 'prose' || part.text.trim().length > 0)
-  const hasPng = filtered.some((part) => part.type === 'png')
-  if (!hasPng) return filtered
-  return filtered.filter((part) => part.type !== 'mermaid' && part.type !== 'plantuml')
+  // Inline images have no verified source binding; preserve independent diagrams.
+  return parts.filter((part) => part.type !== 'prose' || part.text.trim().length > 0)
 }
 
 /** Sequence, C4, and ArchiMate stay PlantUML. Process fences are still drawn as BPMN. */

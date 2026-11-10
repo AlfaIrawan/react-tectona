@@ -533,7 +533,26 @@ export interface GenerateIdeaDraftRequest {
   }
 }
 
+export interface TechnicalDiagramRecord {
+  schema_version: 1
+  record_id: string
+  topic: string
+  kind: 'c4' | 'class' | 'erd' | 'use-case' | 'sequence' | 'archimate'
+  source: string
+  source_sha256: string
+  topic_evidence_sha256?: string | null
+  shown: { index: number; sha256: string }
+  review?: { index: number; sha256: string } | null
+  review_text: string
+  shown_context: string
+  outcome: 'pending' | 'affirmed' | 'rejected' | 'superseded' | 'uncertain'
+  meaning: 'reviewed_representation_not_production_approval'
+}
+
 export interface GenerateIdeaDraftResponse {
+  technical_diagram_warning?: string | null
+  technical_diagrams?: TechnicalDiagramRecord[]
+  technical_diagram_status?: 'available' | 'none' | 'unavailable' 
   draft_text: string
   language: 'id' | 'en'
   confidence_score: number
@@ -648,6 +667,14 @@ export interface IdeaDraftBrainstormMessage {
   suggestion_multiple?: boolean
   suggestion_baseline?: string
   suggestion_item_id?: string
+  /** Backend-owned immutable upload review binding; presentation never grants approval. */
+  upload_review_id?: string | null
+  upload_review_status?: 'pending' | 'approved' | 'rejected' | 'failed' | 'clarify' | null
+  upload_review_proposal?: {
+    proposal_id: string; lane: 'as_is' | 'to_be'; item_id: string
+    reading: string; diagram_block: string; image_digest: string
+    assistant_turn: number; assistant_digest: string; target_evidence_digest: string
+  } | null
   process_diagram_proposals?: Array<{ lane: 'as_is' | 'to_be'; option_value: string; diagram_block: string }>
   catalog_matches?: Array<{ application: string; documented_function: string; proposed_fit: string }>
   catalog_mode?: 'current' | 'proposed' | null
@@ -715,6 +742,9 @@ export interface IdeaDraftVersionSummary {
 }
 
 export interface IdeaDraftVersionDetail extends IdeaDraftVersionSummary {
+  technical_diagrams?: TechnicalDiagramRecord[]
+  technical_diagram_status?: 'available' | 'none' | 'unavailable'
+  technical_diagram_warning?: string | null
   draft_text: string
   sections: IdeaDraftSectionVersion[]
 }
@@ -742,6 +772,7 @@ export interface IdeaDraftLiveSummary {
 }
 
 export interface IdeaDraftJobStatusResponse {
+  technical_diagrams?: TechnicalDiagramRecord[]
   live_summary?: IdeaDraftLiveSummary | null
   draft_session_id?: string | null
   revision?: string
@@ -1565,6 +1596,36 @@ export async function extractRepositoryDocxStructure(
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+export interface IdeaPdfCoverage {
+  complete: boolean
+  page_count: number
+  processed_pages: number
+  image_pages: number[]
+  pages_without_native_text: number[]
+  truncated: boolean
+  ocr_status: 'not_run' | 'not_needed' | 'completed' | 'transcribed_unverified' | 'partial' | 'failed' | 'disabled'
+  warnings: string[]
+}
+
+export async function extractIdeaPdfEvidence(file: File, allowImageOcr = false, signal?: AbortSignal): Promise<{ text: string; coverage: IdeaPdfCoverage }> {
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  if (signal?.aborted) controller.abort()
+  const timer = window.setTimeout(() => controller.abort(), 240_000)
+  try {
+    const headers = new Headers(tectonaServiceHeaders())
+    headers.delete('Content-Type')
+    const form = new FormData()
+    form.append('file', file)
+    form.append('allow_image_ocr', String(allowImageOcr))
+    const res = await fetch(`${BASE_URL}/v1/agent/extract-idea-pdf`, {
+      method: 'POST', headers, body: form, signal: controller.signal,
+    })
+    return handleResponse<{ text: string; coverage: IdeaPdfCoverage }>(res)
+  } finally { window.clearTimeout(timer); signal?.removeEventListener('abort', onAbort) }
 }
 
 export interface ExtractRepositoryPdfResponse {
@@ -2563,6 +2624,23 @@ export async function cancelIdeaDraftJob(
 
 export type IdeaExtractionCategory = 'Innovation' | 'Improvement' | 'Request' | 'Transformation'
 
+export interface IdeaUploadOverlapAnalysis {
+  status: 'unknown' | 'possible_duplicate' | 'partial_overlap' | 'no_match_in_checked_sources'
+  checked_sources: number
+  coverage_complete?: boolean
+  warnings: string[]
+  matches: Array<{
+    source_id: string
+    source_kind: 'idea' | 'document'
+    source_title: string
+    capability: string
+    relation: 'equivalent' | 'partial'
+    uploaded_excerpt: string
+    existing_excerpt: string
+    same_initiative: boolean
+  }>
+}
+
 export interface IdeaExtractionCandidate {
   title: string
   category: IdeaExtractionCategory
@@ -2570,6 +2648,10 @@ export interface IdeaExtractionCandidate {
   tags: string[]
   confidence: number
   source_excerpt: string
+  source_pages?: number[]
+  capabilities?: Array<{ name: string; source_excerpt: string; source_pages?: number[] }>
+  source_kind?: 'proposal' | 'existing_system' | 'unclear'
+  overlap_analysis?: IdeaUploadOverlapAnalysis
 }
 
 export interface IdeaExtractionDocumentContext {
@@ -2578,6 +2660,8 @@ export interface IdeaExtractionDocumentContext {
   file_size?: number
   extract_method?: string
   document_text: string
+  extraction_coverage_complete?: boolean
+  extraction_warnings?: string[]
 }
 
 export interface GenerateIdeaExtractionRequest {
@@ -2635,6 +2719,15 @@ export async function startIdeaExtractionJob(
     30_000,
   )
   return handleResponse<CreateIdeaExtractionJobResponse>(res)
+}
+
+export async function cancelIdeaExtractionJob(jobId: string): Promise<IdeaExtractionJobStatusResponse> {
+  const res = await fetchWithTimeout(
+    `${BASE_URL}/v1/agent/idea-extraction-jobs/${encodeURIComponent(jobId)}/cancel`,
+    { method: 'POST' },
+    15_000,
+  )
+  return handleResponse<IdeaExtractionJobStatusResponse>(res)
 }
 
 export async function getIdeaExtractionJob(

@@ -1,5 +1,7 @@
-import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useLocation } from 'react-router-dom'
+import { workspaceScopedPath, stripWorkspaceRoutePrefix } from '@/lib/workspaceRouting'
 import {
   Upload,
   X,
@@ -25,10 +27,11 @@ import { createIdea as apiCreateIdea, type IdeaApi } from '@/lib/api/ideaBacklog
 import { attachUploadedFileToIdeaDocs } from '@/modules/project-management/lib/attachUploadedFileToIdeaDocs'
 import {
   extractRepositoryDocxStructure,
-  extractRepositoryPdfText,
+  extractIdeaPdfEvidence,
   extractRepositoryPptxStructure,
   startIdeaExtractionJob,
   getIdeaExtractionJob,
+  cancelIdeaExtractionJob,
   type IdeaExtractionCandidate,
   type IdeaExtractionCategory,
   type IdeaExtractionJobStatusResponse,
@@ -41,6 +44,7 @@ const IDEA_EXTRACTION_TYPES: IdeaExtractionCategory[] = [
   'Transformation',
 ]
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024 // 25 MB, matches the backend's cap
+const MAX_DOCUMENT_TEXT_CHARS = 60_000
 const MAX_CANDIDATE_TAGS = 5
 const UPLOADED_DOCUMENT_TYPES = [
   { value: 'urd', label: 'URD' },
@@ -75,7 +79,7 @@ function toCandidateRow(candidate: IdeaExtractionCandidate): CandidateRow {
   return {
     ...candidate,
     _localId: makeLocalId(),
-    _decision: 'accepted',
+    _decision: candidate.overlap_analysis?.status === 'possible_duplicate' ? 'rejected' : 'accepted',
     _createStatus: 'idle',
     _tagDraft: '',
     _sourceOpen: false,
@@ -93,28 +97,37 @@ function detectExtractMethod(file: File): 'docx' | 'pdf' | 'pptx' | null {
 async function extractIdeaUploadText(
   file: File,
   method: 'docx' | 'pdf' | 'pptx',
-): Promise<string> {
+  allowImageOcr = false,
+  signal?: AbortSignal,
+): Promise<{ text: string; complete?: boolean; warnings?: string[] }> {
   if (method === 'pdf') {
-    const result = await extractRepositoryPdfText(file)
-    return result.text || ''
+    const result = await extractIdeaPdfEvidence(file, allowImageOcr, signal)
+    return { text: result.text || '', complete: result.coverage.complete, warnings: result.coverage.warnings }
   }
   if (method === 'pptx') {
     const result = await extractRepositoryPptxStructure(file)
-    return result.text || ''
+    return { text: result.text || '' }
   }
   try {
     const result = await extractRepositoryDocxStructure(file)
-    if (result.text && result.text.trim()) return result.text
+    if (result.text && result.text.trim()) return { text: result.text }
   } catch {
     /* fall back to client-side mammoth extraction below */
   }
   const mammoth = await import('mammoth')
   const arrayBuffer = await file.arrayBuffer()
   const raw = await mammoth.extractRawText({ arrayBuffer })
-  return (raw.value || '').trim()
+  return { text: (raw.value || '').trim() }
 }
 
 function friendlyExtractionError(rawMessage: string): string {
+  if (rawMessage.includes('IDEA_EXTRACTION_EVIDENCE_REJECTED')) {
+    return 'Kutipan pendukung atau kategori hasil analisis belum valid. Hasil AI perlu diperiksa sebelum ide dapat digunakan. Tidak ada ide yang dibuat.'
+  }
+  if (rawMessage.includes('PDF_OCR_DISABLED')) return 'Image OCR is disabled by the server. Provide a text-readable PDF or ask your administrator to enable OCR.'
+  if (rawMessage.includes('PDF_OCR_INCOMPLETE')) return 'Image OCR could not read this PDF. Try again or provide a text-readable version.'
+  if (rawMessage.includes('PDF_IMAGE_TEXT_REQUIRES_OCR')) return 'This PDF has no readable native text. Image OCR has not been run; provide an OCR-text version before analysis.'
+  if (rawMessage.includes('PDF_ENCRYPTED')) return 'This PDF is password-protected. Upload an unlocked copy.'
   if (rawMessage.includes('DOC_TEXT_EMPTY') || rawMessage.includes('PDF_TEXT_EMPTY') || rawMessage.includes('PPTX_TEXT_EMPTY')) {
     return "Couldn't read any text from this file. It may be a scanned/image-only document — try a different file."
   }
@@ -122,6 +135,19 @@ function friendlyExtractionError(rawMessage: string): string {
     return 'This file is too large (max 25 MB).'
   }
   return rawMessage || 'Failed to read this file. Please try a different file.'
+}
+
+function uploadAnalysisWarning(code: string): string {
+  if (code === 'PDF_IMAGE_TEXT_NOT_ANALYZED') return 'Text inside PDF images and screenshots has not been read. The analysis may miss features shown only in images.'
+  if (code === 'PDF_OCR_TRANSCRIPTION_REQUIRES_REVIEW') return 'Image text was machine-transcribed. Review page references and excerpts for OCR mistakes.'
+  if (code.startsWith('PDF_OCR_')) return 'Image OCR was incomplete or reached a limit. Some visual content remains unchecked.'
+  if (code === 'PDF_PAGES_WITHOUT_NATIVE_TEXT') return 'Some PDF pages have no extractable text.'
+  if (code === 'UPLOADED_DOCUMENT_COVERAGE_INCOMPLETE') return 'The uploaded document was only partly analyzed; novelty has not been established.'
+  if (code.includes('TRUNCATED') || code.includes('LIMIT_REACHED')) return 'An analysis size or processing limit was reached. Some evidence remains unchecked.'
+  if (code.includes('TIMEOUT') || code.includes('READ_FAILED') || code.includes('ANALYSIS_FAILED')) return 'Some existing sources could not be checked. Try again before treating this as a new idea.'
+  if (code.includes('EVIDENCE_REJECTED')) return 'Unsupported generated evidence was removed. Review the remaining source excerpts.'
+  if (code === 'CAPABILITY_EVIDENCE_INCOMPLETE') return 'Some capabilities could not be supported with source evidence.'
+  return 'Some evidence could not be verified. Review the analysis coverage before creating ideas.'
 }
 
 interface IdeaUploadReviewPanelProps {
@@ -139,8 +165,11 @@ export function IdeaUploadReviewPanel({
   currentUserId,
   onIdeasCreated,
 }: IdeaUploadReviewPanelProps) {
+  const location = useLocation()
+  const routeSlug = stripWorkspaceRoutePrefix(location.pathname).slug
   const [stage, setStage] = useState<UploadStage>('idle')
   const [fileName, setFileName] = useState('')
+  const [includeImageOcr, setIncludeImageOcr] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [uploadedDocumentType, setUploadedDocumentType] = useState<UploadedDocumentType>('brd')
   const [uploadedDocumentStatus, setUploadedDocumentStatus] = useState<UploadedDocumentStatus>('draft')
@@ -153,11 +182,34 @@ export function IdeaUploadReviewPanel({
   const [lastRunSummary, setLastRunSummary] = useState<{ created: number; total: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const requestTokenRef = useRef(0)
+  const activeJobRef = useRef<string | null>(null)
+  const readingAbortRef = useRef<AbortController | null>(null)
+  const cancelActiveJob = useCallback(() => {
+    readingAbortRef.current?.abort()
+    readingAbortRef.current = null
+    const jobId = activeJobRef.current
+    activeJobRef.current = null
+    if (jobId) void cancelIdeaExtractionJob(jobId).catch(() => {
+      setJobError('Could not confirm stopping the analysis. It may still be running.')
+    })
+  }, [])
+  useEffect(() => {
+    if (!isOpen) { requestTokenRef.current += 1; cancelActiveJob() }
+  }, [isOpen, cancelActiveJob])
+  useEffect(() => () => {
+    readingAbortRef.current?.abort()
+    requestTokenRef.current += 1
+    const jobId = activeJobRef.current
+    activeJobRef.current = null
+    if (jobId) void cancelIdeaExtractionJob(jobId).catch(() => {})
+  }, [])
 
   const reset = useCallback(() => {
+    cancelActiveJob()
     requestTokenRef.current += 1
     setStage('idle')
     setFileName('')
+    setIncludeImageOcr(false)
     setUploadedFile(null)
     setUploadedDocumentType('brd')
     setUploadedDocumentStatus('draft')
@@ -167,7 +219,16 @@ export function IdeaUploadReviewPanel({
     setJobStatus(null)
     setCandidates([])
     setLastRunSummary(null)
-  }, [])
+  }, [cancelActiveJob])
+
+  const analysisScopeRef = useRef({ workspaceId, currentUserId })
+  useEffect(() => {
+    const previous = analysisScopeRef.current
+    if (previous.workspaceId !== workspaceId || previous.currentUserId !== currentUserId) {
+      analysisScopeRef.current = { workspaceId, currentUserId }
+      reset()
+    }
+  }, [workspaceId, currentUserId, reset])
 
   const handleClose = useCallback(() => {
     reset()
@@ -186,6 +247,7 @@ export function IdeaUploadReviewPanel({
         return
       }
 
+      cancelActiveJob()
       const token = ++requestTokenRef.current
       setFileError('')
       setJobError('')
@@ -195,12 +257,26 @@ export function IdeaUploadReviewPanel({
       setStage('reading')
 
       let documentText = ''
+      let coverageComplete: boolean | undefined
+      let extractionWarnings: string[] = []
+      const readingController = new AbortController()
+      readingAbortRef.current = readingController
       try {
-        documentText = await extractIdeaUploadText(file, method)
+        const evidence = await extractIdeaUploadText(file, method, includeImageOcr, readingController.signal)
+        documentText = evidence.text
+        coverageComplete = evidence.complete
+        extractionWarnings = evidence.warnings ?? []
+        if (readingAbortRef.current === readingController) readingAbortRef.current = null
       } catch (err) {
         if (requestTokenRef.current !== token) return
         setStage('idle')
         setFileError(friendlyExtractionError(err instanceof Error ? err.message : String(err)))
+        return
+      }
+      if (documentText.length > MAX_DOCUMENT_TEXT_CHARS) {
+        if (requestTokenRef.current !== token) return
+        setStage('idle')
+        setFileError('This document exceeds the 60,000-character analysis limit. Split it into smaller documents before analysis.')
         return
       }
       if (!documentText.trim()) {
@@ -221,6 +297,8 @@ export function IdeaUploadReviewPanel({
             file_size: file.size,
             extract_method: method,
             document_text: documentText,
+            extraction_coverage_complete: coverageComplete,
+            extraction_warnings: extractionWarnings,
           },
           context: {
             workspace_id: workspaceId || null,
@@ -229,34 +307,48 @@ export function IdeaUploadReviewPanel({
           },
         })
 
+        if (requestTokenRef.current !== token) {
+          await cancelIdeaExtractionJob(started.job_id).catch(() => {
+            setJobError('Could not confirm stopping the analysis. It may still be running.')
+          })
+          return
+        }
+        activeJobRef.current = started.job_id
         let candidatesResult: IdeaExtractionCandidate[] = []
-        for (let attempt = 0; attempt < 240; attempt += 1) {
+        let completed = false
+        for (let attempt = 0; attempt < 720; attempt += 1) {
           if (requestTokenRef.current !== token) return
           const status = await getIdeaExtractionJob(started.job_id)
           if (requestTokenRef.current !== token) return
           setJobStatus(status)
           if (status.status === 'completed') {
+            activeJobRef.current = null
+            completed = true
             candidatesResult = status.result?.candidates ?? []
             break
           }
           if (status.status === 'failed') {
+            activeJobRef.current = null
             throw new Error(status.error_message || 'Idea extraction failed.')
           }
           if (status.status === 'cancelled') {
+            activeJobRef.current = null
             throw new Error('Idea extraction was cancelled.')
           }
           await new Promise<void>((resolve) => setTimeout(resolve, 1250))
         }
         if (requestTokenRef.current !== token) return
+        if (!completed) throw new Error('Idea analysis timed out. No ideas were created. Please retry.')
         setCandidates(candidatesResult.map(toCandidateRow))
         setStage('review')
       } catch (err) {
         if (requestTokenRef.current !== token) return
         setStage('idle')
-        setJobError(err instanceof Error ? err.message : 'Idea extraction failed.')
+        cancelActiveJob()
+        setJobError(friendlyExtractionError(err instanceof Error ? err.message : 'Idea extraction failed.'))
       }
     },
-    [currentUserId, workspaceId],
+    [currentUserId, workspaceId, cancelActiveJob, includeImageOcr],
   )
 
   const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -443,6 +535,12 @@ export function IdeaUploadReviewPanel({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto scrollbar-hide px-5 py-5">
           {stage === 'idle' && (
+            <label className="flex items-start gap-2 rounded-lg border border-border p-3 text-sm">
+              <input type="checkbox" checked={includeImageOcr} onChange={(event) => setIncludeImageOcr(event.target.checked)} />
+              <span>Read text inside PDF images with AI OCR.<span className="block text-xs text-muted-foreground">If selected, PDF pages containing images are sent to the configured AI service. Otherwise only local native text is extracted and image coverage is marked incomplete.</span></span>
+            </label>
+          )}
+          {stage === 'idle' && (
             <div
               onDragOver={(e) => {
                 e.preventDefault()
@@ -582,6 +680,12 @@ export function IdeaUploadReviewPanel({
                   </div>
                 </section>
               )}
+              {jobStatus?.result?.warnings && jobStatus.result.warnings.length > 0 && (
+                <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  Analysis has limitations. Review source coverage before creating ideas.
+                  <ul>{jobStatus.result.warnings.map((warning) => <li key={warning}>{uploadAnalysisWarning(warning)}</li>)}</ul>
+                </div>
+              )}
               {lastRunSummary && (
                 <div
                   className={cn(
@@ -643,6 +747,31 @@ export function IdeaUploadReviewPanel({
                           </button>
                         </div>
                       </div>
+
+                      <section className="space-y-2 rounded-lg border border-border p-3 text-sm" aria-label="Idea and capability comparison">
+                        <p className="font-semibold">
+                          {candidate.overlap_analysis?.status === 'possible_duplicate' ? 'Possible existing idea: review before creating' :
+                            candidate.overlap_analysis?.status === 'partial_overlap' ? 'Feature or capability overlap found' :
+                            candidate.overlap_analysis?.status === 'no_match_in_checked_sources' ? 'No overlap found in the checked sources' :
+                            'Existing-idea comparison is incomplete'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Based on the uploaded source, not subsequent edits. No match does not prove this idea is globally new.</p>
+                        {candidate.source_kind === 'existing_system' && <p>This document describes an existing system or capability.</p>}
+                        <p className="text-xs">{candidate.overlap_analysis?.checked_sources ?? 0} sources checked in the selected workspace.</p>
+                        {candidate.overlap_analysis?.coverage_complete === false && <p className="text-amber-700">Some sources or comparisons could not be checked.</p>}
+                        {(candidate.capabilities ?? []).length > 0 && <ul className="list-disc pl-4">
+                          {candidate.capabilities!.map((capability) => <li key={capability.name}><strong>{capability.name}</strong><p className="text-xs text-muted-foreground">{capability.source_pages?.length ? `Page ${capability.source_pages.join(", ")}: ` : ""}{capability.source_excerpt}</p></li>)}
+                        </ul>}
+                        {(candidate.overlap_analysis?.matches ?? []).map((match, matchIndex) => {
+                          const ideaId = match.source_kind === 'idea' ? match.source_id.slice(5) : ''
+                          const canLink = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ideaId)
+                          return <div key={`${match.source_id}-${matchIndex}`} className="rounded border border-amber-200 p-2">
+                            <p>{canLink ? <a className="underline" href={workspaceScopedPath(routeSlug, `/idea-backlog/${ideaId}`, workspaceId)}>{match.source_title}</a> : match.source_title}: {match.capability} ({match.relation})</p>
+                            <p className="text-xs">Uploaded: {match.uploaded_excerpt}</p>
+                            <p className="text-xs">Existing: {match.existing_excerpt}</p>
+                          </div>
+                        })}
+                      </section>
 
                       <div className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground">Title</Label>

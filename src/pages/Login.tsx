@@ -1,5 +1,5 @@
+import { AuthLoginLayout } from '@/modules/auth/AuthLoginLayout'
 import { useState, useEffect } from 'react'
-import { useAuthMobileViewport } from '@/modules/auth/useAuthMobileViewport'
 import type { FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, EyeOff, Fingerprint } from 'lucide-react'
@@ -51,7 +51,6 @@ function readInitialAuthNotice(): LoginAuthNotice | null {
 }
 
 export function LoginPage() {
-  const mobileLayoutRef = useAuthMobileViewport()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [email, setEmail] = useState('')
@@ -178,9 +177,7 @@ export function LoginPage() {
 
   return (
     <>
-      <div ref={mobileLayoutRef} className="mobile-login login-page w-full flex items-center justify-center px-4 py-16 sm:p-4">
-        <div className="w-full max-w-md mx-auto">
-          <div className="liquid-glass-enterprise-panel rounded-lg p-6 sm:p-8 space-y-6">
+      <AuthLoginLayout footer={<><AuthCopyrightNotice /><AuthTourButton page="login" /></>}>
             <div id="login-card-header" className="space-y-2 text-center">
               <img
                 src="/images/tectona-wordmark.svg"
@@ -312,13 +309,7 @@ export function LoginPage() {
                 Sign up
               </a>
             </p>
-          </div>
-        </div>
-        <footer className="login-footer">
-          <AuthCopyrightNotice />
-          <AuthTourButton page="login" />
-        </footer>
-      </div>
+      </AuthLoginLayout>
 
       <SessionConflictModal
         open={conflictOpen}

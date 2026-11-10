@@ -121,9 +121,13 @@ export type IntegrationEdgeData = {
 }
 
 export type ArchimateElementNodeData = {
+  /** Explicit BPMN source membership, never inferred from position. */
+  bpmnLane?: string | null
   kind: 'element'
   layer: ArchimateLayer
   stereotype: string
+  /** Explicit Class/ERD source stereotype, separate from notation kind. */
+  umlStereotype?: string
   title: string
   description: string[]
   notationId: string

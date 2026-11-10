@@ -1,3 +1,7 @@
+import { useBrainstormAttachment } from '../lib/useBrainstormAttachment'
+import { brainstormAttachmentStatus } from '../lib/brainstormAttachmentLifecycle'
+import { BrainstormErrorNotice } from '../components/BrainstormErrorNotice'
+import { prepareDiagramHandoff, serializeSelectedSources, supportsReadOnlyTechnicalPreview, type SelectedDiagramSource } from '@/lib/chat/technicalDiagramHandoff'
 // @refresh reset
 import { mergeBrainstormUiMessages, brainstormMessageSnapshot, type BrainstormUiMessage } from '../lib/brainstormMessageTiming'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
@@ -1076,8 +1080,9 @@ function BrainstormProseSegments({ text }: { text: string }) {
 
 function prefetchBrainstormDiagrams(text: string): void {
   for (const part of splitBrainstormDisplayParts(text)) {
-    if (part.type === 'plantuml' || part.type === 'mermaid') {
-      prefetchProcessDiagramPlantUmlPng(part.source, 'id', isTechnicalViewSource(part.source) ? 'plantuml' : 'bpmn')
+    // Canonical previews load only when visible; do not prefetch an unused runtime raster.
+    if ((part.type === 'plantuml' || part.type === 'mermaid') && isTechnicalViewSource(part.source) && !canonicalPreviewKind(part.source, 'plantuml')) {
+      prefetchProcessDiagramPlantUmlPng(part.source, 'id', 'plantuml')
     }
   }
 }
@@ -1146,7 +1151,7 @@ function BrainstormAssistantMessageBody({ text }: { text: string }) {
             <img
               key={`png-${index}`}
               src={part.src}
-              alt="Diagram proses bisnis BPMN"
+              alt="Gambar dalam percakapan"
               className="my-2 max-w-full rounded-md border border-black/10 dark:border-white/15"
             />
           )
@@ -1320,11 +1325,11 @@ import { loadIdeaReviewerPolicy, loadIdeaWorkspaceSelectionPolicy, selectableIde
 import { useIdeaReviewerPolicy } from '../lib/useIdeaReviewerPolicy'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { brainstormTypingCutoff, isTechnicalViewSource, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
+import { canonicalPreviewKind } from '@/modules/project-management/lib/readOnlyDiagramPreview'
 import { useTypingReveal } from '@/lib/chat/useTypingReveal'
 import {
   appendProcessDiagramsToText,
   latestRevisedProcessDiagrams,
-  latestValidatedTechnicalDiagrams,
   stripProcessDiagramsFromText,
   type ExtractedProcessDiagram,
 } from '@/lib/chat/extractProcessDiagrams'
@@ -1775,19 +1780,28 @@ function extractPlainTextFromIdeaRichHtml(content: string): string {
   return lines.map((line) => line.trimEnd()).join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
-function plainTextToIdeaRichHtml(text: string): string {
+function plainTextToIdeaRichHtml(text: string, recognizeLegacyFormatting = false): string {
   const escapeHtml = (value: string) =>
     value.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] || ch))
 
   const normalizeMarkdownLine = (line: string): string => {
-    let next = line
-      .replace(/^#+\s*/, '')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .replace(/__([^_]+)__/g, '$1')
-      .replace(/\*([^*]+)\*/g, '$1')
-      .replace(/_([^_]+)_/g, '$1')
-      .trim()
+    // Only used to recognize a previously saved rendering, never to display new text.
+    if (recognizeLegacyFormatting) return line.replace(/^#+\s*/, '')
+      .replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1').replace(/\*([^*]+)\*/g, '$1')
+      .replace(/_([^_]+)_/g, '$1').trim()
+      .replace(/^[-*\u2022]\s+/, '').replace(/^\d+[.)]\s+/, '').trim()
+    // Inline code is literal evidence. Strip its delimiter only after processing
+    // prose so underscores and asterisks in identifiers cannot become emphasis.
+    let next = line.replace(/^#+\s*/, '').split(/(`[^`]*`)/g)
+      .map((part) => {
+        if (part.startsWith('`') && part.endsWith('`')) return part.slice(1, -1)
+        return part
+          .replace(/\*\*([^*]+)\*\*/g, '$1')
+          .replace(/(^|[^\p{L}\p{N}_])__([^_]+)__(?![\p{L}\p{N}_])/gu, '$1$2')
+          .replace(/\*([^*]+)\*/g, '$1')
+          .replace(/(^|[^\p{L}\p{N}_])_([^_]+)_(?![\p{L}\p{N}_])/gu, '$1$2')
+      }).join('').trim()
 
     next = next.replace(/^[-*•]\s+/, '').replace(/^\d+[.)]\s+/, '').trim()
     return next
@@ -1864,6 +1878,18 @@ function plainTextToIdeaRichHtml(text: string): string {
       return `<pre data-process-diagram="tecchart"><code>${escapeHtml(segment.source)}</code></pre>`
     })
     .join('')
+}
+
+// Repair only HTML proven to be the exact legacy rendering of the same text.
+// Arbitrary saved text/HTML conflicts remain blocked for explicit recovery.
+function resolveSavedIdeaRichHtml(plain: string, savedHtml?: string): string | null {
+  const current = plainTextToIdeaRichHtml(plain)
+  if (!savedHtml) return current
+  const saved = sanitizeIdeaDescriptionRichHtml(savedHtml)
+  const comparable = (html: string) => extractPlainTextFromIdeaRichHtml(html).replace(/\s+/g, ' ').trim()
+  if (comparable(saved) === comparable(current)) return saved
+  const legacy = sanitizeIdeaDescriptionRichHtml(plainTextToIdeaRichHtml(plain, true))
+  return saved === legacy ? current : null
 }
 
 // Mock data removed — data is now loaded from python-idea-backlog-service-fastapi (port 8511)
@@ -2202,7 +2228,9 @@ export function IdeaBacklogManagementPage() {
   const [brainstormMessages, setBrainstormMessages] = useState<BrainstormUiMessage[]>([])
   const brainstormSummaryDiagrams = useMemo(() => buildSummaryDiagramAttachments(brainstormMessages), [brainstormMessages])
   const [brainstormInput, setBrainstormInput] = useState('')
-  const [brainstormDiagramImage, setBrainstormDiagramImage] = useState<string | null>(null)
+  const brainstormAttachment = useBrainstormAttachment(ideaDraftJob?.job_id ?? null, isEvidenceDialogOpen)
+  const brainstormAttachmentLifecycle = brainstormAttachment.lifecycle
+  const brainstormDiagramImage = brainstormAttachment.attachment?.dataUrl ?? null
   const brainstormDiagramInputRef = useRef<HTMLInputElement | null>(null)
   const [brainstormLlmMode, setBrainstormLlmMode] = useState<'normal' | 'thinking'>(() => {
     try {
@@ -2213,6 +2241,9 @@ export function IdeaBacklogManagementPage() {
   })
   const [brainstormLlmMenuOpen, setBrainstormLlmMenuOpen] = useState(false)
   const [isBrainstormSending, setIsBrainstormSending] = useState(false)
+  useLayoutEffect(() => {
+    if (!brainstormAttachmentLifecycle.busy) setIsBrainstormSending(false)
+  }, [brainstormAttachmentLifecycle, brainstormAttachment.generation, ideaDraftJob?.job_id, isEvidenceDialogOpen])
   const [brainstormPhase, setBrainstormPhase] = useState<string | null>(null)
   // While a turn is sent, read the step the server is in so the status line can show it.
   const brainstormPollJobId = ideaDraftJob?.job_id ?? null
@@ -2296,6 +2327,7 @@ export function IdeaBacklogManagementPage() {
   const [identityUserNameById, setIdentityUserNameById] = useState<Record<string, string>>({})
   const [createIdeaDescriptionHtml, setCreateIdeaDescriptionHtml] = useState('')
   const [createIdeaProcessDiagrams, setCreateIdeaProcessDiagrams] = useState<ExtractedProcessDiagram[]>([])
+  const [createIdeaSelectedSources, setCreateIdeaSelectedSources] = useState<SelectedDiagramSource[] | null>(null)
   const createIdeaDescriptionEditorRef = useRef<HTMLDivElement | null>(null)
   // The Idea Intake Checklist of the chosen workspace: the editor starts with it, and the form view
   // edits the answers to each question.
@@ -2371,20 +2403,31 @@ export function IdeaBacklogManagementPage() {
     return sanitized
   }
 
-  const setCreateIdeaDescriptionFromPlainText = (nextText: string, messages: Array<{ text: string }> = brainstormMessages) => {
-    const brainstormText = messages.map((message) => message.text).filter(Boolean).join('\n\n')
-    const diagrams = [
-      ...latestRevisedProcessDiagrams(nextText),
-      ...latestValidatedTechnicalDiagrams([nextText, brainstormText].filter(Boolean).join('\n\n')),
-    ]
-    const plain = stripProcessDiagramsFromText(nextText)
-    setCreateIdeaProcessDiagrams(diagrams)
-    const html = plainTextToIdeaRichHtml(plain)
+  const applySelectedIdeaDescription = (nextText: string, options: Omit<Parameters<typeof prepareDiagramHandoff>[0], 'text' | 'existing'>) => {
+    const prepared = prepareDiagramHandoff({ ...options, text: nextText, existing: createIdeaSelectedSources ?? undefined })
+    if (!prepared.ok) { setAiAssistanceError(prepared.reason); return false }
+    const plain = prepared.prose
+    const html = resolveSavedIdeaRichHtml(plain, options.html)
+    if (html === null) {
+      setAiAssistanceError('Saved text and rich formatting differ. Your current editor and source selection were kept for recovery.')
+      return false
+    }
+    if (prepared.notice) setAiAssistanceError(prepared.notice)
+    setCreateIdeaSelectedSources(prepared.sources)
+    setCreateIdeaProcessDiagrams(latestRevisedProcessDiagrams(nextText))
     setCreateIdeaDescriptionHtml(html)
     setCreateIdeaForm((prev) => ({ ...prev, description: plain }))
     const editor = createIdeaDescriptionEditorRef.current
     if (editor && editor.innerHTML !== html) editor.innerHTML = html
+    return true
   }
+
+  const setCreateIdeaDescriptionFromPlainText = (nextText: string) =>
+    applySelectedIdeaDescription(nextText, { mode: 'assistance' })
+
+  const serializeCreateIdeaDescription = (prose: string) => createIdeaSelectedSources === null
+    ? appendProcessDiagramsToText(prose, createIdeaProcessDiagrams)
+    : serializeSelectedSources(prose, createIdeaSelectedSources)
 
   const applyCreateIdeaDescriptionCommand = (command: string) => {
     const editor = createIdeaDescriptionEditorRef.current
@@ -3871,10 +3914,12 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaTagFeedback('')
     setCreateIdeaDescriptionHtml('')
     setCreateIdeaProcessDiagrams([])
+    setCreateIdeaSelectedSources(null)
     setCreateIdeaError('')
     setIdeaDraftJob(null)
     setIsEvidenceDialogOpen(false)
     setIsBrainstormMode(false)
+    brainstormAttachmentLifecycle.reset()
     setBrainstormMessages([])
     setBrainstormInput('')
     setBrainstormError('')
@@ -4072,8 +4117,8 @@ export function IdeaBacklogManagementPage() {
       return
     }
     const titleError = validateIdeaTitle(createIdeaForm.title)
+    setCreateIdeaTitleError(titleError)
     if (titleError) {
-      setCreateIdeaTitleError(titleError)
       document.getElementById('idea-title')?.focus()
       return
     }
@@ -4106,10 +4151,7 @@ export function IdeaBacklogManagementPage() {
       const reviewerManaged = await loadIdeaReviewerPolicy(createIdeaForm.workspaceId, sourceWorkspaceId)
       const payload = {
         title: normalizeIdeaTitle(createIdeaForm.title),
-        description: appendProcessDiagramsToText(
-          createIdeaForm.description.trim() || 'Define business problem, expected value, and target outcomes for governance review.',
-          createIdeaProcessDiagrams,
-        ),
+        description: serializeCreateIdeaDescription(createIdeaForm.description.trim() || 'Define business problem, expected value, and target outcomes for governance review.'),
         category: createIdeaForm.type,
         tags: tags.length > 0 ? tags : ['New', 'Intake'],
         workspace_id: createIdeaForm.workspaceId,
@@ -4160,16 +4202,18 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaTagFeedback('')
     setCreateIdeaDescriptionHtml('')
     setCreateIdeaProcessDiagrams([])
+    setCreateIdeaSelectedSources(null)
     setCreateIdeaError('')
     setCreateIdeaTitleError('')
   }
 
-  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse, messages: Array<{ text: string }> = brainstormMessages) => {
+  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse, _messages: Array<{ text: string }> = brainstormMessages) => {
     const draftText = terminal.result?.draft_text?.trim()
     if (!draftText) {
       throw new Error(terminal.error_message || 'AI draft generation failed.')
     }
-    setCreateIdeaDescriptionFromPlainText(draftText, messages)
+    if (!applySelectedIdeaDescription(draftText, { mode: terminal.brainstorm_messages.length ? 'completed' : 'manual', records: terminal.result?.technical_diagrams, status: terminal.result?.technical_diagram_status })) return
+    if (terminal.result?.technical_diagram_warning) setAiAssistanceError(terminal.result.technical_diagram_warning)
     const overlapMessages: string[] = []
     if (terminal.similar_ideas.length > 0) {
       overlapMessages.push(`${terminal.similar_ideas.length} similar idea(s) found`)
@@ -4188,6 +4232,13 @@ export function IdeaBacklogManagementPage() {
   }
 
   const applyIdeaDraftBrainstormState = (status: IdeaDraftJobStatusResponse) => {
+    // A rejected generation returns to chat with its previous draft intact.
+    // Keep that failure visible on polling and resume, not just while running.
+    if (status.status === 'awaiting_input' && status.error_message?.trim()) {
+      const failure = friendlyBrainstormError(status.error_message)
+      setBrainstormError(failure)
+      setAiAssistanceError(failure)
+    }
     setIdeaDraftJob(status)
     setBrainstormMessages((current) => mergeBrainstormUiMessages(
       current,
@@ -4201,8 +4252,24 @@ export function IdeaBacklogManagementPage() {
   }
 
   const waitForIdeaDraftJob = async (jobId: string, isCurrent = () => true, updateUi = true): Promise<IdeaDraftJobStatusResponse> => {
-    for (let attempt = 0; attempt < 240; attempt += 1) {
-      const status = await getIdeaDraftJob(jobId)
+    const deadline = Date.now() + 300_000
+    for (let attempt = 0; attempt < 240 && Date.now() < deadline; attempt += 1) {
+      if (!isCurrent()) throw new Error('Draft navigation was superseded.')
+      let status: IdeaDraftJobStatusResponse
+      try {
+        status = await getIdeaDraftJob(jobId)
+      } catch (error) {
+        if (!isCurrent()) throw new Error('Draft navigation was superseded.')
+        // An aborted status GET does not cancel the server's generation task.
+        // Retry only this read, never the generation request or a replacement job.
+        const message = error instanceof Error ? error.message : String(error)
+        const transient = /^Request timed out after \d+s\. Please try again\.$/.test(message)
+          || (error instanceof TypeError && /^(Failed to fetch|NetworkError when attempting to fetch resource\.|Load failed)$/.test(message))
+        if (!transient) throw error
+        if (attempt >= 239 || Date.now() >= deadline) break
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 1250))
+        continue
+      }
       if (!isCurrent()) throw new Error('Draft navigation was superseded.')
       if (updateUi) setIdeaDraftJob(status)
       if (status.status === 'awaiting_input') {
@@ -4222,13 +4289,13 @@ export function IdeaBacklogManagementPage() {
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 1250))
     }
-    throw new Error('Generate Draft is still running. Please try again shortly.')
+    throw new Error('Draft status could not be confirmed. Generation may still be running. Reopen this saved session to check its status; do not start another generation.')
   }
 
   const handleAiAssistance = async (mode: IdeaAiAssistanceMode) => {
     const titleError = validateIdeaTitle(createIdeaForm.title)
+    setCreateIdeaTitleError(titleError)
     if (titleError) {
-      setCreateIdeaTitleError(titleError)
       document.getElementById('idea-title')?.focus()
       return
     }
@@ -4245,6 +4312,7 @@ export function IdeaBacklogManagementPage() {
     setAiAssistanceWarning('')
     if (mode === 'generate_draft') {
       setIdeaDraftJob(null)
+      brainstormAttachmentLifecycle.reset()
       setBrainstormMessages([])
       setBrainstormInput('')
       setBrainstormError('')
@@ -4322,7 +4390,8 @@ export function IdeaBacklogManagementPage() {
           normalizeIdeaTitle(createIdeaForm.title),
           createIdeaForm.description && createIdeaForm.description.trim() ? createIdeaForm.description : undefined
         )
-        setCreateIdeaDescriptionFromPlainText(result.result)
+        setAiAssistanceResult(result)
+        if (!setCreateIdeaDescriptionFromPlainText(result.result)) return
       }
 
       setAiAssistanceResult(null)
@@ -4357,7 +4426,7 @@ export function IdeaBacklogManagementPage() {
       return
     }
     const message = (messageOverride ?? brainstormInput).trim()
-    const attached = messageOverride ? null : brainstormDiagramImage
+    const attached = messageOverride ? null : brainstormAttachmentLifecycle.state.attachment?.dataUrl ?? null
     // Deliberately NOT gated on brainstormReady: "enough context" only unlocks
     // Generate draft, it does not end the conversation. The assistant often asks
     // one more question in the same turn, and blocking the send left that question
@@ -4374,11 +4443,13 @@ export function IdeaBacklogManagementPage() {
         : 'Message is too long. The limit is 4,000 characters.')
       return
     }
+    const requestToken = brainstormAttachmentLifecycle.begin(!messageOverride, ideaDraftJob.job_id)
+    if (!requestToken) return
+    const requestIsCurrent = () => brainstormAttachmentLifecycle.isRequestCurrent(requestToken)
     setIsBrainstormSending(true)
     setBrainstormError('')
     if (!messageOverride) {
       setBrainstormInput('')
-      setBrainstormDiagramImage(null)
     }
     setBrainstormOfferGenerateAnyway(false)
     const requestSentAt = new Date().toISOString()
@@ -4407,6 +4478,7 @@ export function IdeaBacklogManagementPage() {
           )
           : await sendWithJob(ideaDraftJob.job_id)
       } catch (firstError) {
+        if (!requestIsCurrent()) return
         const rawFirst = firstError instanceof Error ? firstError.message : String(firstError)
         if (edit || !isIdeaDraftJobLostError(rawFirst)) throw firstError
         const restored = await restoreIdeaDraftBrainstormSession({
@@ -4428,6 +4500,8 @@ export function IdeaBacklogManagementPage() {
           remaining_gaps: brainstormRemainingGaps,
           ready_to_continue: brainstormReady,
         })
+        if (!requestIsCurrent()) return
+        brainstormAttachmentLifecycle.adopt(requestToken, restored.job_id)
         const previousSnapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === ideaDraftJob.job_id)
         if (previousSnapshot) useIdeaDraftBrainstormPointerStore.getState().replacePointer(ideaDraftJob.job_id, { ...previousSnapshot, jobId: restored.job_id, draftSessionId: restored.draft_session_id ?? previousSnapshot.draftSessionId ?? ideaDraftJob.job_id })
         setIdeaDraftJob(restored)
@@ -4443,6 +4517,7 @@ export function IdeaBacklogManagementPage() {
         syncBrainstormEvidenceState(restored)
         response = await sendWithJob(restored.job_id, restored.revision)
       }
+      if (!requestIsCurrent()) return
       const responseReceivedAt = new Date().toISOString()
       let updatedAbbreviationEntry = brainstormAbbreviationEntry
       const explicitSaveConsent = /\b(ya|iya|betul|benar|setuju|simpan|boleh)\b/i.test(shown)
@@ -4487,6 +4562,7 @@ export function IdeaBacklogManagementPage() {
                 }
                 const content = serializeSystemKbTable(updatedModel)
                 const saved = await patchKbEntry(updatedAbbreviationEntry.id, { content })
+                if (!requestIsCurrent()) return
                 updatedAbbreviationEntry = {
                   ...updatedAbbreviationEntry,
                   content: saved.content,
@@ -4506,6 +4582,7 @@ export function IdeaBacklogManagementPage() {
               }
             }
           } catch (saveError) {
+            if (!requestIsCurrent()) return
             addToast({
               title: indonesian ? 'Singkatan belum tersimpan' : 'Abbreviation was not saved',
               description: saveError instanceof Error ? saveError.message : '',
@@ -4521,6 +4598,7 @@ export function IdeaBacklogManagementPage() {
           text: visibleAssistantText,
         })
       }
+      if (!requestIsCurrent()) return
       const mergedMessages = mergeBrainstormUiMessages(
         [...historyBeforeSend, { role: 'user', text: shown, sentAt: requestSentAt, imagePreview: attached ?? undefined }],
         visibleResponseMessages,
@@ -4573,14 +4651,16 @@ export function IdeaBacklogManagementPage() {
         return
       }
     } catch (error) {
+      if (!requestIsCurrent()) return
       if (!messageOverride) {
         setBrainstormInput(message)
-        if (attached) setBrainstormDiagramImage(attached)
+        brainstormAttachmentLifecycle.restore(requestToken)
       }
       const rawMessage = error instanceof Error ? error.message : 'Brainstorming failed. Please try again.'
       let refreshed = false
       try {
         const conflict = await readBrainstormSessionConflict(error, () => getIdeaDraftJob(ideaDraftJob.job_id))
+        if (!requestIsCurrent()) return
         if (conflict.latest) {
           const latest = conflict.latest
           setIdeaDraftJob(latest)
@@ -4591,13 +4671,14 @@ export function IdeaBacklogManagementPage() {
           setBrainstormOfferGenerateAnyway(Boolean(latest.offer_generate_anyway))
           syncBrainstormEvidenceState(latest)
           setBrainstormInput(message)
-          if (attached) setBrainstormDiagramImage(attached)
+          brainstormAttachmentLifecycle.restore(requestToken)
           if (edit) setBrainstormEdit(null)
           refreshed = true
         }
       } catch {
         // Keep the unsent input and the existing transcript if the refresh fails.
       }
+      if (!requestIsCurrent()) return
       setBrainstormError(refreshed
         ? (indonesian ? 'Draft sudah disinkronkan. Pesan Anda belum dikirim dan tetap tersedia di kolom pesan. Periksa pertanyaan terbaru sebelum mengirim kembali.' : 'Draft refreshed. Your unsent message is preserved below. Review the latest question before sending again.')
         : rawMessage.includes('IDEA_DRAFT_SESSION_BUSY')
@@ -4614,48 +4695,59 @@ export function IdeaBacklogManagementPage() {
         ))
       }
     } finally {
-      setIsBrainstormSending(false)
+      if (brainstormAttachmentLifecycle.finish(requestToken)) setIsBrainstormSending(false)
     }
   }
 
   const handlePickBrainstormDiagram = async (file: File | undefined) => {
-    if (!file) return
+    if (!file || isResumingDraft || isDraftContinuing || !isEvidenceDialogOpen) return
+    const selection = brainstormAttachmentLifecycle.select(file.name || 'Clipboard image')
+    if (!selection) return
     const indonesian = isBrainstormThreadIndonesian(brainstormMessages)
+    const fail = (message: string) => {
+      brainstormAttachmentLifecycle.resolve(selection, null,
+        `${message} ${indonesian ? 'Tidak ada gambar terlampir.' : 'No image attached.'}`)
+    }
     if (!/^image\/(png|jpeg|webp|gif)$/i.test(file.type)) {
-      setBrainstormError(
-        indonesian
-          ? 'Unggah gambar PNG, JPG, WEBP, atau GIF.'
-          : 'Upload a PNG, JPG, WEBP, or GIF image.',
-      )
+      fail(indonesian ? 'Unggah gambar PNG, JPG, WEBP, atau GIF.' : 'Upload a PNG, JPG, WEBP, or GIF image.')
       return
     }
     try {
       const dataUrl = await resizeDiagramUpload(file)
-      if (dataUrl.length > 5_500_000) {
-        setBrainstormError(
-          indonesian
-            ? 'Gambar masih terlalu besar setelah diperkecil. Coba potong bagian diagramnya.'
-            : 'The image is still too large after resizing. Crop it to the diagram.',
-        )
+      // Match the server's 4 MB decoded-byte limit (JPEG base64 payload, excluding the prefix).
+      const payload = dataUrl.slice(dataUrl.indexOf(',') + 1)
+      const decodedBytes = payload.length * 3 / 4 - (payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0)
+      if (decodedBytes > 4_000_000) {
+        fail(indonesian ? 'Gambar masih terlalu besar setelah diperkecil. Coba potong bagian diagramnya.'
+          : 'The image is still too large after resizing. Crop it to the diagram.')
         return
       }
-      setBrainstormDiagramImage(dataUrl)
-      setBrainstormError('')
+      brainstormAttachmentLifecycle.resolve(selection, { dataUrl, name: file.name || 'Clipboard image' })
     } catch {
-      setBrainstormError(
-        indonesian
-          ? 'Gambar itu tidak bisa dibaca. Coba unggah ulang.'
-          : 'That image could not be read. Try uploading it again.',
-      )
+      fail(indonesian ? 'Gambar itu tidak bisa dibaca. Coba unggah ulang.' : 'That image could not be read. Try uploading it again.')
     }
   }
 
+  const continueIdeaDraftInFlightRef = useRef(false)
+  const brainstormGenerationDisabled = !ideaDraftJob
+    || !['awaiting_input', 'completed'].includes(ideaDraftJob.status)
+    || (ideaDraftJob.status === 'completed' && !brainstormReady)
+    || isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing
+
   const handleContinueIdeaDraft = async (action: 'generate_anyway' | 'use_brainstorm') => {
-    if (!ideaDraftJob || ideaDraftJob.status !== 'awaiting_input' || isDraftContinuing) return
+    if (brainstormGenerationDisabled || continueIdeaDraftInFlightRef.current || !ideaDraftJob
+      || brainstormAttachmentLifecycle.state.preparing || brainstormAttachmentLifecycle.state.attachment) return
+    // A saved completed job must use re-analysis, not the awaiting-input endpoint.
+    // Keep its existing description until the user explicitly applies the new version.
+    if (ideaDraftJob.status === 'completed') {
+      await handleReanalyzeDraft()
+      return
+    }
     if (action === 'use_brainstorm' && !brainstormReady) {
       setBrainstormError('Keep answering Tectona Assistant questions until evidence is marked sufficient.')
       return
     }
+    continueIdeaDraftInFlightRef.current = true
     setIsDraftContinuing(true)
     setBrainstormError('')
     setAiAssistanceError('')
@@ -4709,6 +4801,7 @@ export function IdeaBacklogManagementPage() {
       setAiAssistanceError(friendly)
       setIsEvidenceDialogOpen(true)
     } finally {
+      continueIdeaDraftInFlightRef.current = false
       setIsDraftContinuing(false)
       setAiAssistanceLoading(null)
     }
@@ -4782,7 +4875,9 @@ export function IdeaBacklogManagementPage() {
   // user is looking at is left untouched until they pick "Pakai versi ini",
   // which is what keeps an unsaved manual edit from being overwritten.
   const handleReanalyzeDraft = async () => {
-    if (!ideaDraftJob || ideaDraftJob.status !== 'completed' || isReanalyzing) return
+    if (!ideaDraftJob || ideaDraftJob.status !== 'completed' || brainstormGenerationDisabled || continueIdeaDraftInFlightRef.current
+      || brainstormAttachmentLifecycle.state.preparing || brainstormAttachmentLifecycle.state.attachment) return
+    continueIdeaDraftInFlightRef.current = true
     setIsReanalyzing(true)
     setBrainstormError('')
     setDraftVersionCard(null)
@@ -4804,12 +4899,41 @@ export function IdeaBacklogManagementPage() {
         friendlyBrainstormError(error instanceof Error ? error.message : String(error)),
       )
     } finally {
+      continueIdeaDraftInFlightRef.current = false
       setIsReanalyzing(false)
     }
   }
 
+  const hydrateCompletedDraftVersion = async (
+    status: IdeaDraftJobStatusResponse,
+    expectedJobId: string,
+    isCurrent: () => boolean,
+  ) => {
+    if (!isCurrent() || status.status !== 'completed' || status.job_id !== expectedJobId) return
+    try {
+      const listed = await listIdeaDraftVersions(expectedJobId)
+      if (!isCurrent()) return
+      if (listed.job_id !== expectedJobId) throw new Error('Draft versions did not match the resumed session.')
+      const latest = listed.versions.reduce<(typeof listed.versions)[number] | null>(
+        (best, version) => !best || version.version_no > best.version_no ? version : best, null,
+      )
+      if (!latest) return
+      const version = await getIdeaDraftVersion(expectedJobId, latest.version_no)
+      if (!isCurrent()) return
+      if (version.version_no !== latest.version_no) throw new Error('Draft version did not match the requested version.')
+      // Resume only offers the saved result. The current editor is changed solely
+      // by the existing explicit Apply version action.
+      setDraftVersionCard(version)
+    } catch (error) {
+      if (!isCurrent()) return
+      const message = error instanceof Error ? error.message : String(error)
+      setBrainstormError(`Your saved session is open, but its draft version could not be loaded (${message}). Reopen this session to check it; do not generate again.`)
+    }
+  }
+
   const applyDraftVersion = (version: IdeaDraftVersionDetail) => {
-    setCreateIdeaDescriptionFromPlainText(version.draft_text)
+    if (!applySelectedIdeaDescription(version.draft_text, { mode: 'version', records: version.technical_diagrams, status: version.technical_diagram_status })) return
+    if (version.technical_diagram_warning) setAiAssistanceError(version.technical_diagram_warning)
     setDraftVersionCard(null)
     setIsEvidenceDialogOpen(false)
     setIsBrainstormMode(false)
@@ -4848,6 +4972,7 @@ export function IdeaBacklogManagementPage() {
       createIdeaForm.description,
       createIdeaDescriptionHtml,
       createIdeaProcessDiagrams.map((diagram) => diagram.source).join('\n'),
+      JSON.stringify(createIdeaSelectedSources),
       createIdeaForm.type,
       createIdeaForm.reviewer,
       brainstormInput,
@@ -4863,6 +4988,7 @@ export function IdeaBacklogManagementPage() {
     createIdeaForm.description,
     createIdeaDescriptionHtml,
     createIdeaProcessDiagrams,
+    createIdeaSelectedSources,
     createIdeaForm.type,
     createIdeaForm.reviewer,
     effectiveCreateIdeaTags,
@@ -4887,7 +5013,7 @@ export function IdeaBacklogManagementPage() {
       ownerId: currentUserId,
       status: ideaDraftJob.status,
       composerDraft: brainstormInput,
-      form: { description: appendProcessDiagramsToText(createIdeaForm.description, createIdeaProcessDiagrams), html: createIdeaDescriptionHtml, type: createIdeaForm.type, reviewer: createIdeaForm.reviewer },
+      form: { ...(createIdeaSelectedSources !== null ? { sourceSelectionVersion: 1 as const } : {}), description: serializeCreateIdeaDescription(createIdeaForm.description), html: createIdeaDescriptionHtml, type: createIdeaForm.type, reviewer: createIdeaForm.reviewer },
       title,
       updatedAt: Date.now(),
       // Recovery snapshot survives jobs being evicted from the runtime.
@@ -4907,6 +5033,7 @@ export function IdeaBacklogManagementPage() {
 
   const handleCloseBrainstorm = () => {
     const closePanels = () => {
+      brainstormAttachmentLifecycle.reset()
       setIsEvidenceDialogOpen(false)
       setIsBrainstormMode(false)
       setIsCreateIdeaDrawerOpen(false)
@@ -4929,7 +5056,7 @@ export function IdeaBacklogManagementPage() {
     if (!isEvidenceDialogOpen) return
     const onEsc = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || event.defaultPrevented) return
-      if (document.querySelector('[data-brainstorm-summary-dialog]')) return
+      if (document.querySelector('[data-brainstorm-summary-dialog], [data-diagram-fullscreen-dialog]')) return
       event.preventDefault()
       event.stopImmediatePropagation()
       if (isBrainstormMode) {
@@ -4970,7 +5097,9 @@ export function IdeaBacklogManagementPage() {
 
     let cancelled = false
     brainstormReturnContext.current = captureBrainstormReturnContext(tenant, location)
+    brainstormAttachmentLifecycle.reset()
     setIsResumingDraft(true)
+    setDraftVersionCard(null)
     void (async () => {
       const snapshot = useIdeaDraftBrainstormPointerStore.getState().pointers.find((item) => item.jobId === jobId && item.ownerId === currentUserId)
       if (!snapshot) {
@@ -5016,6 +5145,19 @@ export function IdeaBacklogManagementPage() {
         }
         status = await recoverBrainstormSummaryOnResume(status, recoverIdeaDraftLiveSummary)
         if (cancelled) return
+        const hasSavedDescription = typeof snapshot.form?.description === 'string' && (snapshot.form.sourceSelectionVersion === 1 || snapshot.form.description.length > 0)
+        if (hasSavedDescription) {
+          const check = prepareDiagramHandoff({ text: snapshot.form!.description, html: snapshot.form?.html, mode: 'resume' })
+          if (!check.ok) { setAiAssistanceError(check.reason); return }
+          if (resolveSavedIdeaRichHtml(check.prose, snapshot.form?.html) === null) {
+            setAiAssistanceError('Saved text and rich formatting differ. Your current editor and source selection were kept for recovery.')
+            return
+          }
+        }
+        if (!hasSavedDescription && status.status === 'completed') {
+          const check = prepareDiagramHandoff({ text: status.result?.draft_text || '', mode: status.brainstorm_messages.length ? 'completed' : 'manual', records: status.result?.technical_diagrams, status: status.result?.technical_diagram_status })
+          if (!check.ok) { setAiAssistanceError(check.reason); return }
+        }
         const resumed = { ...snapshot, jobId: status.job_id, status: status.status,
           draftSessionId: status.draft_session_id ?? snapshot.draftSessionId ?? jobId }
         if (status.job_id !== jobId) useIdeaDraftBrainstormPointerStore.getState().replacePointer(jobId, resumed)
@@ -5028,6 +5170,7 @@ export function IdeaBacklogManagementPage() {
         setCreateIdeaDraftMode('ai')
         const pointerTitle = snapshot?.title
         if (pointerTitle) {
+          setCreateIdeaTitleError(validateIdeaTitle(pointerTitle))
           setCreateIdeaForm({
             title: pointerTitle,
             workspaceId: snapshot.workspaceId || '',
@@ -5040,19 +5183,20 @@ export function IdeaBacklogManagementPage() {
         setCreateIdeaTagDraft('')
         setCreateIdeaDescriptionHtml('')
         setCreateIdeaProcessDiagrams([])
+    setCreateIdeaSelectedSources(null)
         setBrainstormInput(snapshot.composerDraft ?? '')
-        setBrainstormDiagramImage(null)
+        brainstormAttachmentLifecycle.reset()
         setBrainstormEdit(null)
         setBrainstormError('')
         setAiAssistanceError('')
         setBrainstormMessages(mergeBrainstormUiMessages(snapshot.messages ?? [], status.brainstorm_messages ?? []))
-        if (status.status === 'completed') applyCompletedIdeaDraft(status, status.brainstorm_messages)
-        if (snapshot.form?.description) setCreateIdeaDescriptionFromPlainText(snapshot.form.description, status.brainstorm_messages)
-        if (snapshot.form?.html) syncCreateIdeaDescriptionFromHtml(snapshot.form.html)
+        if (hasSavedDescription) applySelectedIdeaDescription(snapshot.form!.description, { mode: 'resume', html: snapshot.form?.html })
+        else if (status.status === 'completed') applyCompletedIdeaDraft(status, status.brainstorm_messages)
         if (status.status === 'awaiting_input' || status.status === 'completed') {
           applyIdeaDraftBrainstormState(status)
           setIsEvidenceDialogOpen(true)
           setIsBrainstormMode(true)
+          await hydrateCompletedDraftVersion(status, jobId, () => !cancelled)
         } else {
           setIdeaDraftJob(status)
         }
@@ -5084,7 +5228,7 @@ export function IdeaBacklogManagementPage() {
   const handleApplyAiResult = () => {
     if (aiAssistanceResult?.result) {
       const cleanedResult = aiAssistanceResult.result.trim()
-      setCreateIdeaDescriptionFromPlainText(cleanedResult)
+      if (!setCreateIdeaDescriptionFromPlainText(cleanedResult)) return
       setAiAssistanceResult(null)
       setAiAssistanceLoading(null)
     }
@@ -6742,9 +6886,7 @@ export function IdeaBacklogManagementPage() {
                         )}
 
                         {aiAssistanceError && (
-                          <p className="text-xs text-destructive font-medium bg-destructive/10 rounded px-3 py-2 border border-destructive/30">
-                            {aiAssistanceError}
-                          </p>
+                          <BrainstormErrorNotice message={aiAssistanceError} indonesian={brainstormThreadIndonesian} className="text-xs text-destructive font-medium bg-destructive/10 rounded px-3 py-2 border border-destructive/30" />
                         )}
 
                         {aiAssistanceWarning && (
@@ -6957,6 +7099,16 @@ export function IdeaBacklogManagementPage() {
                         </div>
                       ) : null}
 
+                      {createIdeaSelectedSources?.length ? <section aria-label="Selected diagram sources" className="space-y-2 rounded border p-3">
+                        <p className="text-sm font-semibold">Selected diagram sources</p>
+                        {createIdeaSelectedSources.map((source, index) => <details key={index} className="rounded border p-2">
+                          <summary>{source.topic || 'Selected source'} - {source.kind || source.language}</summary>
+                          <p className="text-xs">{source.reviewedRepresentation ? 'Affirmed representation in the selected server draft. Not production approval.' : 'Source retained; review has not been reverified.'}</p>
+                          {supportsReadOnlyTechnicalPreview(source) ? <AssistantMermaidBlock source={source.source} notation="plantuml" diagramKind={source.kind} diagramLanguage={source.language} compact /> : <p className="text-xs">Original source retained; no supported visual preview is available here.</p>}
+                          <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{source.source}</pre>
+                          {source.shownContext ? <details><summary>Original depiction context (unverified provenance)</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{source.shownContext}</pre></details> : null}
+                        </details>)}
+                      </section> : null}
                       {createIdeaProcessDiagrams.length > 0 ? (
                         <div className="space-y-3 rounded-xl border border-sky-200/70 bg-sky-50/40 p-3">
                           <div>
@@ -7229,7 +7381,9 @@ export function IdeaBacklogManagementPage() {
                           {(brainstormReady || brainstormOfferGenerateAnyway) ? (
                             <button
                               type="button"
-                              disabled={isBrainstormSending || isDraftContinuing}
+                              disabled={brainstormGenerationDisabled || Boolean(brainstormAttachment.preparing) || Boolean(brainstormDiagramImage)}
+                              title={ideaDraftJob?.status === 'completed' && !brainstormReady
+                                ? 'Keep answering questions until evidence is sufficient to re-analyze this draft.' : undefined}
                               className={cn(
                                 enterprisePrimarySolidButtonClass(),
                                 'h-9 px-3', isMobileLayout ? 'hidden' : 'inline-flex',
@@ -7240,7 +7394,7 @@ export function IdeaBacklogManagementPage() {
                               )}
                             >
                               <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                              {isDraftContinuing
+                              {isDraftContinuing || isReanalyzing
                                 ? 'Generating…'
                                 : brainstormReady
                                   ? 'Generate draft'
@@ -7298,8 +7452,8 @@ export function IdeaBacklogManagementPage() {
                             onToggleMobile={() => setBrainstormMobilePanel(value => value === 'summary' ? null : 'summary')}
                             key={ideaDraftJob?.draft_session_id ?? ideaDraftJob?.job_id ?? 'new-brainstorm'}
                             job={ideaDraftJob}
+                            requestFailed={Boolean(brainstormError)}
                             busy={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
-                            error={brainstormError}
                           />}
                           <div
                             ref={brainstormScrollRef}
@@ -7562,7 +7716,7 @@ export function IdeaBacklogManagementPage() {
                             <BrainstormIntakeReview
                               key={ideaDraftJob.job_id}
                               indonesian={brainstormThreadIndonesian}
-                              disabled={isBrainstormSending}
+                              disabled={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
                               generating={isDraftContinuing}
                               discoveryProgress={brainstormDiscoveryProgress}
                               onSend={handleSendBrainstormMessage}
@@ -7589,7 +7743,9 @@ export function IdeaBacklogManagementPage() {
                               </p>
                               <button
                                 type="button"
-                                disabled={isReanalyzing || isBrainstormSending || isDraftContinuing}
+                                disabled={brainstormGenerationDisabled || Boolean(brainstormAttachment.preparing) || Boolean(brainstormDiagramImage)}
+                                title={!brainstormReady
+                                  ? 'Keep answering questions until evidence is sufficient to re-analyze this draft.' : undefined}
                                 className={cn(
                                   enterprisePrimarySolidButtonClass(),
                                   'h-9',
@@ -7685,11 +7841,14 @@ export function IdeaBacklogManagementPage() {
 
                       <div className="brainstorm-composer shrink-0 border-t border-border/60 bg-background px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 sm:px-4">
                         <div className="mx-auto w-full max-w-4xl space-y-2">
-                          {brainstormError && <p className="px-3 text-xs text-destructive">{brainstormError}</p>}
+                          {brainstormError && <BrainstormErrorNotice message={brainstormError} indonesian={brainstormThreadIndonesian} className="px-3 text-xs text-destructive" />}
+                          {brainstormAttachment.error && <BrainstormErrorNotice message={brainstormAttachment.error} indonesian={brainstormThreadIndonesian} className="px-3 text-xs text-destructive" />}
                           {(brainstormReady || brainstormOfferGenerateAnyway) ? (
                             <button
                               type="button"
-                              disabled={isBrainstormSending || isDraftContinuing}
+                              disabled={brainstormGenerationDisabled || Boolean(brainstormAttachment.preparing) || Boolean(brainstormDiagramImage)}
+                              title={ideaDraftJob?.status === 'completed' && !brainstormReady
+                                ? 'Keep answering questions until evidence is sufficient to re-analyze this draft.' : undefined}
                               className={cn(
                                 enterprisePrimarySolidButtonClass(),
                                 'h-11 w-full justify-center', !isMobileLayout && 'hidden',
@@ -7698,7 +7857,7 @@ export function IdeaBacklogManagementPage() {
                               onClick={() => void handleContinueIdeaDraft(brainstormReady ? 'use_brainstorm' : 'generate_anyway')}
                             >
                               <Wand2 className="h-4 w-4 shrink-0" aria-hidden />
-                              {isDraftContinuing ? 'Generating…' : brainstormReady ? 'Generate draft' : 'Generate anyway'}
+                              {isDraftContinuing || isReanalyzing ? 'Generating…' : brainstormReady ? 'Generate draft' : 'Generate anyway'}
                             </button>
                           ) : null}
                           {/* The composer stays mounted after the draft becomes generatable.
@@ -7706,6 +7865,12 @@ export function IdeaBacklogManagementPage() {
                               conversation — the assistant usually still has an open question,
                               and unmounting this left the user staring at a dead chat. */}
                           <div className="rounded-2xl border border-border bg-background px-3 pb-2.5 pt-3 shadow-[0_4px_18px_rgba(15,23,42,0.08)] transition-shadow focus-within:border-primary/40 focus-within:shadow-[0_6px_24px_rgba(15,23,42,0.12)]">
+                            <div role="status" aria-live="polite" className="mb-1 px-1 text-xs text-muted-foreground">
+                              {brainstormAttachmentStatus(brainstormAttachment, isBrainstormThreadIndonesian(brainstormMessages))}
+                            </div>
+                            {brainstormAttachment.preparing ? (
+                              <button type="button" className="mb-1 px-1 text-xs" onClick={() => brainstormAttachmentLifecycle.clear()}>{isBrainstormThreadIndonesian(brainstormMessages) ? 'Batalkan gambar' : 'Cancel image'}</button>
+                            ) : null}
                             {brainstormDiagramImage ? (
                               <div className="mb-2 flex items-center gap-2 px-1">
                                 <img
@@ -7722,7 +7887,7 @@ export function IdeaBacklogManagementPage() {
                                   type="button"
                                   className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#5d5d5d] hover:bg-black/[0.04]"
                                   aria-label={isBrainstormThreadIndonesian(brainstormMessages) ? 'Hapus gambar' : 'Remove image'}
-                                  onClick={() => setBrainstormDiagramImage(null)}
+                                  onClick={() => brainstormAttachmentLifecycle.clear()}
                                 >
                                   <X className="h-3.5 w-3.5" />
                                 </button>
@@ -7848,11 +8013,11 @@ export function IdeaBacklogManagementPage() {
                                   size="icon"
                                   className={cn(
                                     'ml-0.5 h-8 w-8 shrink-0 rounded-full transition-colors',
-                                    (brainstormInput.trim() || brainstormDiagramImage) && !isBrainstormSending && !isDraftContinuing
+                                    (brainstormInput.trim() || brainstormDiagramImage) && !brainstormAttachment.preparing && !isBrainstormSending && !isDraftContinuing
                                       ? 'bg-[#0d0d0d] text-white hover:bg-black'
                                       : 'bg-[#e5e5e5] text-[#9a9a9a] hover:bg-[#e5e5e5]',
                                   )}
-                                  disabled={(!brainstormInput.trim() && !brainstormDiagramImage) || isBrainstormSending || isDraftContinuing}
+                                  disabled={(!brainstormInput.trim() && !brainstormDiagramImage) || Boolean(brainstormAttachment.preparing) || isBrainstormSending || isDraftContinuing}
                                   onClick={() => void handleSendBrainstormMessage()}
                                   aria-label="Send message"
                                 >
@@ -7884,8 +8049,8 @@ export function IdeaBacklogManagementPage() {
                         {!isMobileLayout && <BrainstormLiveSummaryPanel
                           key={ideaDraftJob?.draft_session_id ?? ideaDraftJob?.job_id ?? 'new-brainstorm'}
                           job={ideaDraftJob}
+                          requestFailed={Boolean(brainstormError)}
                           busy={isBrainstormSending || isDraftContinuing || isResumingDraft || isReanalyzing}
-                          error={brainstormError}
                         />}
                       </div>
                     </div>

@@ -1,0 +1,68 @@
+/* Shared sign-in presentation, based on Tectona. Scoped away from dashboards. */
+html:has(.platform-login), body:has(.platform-login), #root:has(.platform-login) {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: auto;
+  background-color: transparent;
+}
+body:has(.platform-login)::before, body:has(.platform-login)::after { display: none; }
+.platform-login {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 1fr auto 1fr;
+  min-height: var(--app-vh, 100dvh);
+  width: 100%;
+  padding: 16px;
+  gap: 16px;
+}
+.platform-login-main { grid-row: 2; width: 100%; max-width: 28rem; min-width: 0; margin: 0 auto; }
+.platform-login-card { padding: 32px; border-radius: 12px; }
+.platform-login-card > :not([hidden]) ~ :not([hidden]) { margin-top: 24px; }
+.platform-login-card #login-card-header { text-align: center; }
+.platform-login-card #login-card-header img { display: block; height: 96px; max-width: 100%; width: auto; object-fit: contain; margin-inline: auto; }
+.platform-login-card #login-card-header > :not([hidden]) ~ :not([hidden]) { margin-top: 8px; }
+.platform-login-card form > :not([hidden]) ~ :not([hidden]) { margin-top: 16px; }
+.platform-login-card input { height: 40px; border-radius: 12px; padding-inline: 12px; }
+.platform-login-card form .relative > button[aria-label] { right: 0; width: 44px; display: flex; align-items: center; justify-content: center; }
+.platform-login-card input[type='password'], .platform-login-card #password { padding-right: 44px; }
+.platform-login-card #login-submit, .platform-login-card #login-passkey, .platform-login-card #login-social button {
+  min-height: 40px; border-radius: 12px;
+}
+.platform-login-footer {
+  grid-row: 3; align-self: end; justify-self: center;
+  display: flex; align-items: flex-end; justify-content: space-between;
+  width: 100%; min-width: 0; gap: 16px; padding-top: 16px;
+}
+.platform-login-footer [class*='-auth-copyright'], .platform-login-footer [class*='-auth-tour-fab'] { position: static; margin: 0; }
+.platform-login-footer [class*='-auth-copyright'] { line-height: 16px; }
+.platform-login-footer [class*='-auth-tour-fab'] { margin-left: auto; }
+.platform-login-footer [class*='-auth-build'] { overflow-wrap: anywhere; line-height: 16px; }
+/* Video portals remain outside the scaled application root. */
+body:has(.platform-login) > .app-background-video-layer {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: -2; overflow: hidden;
+}
+body:has(.platform-login) .app-background-video {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: center; transition: opacity 1600ms ease;
+}
+@media (max-width: 767px), (max-width: 1023px) and (pointer: coarse) {
+  .platform-login { min-height: var(--login-viewport-height, 100svh); padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); gap: 12px; }
+  .platform-login-card { padding: 20px; }
+  .platform-login-card > :not([hidden]) ~ :not([hidden]), .platform-login-card form > :not([hidden]) ~ :not([hidden]) { margin-top: 12px; }
+  .platform-login-card #login-card-header img { height: 64px; }
+  .platform-login-card input { min-height: 48px; font-size: 16px; }
+  .platform-login-card button { min-height: 44px; }
+  .platform-login-footer { max-width: 28rem; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 0; }
+  .platform-login-footer button { min-width: 44px; min-height: 44px; }
+  .platform-login-footer .animate-ping { display: none; }
+  .platform-login[data-compact='true'] { gap: 8px; }
+  .platform-login[data-compact='true'] .platform-login-card { padding: 12px 16px; }
+  .platform-login[data-compact='true'] #login-card-header img { height: 44px; }
+  .platform-login[data-compact='true'] .platform-login-card > :not([hidden]) ~ :not([hidden]), .platform-login[data-compact='true'] form > :not([hidden]) ~ :not([hidden]) { margin-top: 8px; }
+  .platform-login[data-compact='true'] input { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  body:has(.platform-login) .app-background-video { transition: none; }
+}

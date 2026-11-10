@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { useIdeaDraftBrainstormPointerStore as store } from './idea-draft-brainstorm-pointer-store'
+import { prepareDiagramHandoff, serializeSelectedSources } from '@/lib/chat/technicalDiagramHandoff'
 
 const snapshot = {
   jobId: 'helpdesk-job',
@@ -66,4 +67,25 @@ it('preserves genuine message timing through server-list refresh and local rehyd
   expect(store.getState().pointers[0].messages).toEqual(messages)
   await store.persist.rehydrate()
   expect(store.getState().pointers[0].messages).toEqual(messages)
+})
+
+
+it.each([false, true])('rehydrates the exact selected attachment state, explicitlyEmpty=%s', async explicitlyEmpty => {
+  const source = "@startuml\n' tectona-dimension: operations\n' tectona-view: archimate\ncomponent Mock\n@enduml"
+  const description = explicitlyEmpty ? '' : serializeSelectedSources('Selected text.', [{ source, language: 'plantuml', topic: 'operations', kind: 'archimate', provenance: 'selected-text', reviewedRepresentation: false }])
+  const form = { description, html: explicitlyEmpty ? '' : '<p>Selected text.</p>', type: 'business', reviewer: '', sourceSelectionVersion: 1 as const }
+  store.getState().setPointer({ ...snapshot, form })
+  await store.persist.rehydrate()
+  expect(store.getState().pointers[0].form).toEqual(form)
+  store.getState().mergePointers([{ ...snapshot, status: 'completed', updatedAt: 2 }])
+  await store.persist.rehydrate()
+  const saved = store.getState().pointers[0].form!
+  expect(saved).toEqual(form)
+  expect(JSON.parse(localStorage.getItem('idea-draft-brainstorm-pointer-storage')!).state.pointers[0].form).toEqual(form)
+  const prepared = prepareDiagramHandoff({ text: saved.description, html: saved.html, mode: 'resume', existing: [{ source: 'newer unrelated source', language: 'unknown', provenance: 'local-unverified', reviewedRepresentation: false }] })
+  expect(prepared.ok).toBe(true)
+  if (prepared.ok) {
+    expect(prepared.sources.map(item => item.source)).toEqual(explicitlyEmpty ? [] : [source])
+    expect(prepared.sources.every(item => !item.reviewedRepresentation)).toBe(true)
+  }
 })

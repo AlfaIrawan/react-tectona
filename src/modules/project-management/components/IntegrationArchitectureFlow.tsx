@@ -36,7 +36,7 @@ import { isArchimateElementData, type ArchimateNodeData } from '@/modules/projec
 
 const INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS = { type: 'smoothstep' as const }
 const INTEGRATION_FLOW_FIT_VIEW_OPTIONS = { padding: 0.08, minZoom: 0.1, maxZoom: 1.4 }
-const INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS = { padding: 0.22, maxZoom: 1 }
+const INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS = { padding: 0.22, minZoom: 0.000001, maxZoom: 1 }
 const INTEGRATION_FLOW_PRO_OPTIONS = { hideAttribution: true as const }
 const INTEGRATION_EDGE_TYPES: EdgeTypes = { smoothstep: AnchoredSmoothStepEdge, erd: ErdCrowfootEdge }
 const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
@@ -97,6 +97,7 @@ type IntegrationArchitectureFlowProps = {
   showConnectionArrows?: boolean
   showConnectionPoints?: boolean
   preview?: boolean
+  previewNavigation?: boolean
   defaultViewport?: Viewport
   controlsStyle?: CSSProperties
   onUndo?: () => void
@@ -130,6 +131,7 @@ function IntegrationArchitectureFlowInner({
   showConnectionArrows = true,
   showConnectionPoints = true,
   preview = false,
+  previewNavigation = false,
   defaultViewport,
   controlsStyle,
   onUndo,
@@ -270,18 +272,19 @@ function IntegrationArchitectureFlowInner({
         edgesUpdatable={false}
         elevateEdgesOnSelect
         edgeUpdaterRadius={10 / zoom}
-        panOnDrag={preview ? false : panMode ? [0, 1] : [1]}
+        panOnDrag={preview ? previewNavigation ? [0, 1] : false : panMode ? [0, 1] : [1]}
         selectionOnDrag={!preview && !panMode}
         snapToGrid={!preview && snapToGrid}
         snapGrid={INTEGRATION_SNAP_GRID}
         zoomOnScroll={!preview}
-        zoomOnPinch={!preview}
+        zoomOnPinch={!preview || previewNavigation}
         zoomOnDoubleClick={false}
-        minZoom={preview ? 0.2 : 0.1}
-        maxZoom={preview ? 1 : 4}
+        minZoom={preview ? 0.000001 : 0.1}
+        maxZoom={preview && !previewNavigation ? 1 : 4}
         proOptions={INTEGRATION_FLOW_PRO_OPTIONS}
         defaultEdgeOptions={INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS}
       >
+      {preview && previewNavigation ? <Controls showInteractive={false} fitViewOptions={INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS} position="bottom-left" /> : null}
       {!preview ? (
         <MiniMap
           zoomable
@@ -326,9 +329,11 @@ const NOOP_SELECTION: OnSelectionChangeFunc = () => undefined
 export function IntegrationArchitecturePreview({
   nodes,
   edges,
+  navigation = false,
 }: {
   nodes: Node<ArchimateNodeData>[]
   edges: Edge[]
+  navigation?: boolean
 }) {
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-white/75">
@@ -341,6 +346,7 @@ export function IntegrationArchitecturePreview({
           onConnect={NOOP_CONNECT}
           onSelectionChange={NOOP_SELECTION}
           preview
+          previewNavigation={navigation}
           showRuler={false}
           showGuides={false}
           showConnectionPoints={false}

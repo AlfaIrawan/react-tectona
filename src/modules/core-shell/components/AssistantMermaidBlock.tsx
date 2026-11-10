@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Copy, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
+import { diagramPresentation, diagramSourceDescription } from '@/lib/chat/diagramPresentation'
 import { renderProcessDiagram, type ProcessDiagramNotation } from '@/lib/api/tectonaAgentRuntimeApi'
 import { buildFlowchartFallbackSvg, processPlantUmlToMermaid, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
 import {
@@ -13,12 +14,18 @@ import {
 import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
 import { diagramScrollSurface, fittedDiagramSize } from '@/modules/core-shell/components/diagramFullscreenFrame'
 import { cn } from '@/lib/utils'
+import { IntegrationArchitecturePreview } from '@/modules/project-management/components/IntegrationArchitectureFlow'
+import { buildVerifiedNativePreview, canonicalPreviewKind, hasConflictingPreviewKind, type CanonicalPreviewKind } from '@/modules/project-management/lib/readOnlyDiagramPreview'
+import { usePlantUmlPngPreview } from '@/modules/project-management/lib/usePlantUmlPngPreview'
 
 type AssistantMermaidBlockProps = {
   source: string
   className?: string
   /** `bpmn`: BPMN 2.0 notation, the same renderer as the Idea Diagram section. */
   notation?: ProcessDiagramNotation
+  /** Explicit retained-source metadata, when available. Never inferred from generic arrows. */
+  diagramKind?: string
+  diagramLanguage?: string
   /** Fit a thumbnail in a narrow panel; the fullscreen viewer keeps the original resolution. */
   compact?: boolean
 }
@@ -234,7 +241,15 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        if (event.isComposing || event.defaultPrevented) return
+        const dialogs = document.querySelectorAll('[data-diagram-fullscreen-dialog]')
+        if (dialogs.item(dialogs.length - 1) !== modalRef.current) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        onClose()
+        return
+      }
       if (event.key === 'Tab') {
         const controls = [...(modalRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex="0"]') ?? [])]
         const first = controls[0], last = controls.at(-1)
@@ -242,8 +257,8 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
   useEffect(() => {
@@ -280,7 +295,7 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
     const ok = await copyTextToClipboard(source)
     pushGlobalToast({
       title: ok ? 'Diagram copied' : 'Copy failed',
-      description: ok ? 'PlantUML diagram source is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
+      description: ok ? diagramSourceDescription(source) : 'Try again from a browser that supports clipboard access.',
       variant: ok ? 'success' : 'error',
     })
   }
@@ -314,12 +329,13 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
       role="presentation"
     >
       <div
-        className="flex h-[94vh] max-h-[94vh] w-full max-w-[min(96vw,1200px)] flex-col overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-2xl dark:border-[#3b4a54] dark:bg-[#111b21]"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         ref={modalRef}
         aria-modal="true"
         aria-label="Fullscreen diagram"
+        data-diagram-fullscreen-dialog
+        className="flex h-[94vh] max-h-[94vh] w-full max-w-[min(96vw,1200px)] flex-col overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-2xl dark:border-[#3b4a54] dark:bg-[#111b21]"
       >
         <div className="flex items-center justify-end gap-0.5 border-b border-[#d1d7db]/80 px-2 py-1.5 dark:border-[#3b4a54]">
           {children ? null : (
@@ -428,7 +444,7 @@ async function renderMermaidSvg(source: string, reactId: string): Promise<{ svg:
   throw new Error('Diagram could not be rendered')
 }
 
-export function AssistantMermaidBlock({ source, className, notation = 'plantuml', compact = false }: AssistantMermaidBlockProps) {
+function LegacyAssistantMermaidBlock({ source, className, notation = 'plantuml', compact = false }: AssistantMermaidBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const reactId = useId().replace(/:/g, '')
   const [svgHtml, setSvgHtml] = useState<string | null>(null)
@@ -568,7 +584,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
     const ok = await copyTextToClipboard(source.trim())
     pushGlobalToast({
       title: ok ? 'Diagram copied' : 'Copy failed',
-      description: ok ? 'PlantUML diagram source is in the clipboard.' : 'Try again from a browser that supports clipboard access.',
+      description: ok ? diagramSourceDescription(source) : 'Try again from a browser that supports clipboard access.',
       variant: ok ? 'success' : 'error',
     })
   }, [source])
@@ -628,7 +644,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
         ) : null}
         {bpmnUrl ? (
           <p className="absolute left-2 top-2 z-10 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
-            {drawnNotation === 'bpmn' ? 'BPMN process flow' : 'PlantUML process flow'}
+            {diagramPresentation(source, drawnNotation).caption}
           </p>
         ) : showFlowchart ? (
           <p className="absolute left-2 top-2 z-20 rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-[#202c33]/90 dark:text-slate-300">
@@ -644,7 +660,7 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
           <div className={cn('flex w-full overflow-x-auto p-3', bpmnImageWidth ? 'justify-start' : 'justify-center')}>
             <img
               src={bpmnUrl}
-              alt={drawnNotation === 'bpmn' ? 'Diagram proses bisnis BPMN' : 'Diagram proses bisnis PlantUML'}
+              alt={diagramPresentation(source, drawnNotation).alt}
               className={cn(
                 compact ? 'h-[140px] w-auto max-w-full object-contain' : 'max-h-[min(70vh,640px)] object-contain',
                 !compact && bpmnImageWidth ? 'max-w-none' : 'mx-auto w-auto max-w-full',
@@ -715,4 +731,83 @@ export function AssistantMermaidBlock({ source, className, notation = 'plantuml'
       ) : null}
     </>
   )
+}
+
+
+/** Sequence uses the very same deterministic PlantUML client as DiagramGalleryCard. */
+function CanonicalSequenceImage({ source, onRetry }: { source: string; onRetry: () => void }) {
+  const image = usePlantUmlPngPreview(source)
+  if (image.error) return <div role="status" className="p-4 text-sm text-slate-600">{image.error}<Button type="button" variant="outline" size="sm" onClick={onRetry}>Retry</Button><details><summary>View original source</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap text-xs">{source}</pre></details></div>
+  if (!image.objectUrl) return <div role="status" className="flex h-full items-center justify-center text-xs text-slate-500">Building sequence diagram.</div>
+  return <img src={image.objectUrl} alt="Sequence diagram" className="h-full w-full object-contain" />
+}
+
+/** Pure canonical scenes, mounted only near the viewport, never editor sessions. */
+function AssistantCanonicalPreview({ source, className, compact = false, kind }: AssistantMermaidBlockProps & { kind: CanonicalPreviewKind }) {
+  const [fullscreenOpen, setFullscreenOpen] = useState(false)
+  const [sequenceRetry, setSequenceRetry] = useState(0)
+  const previewHostRef = useRef<HTMLDivElement>(null)
+  const [inViewport, setInViewport] = useState(false)
+  const [manualPreview, setManualPreview] = useState(false)
+  const surfaceMenu = useDiagramSurfaceMenu()
+  const enabled = inViewport || manualPreview || fullscreenOpen
+  const graph = useMemo(() => enabled && kind !== 'sequence' ? buildVerifiedNativePreview(source, kind) : null, [enabled, kind, source])
+  const available = kind === 'sequence' || Boolean(graph)
+  const caption = /^\s*title\s+(.+)$/m.exec(source)?.[1] ?? (kind === 'bpmn' ? 'BPMN process flow' : `${kind === 'archimate' ? 'ArchiMate' : kind === 'c4' ? 'C4' : kind === 'erd' ? 'ERD' : kind === 'use-case' ? 'Use Case' : kind === 'class' ? 'Class' : 'Sequence'} diagram`)
+  useEffect(() => {
+    const host = previewHostRef.current
+    if (!host || typeof window.IntersectionObserver !== 'function') return
+    let active = true
+    let observer: IntersectionObserver | undefined
+    try {
+      observer = new window.IntersectionObserver(entries => {
+        if (!active) return
+        const visible = entries.some(entry => entry.target === host && entry.isIntersecting)
+        setInViewport(visible)
+        if (!visible) setManualPreview(false)
+      }, { rootMargin: '120px 0px', threshold: 0 })
+      observer.observe(host)
+    } catch {
+      active = false
+      observer?.disconnect()
+      return
+    }
+    return () => { active = false; observer?.disconnect() }
+  }, [])
+  const handleCopy = async () => {
+    const ok = await copyTextToClipboard(source)
+    pushGlobalToast({ title: ok ? 'Diagram copied' : 'Copy failed', description: ok ? diagramSourceDescription(source) : 'Try again from a browser that supports clipboard access.', variant: ok ? 'success' : 'error' })
+  }
+  const originalSource = <details className="mt-2"><summary>View original source</summary><pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs">{source}</pre></details>
+  const preview = (fullscreen: boolean) => <div key={source} className={fullscreen ? 'h-[min(78vh,760px)] w-full' : 'h-full w-full'}>
+    {kind === 'sequence' ? <CanonicalSequenceImage key={sequenceRetry} source={source} onRetry={() => setSequenceRetry(value => value + 1)} /> : graph ? <IntegrationArchitecturePreview nodes={graph.nodes} edges={graph.edges} navigation={fullscreen} /> : null}
+  </div>
+  return <>
+    <div ref={previewHostRef} className={cn('relative my-2 w-full min-w-0 rounded-md border border-[#d1d7db]/80 bg-white', className)} onContextMenu={surfaceMenu.open} data-diagram-renderer={`canonical-${kind}`}>
+      <MermaidToolbar onCopy={() => void handleCopy()} onFullscreen={() => setFullscreenOpen(true)} />
+      <p className="absolute left-2 top-2 z-10 max-w-[calc(100%-5rem)] truncate rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-medium text-slate-600" title={caption}>{caption}</p>
+      {!enabled || fullscreenOpen ? <div className={cn('flex items-center justify-center pt-10', compact ? 'h-[220px]' : 'h-[360px]')}>
+        {!fullscreenOpen ? <Button type="button" variant="ghost" size="sm" onClick={() => setManualPreview(true)}>Load diagram preview</Button> : <span className="text-xs text-slate-500">Diagram is open in full screen.</span>}
+      </div> : available ? <div className={cn('pt-10', compact ? 'h-[220px]' : 'h-[360px]')}>{preview(false)}</div> : <div role="status" className="px-4 pb-4 pt-12 text-sm text-slate-600">Native diagram preview unavailable for this source. The original source is retained without changes.{originalSource}</div>}
+    </div>
+    <DiagramSurfaceMenu menu={surfaceMenu.menu}>
+      <DiagramSurfaceMenuButton label="Copy source" icon="copy" onClick={() => { void handleCopy(); surfaceMenu.close() }} />
+      <DiagramSurfaceMenuButton label="Full screen" icon="fullscreen" onClick={() => { setFullscreenOpen(true); surfaceMenu.close() }} />
+    </DiagramSurfaceMenu>
+    {fullscreenOpen ? <MermaidFullscreenModal source={source} onClose={() => setFullscreenOpen(false)}>
+      {available ? preview(true) : <div role="status" className="p-4 text-sm">Native diagram preview unavailable for this source.{originalSource}</div>}
+    </MermaidFullscreenModal> : null}
+  </>
+}
+
+export function AssistantMermaidBlock(props: AssistantMermaidBlockProps) {
+  const kind = canonicalPreviewKind(props.source, props.notation, props.diagramKind, props.diagramLanguage)
+  if (hasConflictingPreviewKind(props.source, props.diagramKind)) return <div className={props.className}>
+    <p role="status">Native diagram preview unavailable: conflicting diagram type metadata. Original source is preserved.</p>
+    <Button variant="ghost" size="sm" aria-label="Copy diagram code" onClick={() => { void navigator.clipboard.writeText(props.source) }}>Copy source</Button>
+    <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs">{props.source}</pre>
+  </div>
+  return kind
+    ? <AssistantCanonicalPreview {...props} kind={kind} />
+    : <LegacyAssistantMermaidBlock {...props} />
 }

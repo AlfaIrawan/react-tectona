@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bpmnGraphToPlantUml, bpmnXmlToPlantUml, isBpmnXml, parseBpmnSource } from '@/modules/project-management/lib/bpmnPlantUml'
+import { bpmnGraphToPlantUml, bpmnXmlToPlantUml, isBpmnXml, parseBpmnSource, serializeBpmnCanvasToPlantUml } from '@/modules/project-management/lib/bpmnPlantUml'
 
 const SAMPLE_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
@@ -122,4 +122,45 @@ describe('bpmnPlantUml', () => {
     expect(plantuml).toContain('top to bottom direction')
     expect(plantuml.indexOf('() "Start" as process_start')).toBeLessThan(plantuml.indexOf('rectangle "Cabang temukan isu nasabah" as activity_1'))
   })
+})
+
+
+it('preserves explicit canvas lane metadata through source serialization', () => {
+  const source = serializeBpmnCanvasToPlantUml([
+    { id: 'a', type: 'bpmnElement', position: { x: 999, y: 999 }, data: { kind: 'element', layer: 'business', stereotype: 'Task', title: 'Review', description: [], notationId: 'task', ...{ bpmnLane: 'Reviewer' } } },
+    { id: 'b', type: 'bpmnElement', position: { x: 0, y: 0 }, data: { kind: 'element', layer: 'business', stereotype: 'Task', title: 'Submit', description: [], notationId: 'task' } },
+  ], [])
+  const graph = parseBpmnSource(source)
+  expect(graph.nodes.find(node => node.id === 'a')?.lane).toBe('Reviewer')
+  expect(graph.nodes.find(node => node.id === 'b')?.lane).toBeUndefined()
+})
+
+it.each(['', '<bpmn:messageFlow id="m" sourceRef="a" targetRef="b"/>'])('does not invent sequence flows from XML without supported edges: %s', extra => {
+  const source = bpmnXmlToPlantUml(`<bpmn:definitions><bpmn:process><bpmn:task id="a"/><bpmn:task id="b"/>${extra}</bpmn:process></bpmn:definitions>`)
+  expect(source).not.toContain('a --> b')
+})
+
+it('recovers legacy lane membership only by exact source IDs', () => {
+  const nodes = [{ id: 'a', type: 'bpmnElement', position: { x: 999, y: 999 }, data: { kind: 'element' as const, layer: 'business' as const, stereotype: 'Task', title: 'Edited', description: [], notationId: 'task' } }]
+  const original = bpmnGraphToPlantUml({ nodes: [{ id: 'a', label: 'Old', kind: 'activity', bpmnType: 'task', lane: 'Reviewer' }], edges: [] })
+  const graph = parseBpmnSource(serializeBpmnCanvasToPlantUml(nodes, [], original))
+  expect(graph.nodes[0]?.lane).toBe('Reviewer')
+  expect(graph.nodes[0]?.label).toBe('Edited')
+  const renamed = original.replace('Reviewer', 'Approver')
+  expect(parseBpmnSource(serializeBpmnCanvasToPlantUml(nodes, [], renamed)).nodes[0]?.lane).toBe('Approver')
+  expect(serializeBpmnCanvasToPlantUml([{ ...nodes[0], id: 'unknown' }], [], original)).toBe(original)
+})
+
+
+it('keeps known unassigned and explicitly new unassigned nodes editable in a laned graph', () => {
+  const node = (id: string, title: string, bpmnLane?: string | null) => ({ id, type: 'bpmnElement', position: { x: 0, y: 0 }, data: { kind: 'element' as const, layer: 'business' as const, stereotype: 'Task', title, description: [], notationId: 'task', bpmnLane } })
+  const original = serializeBpmnCanvasToPlantUml([node('a', 'Review', 'Reviewer'), node('b', 'Old')], [])
+  const edited = serializeBpmnCanvasToPlantUml([node('a', 'Review'), node('b', 'Edited'), node('c', 'New', null)], [{ id: 'e', source: 'a', target: 'b', label: 'Continue' }], original)
+  expect(edited).toContain('Edited')
+  expect(edited).toContain('New')
+  expect(edited).toContain('a --> b : Continue')
+  expect(edited).toContain("' lane a: Reviewer")
+  expect(edited).not.toContain("' lane b:")
+  expect(edited).not.toContain("' lane c:")
+  expect(serializeBpmnCanvasToPlantUml([node('a', 'Review'), node('legacy-unknown', 'Unknown')], [], original)).toBe(original)
 })
