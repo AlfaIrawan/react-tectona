@@ -67,6 +67,48 @@ Preview production build:
 npm run preview
 ```
 
+## Demo lokal Workspace Management
+
+Untuk menguji **login Ilex dan modul Workspace Management asli**, jalankan sandbox lokal dari direktori `react-tectona`. Setiap skenario punya layanan Ilex, Workspace Org, WAC, jaringan, volume PostgreSQL, dan origin browser sendiri.
+
+| Skenario | Akun pegawai | Workspace aktif | Tectona development |
+|---|---:|---:|---|
+| Enterprise | 4.000 | 12 | [enterprise.localhost:9561](http://enterprise.localhost:9561/workspace-management) |
+| SMB | 500 | 3 | [smb.localhost:9562](http://smb.localhost:9562/workspace-management) |
+| Startup | 50 | 1 | [startup.localhost:9563](http://startup.localhost:9563/workspace-management) |
+
+Docker Desktop harus berjalan dengan konteks `desktop-linux` dan image lokal yang tercantum di `scripts/workspace-sandbox/sandbox.mjs`. Gunakan Node.js 22.12+ di PATH atau berikan jalur Node melalui `-Node` saat menjalankan skrip. Ulangi langkah ini dengan `smb` dan `startup` untuk menjalankan skenario lainnya.
+
+```powershell
+.\scripts\workspace-sandbox\sandbox.ps1 -Action start -Scenario enterprise
+$env:TECTONA_WORKSPACE_SCENARIO = 'enterprise'
+npm run dev:workspace-sandbox
+```
+
+Di terminal lain, jalankan perintah di bawah. Perintah menampilkan email dan menyalin password pegawai yang dipilih ke clipboard Windows. Tempel password ke formulir **Sign in**. Gunakan nomor pegawai (mulai dari 1) atau email yang tampil di direktori. Pegawai pertama adalah admin workspace pertamanya. Kredensial diturunkan dari kunci lokal yang dilindungi Windows DPAPI dan bisa dipakai kembali oleh akun Windows yang menyiapkan sandbox.
+
+```powershell
+.\scripts\workspace-sandbox\sandbox.ps1 -Action credential -Scenario enterprise -Employee 1
+```
+
+Seed development memakai validasi dan bcrypt dari Ilex serta repository WAC untuk membership yang tercantum dalam fixture. Jalankan `-Action start` lagi untuk melanjutkan seed yang terhenti atau memeriksa hasilnya. Setelah ketiga backend berjalan, `-Action verify` menguji login Admin, Manager, Member, dan Viewer, akses roster yang diizinkan dan ditolak, serta penolakan kredensial dan token lintas sandbox. `-Action stop` menghentikan container sandbox dan menyimpan volume. Endpoint Register publik tetap nonaktif, dan seed tidak membuat akun admin teknis tambahan.
+
+Untuk sandbox Startup atau SMB yang sudah memakai susunan lama, jalankan `-Action consolidate-workspaces` dengan skenario yang sesuai. Skrip memulihkan dump Workspace Org dan WAC ke database verifikasi sebelum mengubah membership. Workspace lama diarsipkan dan membership lama disuspensi. Arsip dump dan manifest tersedia di `%LOCALAPPDATA%\Tectona\WorkspaceSandbox\Backups`. Jumlah akun dan workspace di sini adalah ukuran contoh development.
+
+### Pratinjau fixture tanpa akun
+
+Dari direktori `react-tectona`, jalankan `npm run dev:workspace-demo` dan buka [demo lokal](http://127.0.0.1:5497/). Pilih dataset melalui **Demo scenario**, lalu buka **Overview**, **Workspace Directory**, atau **Workspace Members**.
+
+| Skenario | Perusahaan fiktif | Pengguna | Struktur |
+|---|---|---:|---|
+| Enterprise | Veylora Transit Group | 4.000 | Kantor pusat dan tiga anak perusahaan (Rail Systems, Freight Networks, Charging Services), 12 workspace |
+| SMB | Morrowfern Foodworks | 500 | Lima departemen dengan tiga workspace yaitu Operations, Sales, dan Internal |
+| Startup | Lunewisp Studio | 50 | Satu organisasi datar dengan Company Hub untuk seluruh karyawan |
+
+**Reset demo view** kembali ke Overview dan membersihkan pencarian, filter, serta halaman untuk skenario yang sedang dipilih. Muat ulang tab untuk kembali ke Enterprise. Fixture dibuat ulang secara deterministik, jadi tidak ada database yang perlu di-reset. Jumlah pengguna menghitung orang unik. Satu orang bisa tampil di lebih dari satu workspace dengan role yang berbeda.
+
+Pratinjau menggunakan alamat `.test` sebagai data direktori fiktif. Akun yang bisa masuk tersedia melalui sandbox dan memakai domain sintetis `.example.com`.
+
 ## Autentikasi vs membership workspace
 
 Tectona memisahkan dua lapisan:

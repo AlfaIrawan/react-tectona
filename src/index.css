@@ -1990,7 +1990,7 @@
   .responsive-topbar .topbar-action-btn { min-width: 40px; padding: 6px; }
   .responsive-topbar .topbar-workspace-switcher { position: absolute; inset: 56px 16px auto; }
   .responsive-topbar .topbar-workspace-switcher > div { width: 100%; }
-  .responsive-topbar button[aria-label="Switch workspace"] { width: 100%; max-width: none; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 14px; }
+  .responsive-topbar button[data-workspace-switcher-trigger] { width: 100%; max-width: none; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 14px; }
   .app-shell:has(.topbar-workspace-switcher:empty),
   .app-shell:has(.topbar-workspace-switcher > div:empty) { padding-top: 48px; }
   .app-shell:has(.topbar-workspace-switcher:empty) .responsive-topbar,

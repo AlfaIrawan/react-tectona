@@ -136,6 +136,7 @@ import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseCo
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import { InviteWorkspaceMemberDrawer } from '@/modules/workspace-management/components/InviteWorkspaceMemberDrawer'
 import { WorkspacePanelSlot } from '@/modules/workspace-management/components/WorkspacePanelSlot'
+import { useWorkspaceDrawerFocus } from '@/modules/workspace-management/lib/useWorkspaceDrawerFocus'
 import {
   WorkspaceManagementGuideDrawer,
   type WorkspaceGuideActionId,
@@ -236,7 +237,7 @@ import {
   activateIdentityUser,
   deleteIdentityUser,
   fetchIdentityUser,
-  fetchIdentityUsers,
+  fetchWorkspaceManagementIdentityDirectory,
   provisionIdentityUser,
   type IdentityUserDto,
 } from '@/lib/api/identityAdminApi'
@@ -6751,7 +6752,7 @@ export function WorkspaceManagementPage() {
     try {
       const [workspaceRows, identityRes] = await Promise.all([
         fetchAllWorkspaceOrgWorkspaces(),
-        fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] })),
+        fetchWorkspaceManagementIdentityDirectory().catch(() => ({ items: [] as IdentityUserDto[] })),
       ])
       const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
       setDirectoryWorkspaces((prev) => {
@@ -6884,7 +6885,7 @@ export function WorkspaceManagementPage() {
 
   const refreshIdentityUserDirectory = useCallback(async () => {
     try {
-      const res = await fetchIdentityUsers({ limit: 500 })
+      const res = await fetchWorkspaceManagementIdentityDirectory()
       setIdentityUsers(res.items ?? [])
       return res.items ?? []
     } catch {
@@ -7445,6 +7446,12 @@ export function WorkspaceManagementPage() {
   const [governanceMatrixDetailWorkspace, setGovernanceMatrixDetailWorkspace] = useState<WorkspaceRecord | null>(null)
   const [memberDetailOpen, setMemberDetailOpen] = useState(false)
   const [memberDetailTarget, setMemberDetailTarget] = useState<AggregatedMemberRecord | null>(null)
+  const newWorkspaceDrawerRef = useRef<HTMLDivElement>(null)
+  const memberDetailDrawerRef = useRef<HTMLDivElement>(null)
+  const governanceDetailDrawerRef = useRef<HTMLDivElement>(null)
+  useWorkspaceDrawerFocus(newWorkspaceDrawerRef, newWorkspaceDrawerOpen, true)
+  useWorkspaceDrawerFocus(memberDetailDrawerRef, memberDetailOpen)
+  useWorkspaceDrawerFocus(governanceDetailDrawerRef, governanceMatrixDetailOpen)
   const [confirmRemoveMemberOpen, setConfirmRemoveMemberOpen] = useState(false)
   const [confirmRemoveMemberTarget, setConfirmRemoveMemberTarget] = useState<AggregatedMemberRecord | null>(null)
   const [isRemovingMember, setIsRemovingMember] = useState(false)
@@ -14385,7 +14392,6 @@ export function WorkspaceManagementPage() {
                               )
                             : 'border-transparent bg-white/55 text-slate-600 hover:border-slate-200/80 hover:bg-white/88 hover:text-slate-950'
                         )}
-                        aria-label={panel.label}
                         title={panel.label}
                       >
                         {active ? (
@@ -14456,7 +14462,7 @@ export function WorkspaceManagementPage() {
         )
         ) : null}
 
-        <main
+        <div
           className={cn(
             'flex min-h-0 min-w-0 w-full max-w-full flex-col self-stretch',
             // Parent wrapper already has docked inset — false avoids double padding.
@@ -14883,7 +14889,10 @@ export function WorkspaceManagementPage() {
                 >
                   <div
                     ref={overviewDashboardRef}
-                    className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                    role="region"
+                    aria-label="Workspace overview charts"
+                    tabIndex={0}
+                    className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   >
                     {/* ROW 1: Health + Lifecycle */}
                     <div className="grid min-w-0 gap-4 xl:grid-cols-2">
@@ -17383,7 +17392,15 @@ export function WorkspaceManagementPage() {
                                 }}
                               >
                                 <div className="min-w-0">
-                                  <div className="font-semibold text-foreground">{workspace.name}</div>
+                                  <button
+                                    type="button"
+                                    className="rounded-sm text-left font-semibold text-foreground focus-visible:ring-2 focus-visible:ring-primary"
+                                    aria-label={`${workspace.name}, governance details`}
+                                    aria-haspopup="dialog"
+                                    onClick={() => openGovernanceMatrixDetailDrawer(workspace)}
+                                  >
+                                    {workspace.name}
+                                  </button>
                                   <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
                                     <div className="mt-1.5 flex flex-wrap gap-1">
                                       <Badge variant="outline" className="rounded-md border-border px-1.5 py-0 text-[10px] font-medium">
@@ -17779,7 +17796,15 @@ export function WorkspaceManagementPage() {
                                       {member.name.split(' ').map((n) => n[0] ?? '').slice(0, 2).join('')}
                                     </div>
                                           <div className="min-w-0">
-                                            <p className="font-semibold text-foreground">{member.name}</p>
+                                            <button
+                                              type="button"
+                                              className="rounded-sm text-left font-semibold text-foreground focus-visible:ring-2 focus-visible:ring-primary"
+                                              aria-label={`${member.name}, member details`}
+                                              aria-haspopup="dialog"
+                                              onClick={() => openMemberDetailDrawer(member)}
+                                            >
+                                              {member.name}
+                                            </button>
                                             <p className="text-[10px] text-muted-foreground tabular-nums">
                                               {workspaceCount} workspace{workspaceCount === 1 ? '' : 's'}
                                             </p>
@@ -18480,7 +18505,7 @@ export function WorkspaceManagementPage() {
               </div>
             </div>
           </WorkspacePanelSlot>
-        </main>
+        </div>
       </section>
       </div>
 
@@ -19314,13 +19339,16 @@ export function WorkspaceManagementPage() {
 
       {/* Workspace Members — view details drawer (selaras Governance Matrix / Workspace Details) */}
       <div
+        ref={memberDetailDrawerRef}
+        inert={!memberDetailOpen}
+        tabIndex={-1}
         className={cn(
           'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
           memberDetailOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
         style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)', margin: 0, padding: 0 }}
-        role="dialog"
-        aria-labelledby="workspace-member-detail-title"
+        role={memberDetailOpen ? 'dialog' : undefined}
+        aria-labelledby={memberDetailOpen ? 'workspace-member-detail-title' : undefined}
       >
         {(() => {
           const member = memberDetailTarget
@@ -19483,13 +19511,16 @@ export function WorkspaceManagementPage() {
 
       {/* Governance Matrix — view details drawer (tanpa overlay; selaras Workspace Details) */}
       <div
+        ref={governanceDetailDrawerRef}
+        inert={!governanceMatrixDetailOpen}
+        tabIndex={-1}
         className={cn(
           'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
           governanceMatrixDetailOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
         style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)', margin: 0, padding: 0 }}
-        role="dialog"
-        aria-labelledby="governance-matrix-detail-title"
+        role={governanceMatrixDetailOpen ? 'dialog' : undefined}
+        aria-labelledby={governanceMatrixDetailOpen ? 'governance-matrix-detail-title' : undefined}
       >
                 {(() => {
                   const ws = governanceMatrixDetailWorkspace
@@ -20805,9 +20836,7 @@ export function WorkspaceManagementPage() {
         )}
         data-tour-target="wm-new-workspace-drawer-backdrop"
         onClick={closeNewWorkspaceDrawer}
-        aria-hidden={!newWorkspaceDrawerOpen}
-        role="button"
-        tabIndex={-1}
+        aria-hidden="true"
       />
 
       <div
@@ -20816,13 +20845,19 @@ export function WorkspaceManagementPage() {
           newWorkspaceDrawerOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
         data-tour-target="wm-new-workspace-drawer"
+        ref={newWorkspaceDrawerRef}
+        inert={!newWorkspaceDrawerOpen}
+        tabIndex={-1}
+        role={newWorkspaceDrawerOpen ? 'dialog' : undefined}
+        aria-modal={newWorkspaceDrawerOpen || undefined}
+        aria-labelledby={newWorkspaceDrawerOpen ? 'workspace-new-drawer-title' : undefined}
         style={{
           boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
         }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
           <div className="pr-3">
-            <h2 className="flex items-center gap-2 text-xl font-semibold text-foreground">
+            <h2 id="workspace-new-drawer-title" className="flex items-center gap-2 text-xl font-semibold text-foreground">
               <Plus className="h-5 w-5 text-primary" aria-hidden />
               New Workspace
             </h2>

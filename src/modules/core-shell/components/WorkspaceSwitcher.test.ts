@@ -23,7 +23,7 @@ vi.mock('../hooks/useUserWorkspaceOptions', () => ({
 let host: HTMLDivElement
 let root: Root
 const region = () => host.querySelector<HTMLDivElement>('[aria-label="Workspace options"]')
-const trigger = () => host.querySelector<HTMLButtonElement>('[aria-label="Switch workspace"]')!
+const trigger = () => host.querySelector<HTMLButtonElement>('[aria-label$=", switch workspace"]')!
 
 beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -53,6 +53,7 @@ async function search(value: string) {
 
 describe('workspace chooser scroll region', () => {
   it('is keyboard-focusable, bounded and natively scrollable without switching workspace', async () => {
+    expect(trigger().getAttribute('aria-label')).toBe(`${trigger().textContent?.trim()}, switch workspace`)
     await open()
     expect(region()?.getAttribute('role')).toBe('region')
     expect(region()?.tabIndex).toBe(0)
@@ -95,6 +96,18 @@ describe('workspace chooser scroll region', () => {
     expect(region()).toBeNull()
     await open()
     expect(region()!.textContent).toContain('Alpha')
+    expect(mocks.setActiveTenant).not.toHaveBeenCalled()
+  })
+
+  it('closes on Escape from the search input and returns focus to the switcher', async () => {
+    await open()
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Search workspaces"]')!
+    await act(async () => {
+      input.focus()
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(region()).toBeNull()
+    expect(document.activeElement).toBe(trigger())
     expect(mocks.setActiveTenant).not.toHaveBeenCalled()
   })
 })

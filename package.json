@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:workspace-demo": "vite --config vite.workspace-demo.config.ts",
+    "dev:workspace-sandbox": "vite --config vite.workspace-sandbox.config.ts",
     "build": "tsc -b && vite build",
     "build:dev": "tsc -b && vite build --mode dev",
     "lint": "eslint .",

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Building2, Check, ChevronDown, Loader2, Search, UserRound } from 'lucide-react'
 import {
@@ -35,6 +35,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
   const { options, loading, fallbackOrgName } = useUserWorkspaceOptions()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   const currentAppPath = useMemo(() => {
     const path = legacyAppPathFromLocation(location.pathname, location.search, location.hash)
@@ -140,16 +141,26 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
   return (
     <DropdownMenu
       open={open}
+      onKeyDownCapture={(event) => {
+        if (!open || event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopPropagation()
+        setOpen(false)
+        setQuery('')
+        triggerRef.current?.focus()
+      }}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
         if (!nextOpen) setQuery('')
       }}
     >
-      <DropdownMenuTrigger asChild>
+      <DropdownMenuTrigger asChild ref={triggerRef}>
         <button
           type="button"
           className={triggerClassName}
-          aria-label="Switch workspace"
+          data-workspace-switcher-trigger
+          aria-label={`${triggerLabel}, switch workspace`}
+          aria-expanded={open}
           title={triggerLabel}
         >
           <span className="min-w-0 truncate">{triggerLabel}</span>

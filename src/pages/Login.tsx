@@ -303,12 +303,18 @@ export function LoginPage() {
 
             <AuthSocialProviders id="login-social" mode="signin" />
 
-            <p id="login-signup-link" className="text-center text-sm text-muted-foreground">
-              Don&apos;t have an account?{' '}
-              <a href="/register" className="text-primary hover:underline" onClick={(e) => { e.preventDefault(); navigate('/register') }}>
-                Sign up
-              </a>
-            </p>
+            {import.meta.env.DEV && import.meta.env.VITE_WORKSPACE_SANDBOX ? (
+              <p className="text-center text-sm text-muted-foreground">
+                Sign in with a seeded Ilex Identity Lite employee account for this sandbox.
+              </p>
+            ) : (
+              <p id="login-signup-link" className="text-center text-sm text-muted-foreground">
+                Don&apos;t have an account?{' '}
+                <a href="/register" className="text-primary hover:underline" onClick={(e) => { e.preventDefault(); navigate('/register') }}>
+                  Sign up
+                </a>
+              </p>
+            )}
       </AuthLoginLayout>
 
       <SessionConflictModal

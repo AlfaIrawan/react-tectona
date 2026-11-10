@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2, LogIn, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,6 +13,7 @@ import {
 import { enterpriseSecondaryButtonClass, registerServicePrimaryButtonClass } from '@/lib/enterpriseButtonClasses'
 import { randomUuid } from '@/lib/randomId'
 import { cn } from '@/lib/utils'
+import { useWorkspaceDrawerFocus } from '@/modules/workspace-management/lib/useWorkspaceDrawerFocus'
 
 export type RequestJoinWorkspaceDrawerProps = {
   open: boolean
@@ -33,6 +34,8 @@ export function RequestJoinWorkspaceDrawer({
   const [message, setMessage] = useState('')
   const [lookupLoading, setLookupLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const drawerRef = useRef<HTMLDivElement>(null)
+  useWorkspaceDrawerFocus(drawerRef, open)
   const [lookupError, setLookupError] = useState('')
   const [submitError, setSubmitError] = useState('')
   const [resolved, setResolved] = useState<{
@@ -119,14 +122,22 @@ export function RequestJoinWorkspaceDrawer({
 
   return (
     <div
+      ref={drawerRef}
+      inert={!open}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || submitting) return
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }}
       className={cn(
         'fixed right-0 top-0 z-[1100] flex h-screen w-[420px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
         open ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0',
       )}
       style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)' }}
-      role="dialog"
-      aria-labelledby="request-join-workspace-title"
-      aria-hidden={!open}
+      role={open ? 'dialog' : undefined}
+      aria-labelledby={open ? 'request-join-workspace-title' : undefined}
     >
       <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/60 px-5 py-4">
         <div className="min-w-0">

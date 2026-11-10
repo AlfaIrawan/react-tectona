@@ -66,6 +66,7 @@ import {
   isFocusMovingToDirectoryPickerList,
   retainFocusForDirectoryPicker,
 } from '@/modules/workspace-management/lib/directoryPickerKeyboard'
+import { useWorkspaceDrawerFocus } from '@/modules/workspace-management/lib/useWorkspaceDrawerFocus'
 
 export type WorkspaceRoleOption = { code: string; label: string }
 type WorkspaceParticipationRole = string
@@ -432,6 +433,7 @@ export function InviteWorkspaceMemberDrawer({
   const [deliveryCatalogError, setDeliveryCatalogError] = useState<string | null>(null)
   const [smtpConfigured, setSmtpConfigured] = useState(false)
   const inviteMemberDrawerRef = useRef<HTMLDivElement>(null)
+  useWorkspaceDrawerFocus(inviteMemberDrawerRef, open, true)
   const employeeSearchRevertRef = useRef<{ employeeId: string | null; employeeQuery: string } | null>(null)
   const employeePickerSkipBlurRef = useRef(false)
   const employeeDirectory = useMemo(
@@ -561,6 +563,9 @@ export function InviteWorkspaceMemberDrawer({
         || e.directoryId.toLowerCase().includes(q)
     )
   }, [employeeDirectory, employeeQuery])
+
+  const employeeResultsOpen = employeePickerOpen &&
+    directoryPickerListOpen(!!form.employeeId, employeeQuery, filteredEmployees.length)
 
   const emailInviteCandidate = null
 
@@ -852,6 +857,8 @@ export function InviteWorkspaceMemberDrawer({
       />
       <div
         ref={inviteMemberDrawerRef}
+        inert={!open}
+        tabIndex={-1}
         className={cn(
           'fixed inset-y-0 right-0 z-[1100] flex w-[min(100%,580px)] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
           open ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
@@ -859,9 +866,9 @@ export function InviteWorkspaceMemberDrawer({
         style={{
           boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
         }}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="invite-workspace-member-title"
+        role={open ? 'dialog' : undefined}
+        aria-modal={open || undefined}
+        aria-labelledby={open ? 'invite-workspace-member-title' : undefined}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
           <div className="pr-3">
@@ -956,11 +963,7 @@ export function InviteWorkspaceMemberDrawer({
                         }}
                         onKeyDown={(e) => {
                           handleDirectoryPickerInputKeyDown(e, {
-                            listOpen: directoryPickerListOpen(
-                              !!form.employeeId,
-                              employeeQuery,
-                              filteredEmployees.length
-                            ),
+                            listOpen: employeeResultsOpen,
                             firstOptionId: `invite-member-employee-opt-${filteredEmployees[0]?.id ?? ''}`,
                             onBeforeFocusList: markEmployeePickerFocusMovingToList,
                             onEnter: () => {
@@ -969,17 +972,10 @@ export function InviteWorkspaceMemberDrawer({
                             },
                           })
                         }}
+                        role="combobox"
                         aria-autocomplete="list"
-                        aria-controls={
-                          directoryPickerListOpen(!!form.employeeId, employeeQuery, filteredEmployees.length)
-                            ? 'invite-member-employee-listbox'
-                            : undefined
-                        }
-                        aria-expanded={directoryPickerListOpen(
-                          !!form.employeeId,
-                          employeeQuery,
-                          filteredEmployees.length
-                        )}
+                        aria-controls={employeeResultsOpen ? 'invite-member-employee-listbox' : undefined}
+                        aria-expanded={employeeResultsOpen}
                         placeholder="Search organization member name, email, or directory ID"
                         className="h-10 pl-9 text-sm"
                         disabled={submitting}
@@ -992,7 +988,8 @@ export function InviteWorkspaceMemberDrawer({
                     {employeePickerOpen && employeeQuery.trim().length > 0 ? (
                       <div
                         id="invite-member-employee-listbox"
-                        role="listbox"
+                        role={employeeResultsOpen ? 'listbox' : undefined}
+                        aria-label={employeeResultsOpen ? 'Matching organization members' : undefined}
                         {...{ [DIRECTORY_PICKER_LIST_ATTR]: '' }}
                         className="max-h-44 overflow-y-auto rounded-xl border border-border/70 bg-background shadow-sm"
                       >
@@ -1019,6 +1016,7 @@ export function InviteWorkspaceMemberDrawer({
                               id={optionId}
                               type="button"
                               role="option"
+                              aria-selected={form.employeeId === employee.id}
                               tabIndex={0}
                               className="flex w-full items-center gap-3 border-t border-border/50 px-3 py-2.5 text-left first:border-t-0 hover:bg-muted/40 focus:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
                               onMouseDown={retainFocusForDirectoryPicker}
