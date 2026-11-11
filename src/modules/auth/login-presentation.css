@@ -6,6 +6,12 @@ html:has(.platform-login), body:has(.platform-login), #root:has(.platform-login)
   height: auto;
   background-color: transparent;
 }
+/* Keep the panel centered when validation or an error makes the page scroll. */
+html:has(.platform-login) { scrollbar-gutter: stable both-edges; }
+/* Let the document own vertical scrolling even when desktop zoom is active. */
+html.ui-scale-lock body:has(.platform-login),
+html.ui-scale-lock #root:has(.platform-login) { height: auto; }
+body:has(.platform-login) { overflow-x: clip; }
 body:has(.platform-login)::before, body:has(.platform-login)::after { display: none; }
 .platform-login {
   display: grid;
