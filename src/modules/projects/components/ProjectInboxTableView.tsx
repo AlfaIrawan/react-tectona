@@ -150,7 +150,7 @@ export function ProjectInboxTableView({
         </colgroup>
         <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm">
           <tr className="text-left text-muted-foreground">
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<InboxSortKey, InboxSortKey>
               columnKey="title"
               pinnedFirstKey="title"
               label="Request"
@@ -164,7 +164,7 @@ export function ProjectInboxTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<InboxSortKey, InboxSortKey>
               columnKey="type"
               pinnedFirstKey="title"
               label="Type"
@@ -178,7 +178,7 @@ export function ProjectInboxTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<InboxSortKey, InboxSortKey>
               columnKey="source"
               pinnedFirstKey="title"
               label="Source"
@@ -192,7 +192,7 @@ export function ProjectInboxTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<InboxSortKey, InboxSortKey>
               columnKey="channel"
               pinnedFirstKey="title"
               label="Channel"
@@ -206,7 +206,7 @@ export function ProjectInboxTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<InboxSortKey, InboxSortKey>
               columnKey="priority"
               pinnedFirstKey="title"
               label="Priority"
@@ -220,7 +220,7 @@ export function ProjectInboxTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<InboxSortKey, InboxSortKey>
               columnKey="received"
               pinnedFirstKey="title"
               label="Received"

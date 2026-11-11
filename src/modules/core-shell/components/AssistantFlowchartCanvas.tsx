@@ -289,7 +289,7 @@ function AssistantFlowchartCanvasInner({ source, className, height, showControls
         zoomOnPinch
         preventScrolling
         proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: 'step', pathOptions: { offset: 24, borderRadius: 10 } }}
+        defaultEdgeOptions={{ type: 'step' }}
         className="h-full w-full"
       >
         <Background id="assistant-flow-grid" variant={BackgroundVariant.Dots} color="#e2e8f0" gap={18} size={1} />
@@ -305,17 +305,6 @@ function AssistantFlowchartCanvasRoot(props: AssistantFlowchartCanvasProps) {
       <AssistantFlowchartCanvasInner {...props} />
     </ReactFlowProvider>
   )
-}
-
-export function flowchartPreviewHeight(source: string): number {
-  const graph = parseFlowchartFallback(source)
-  if (!graph) return 280
-  const { height } = layoutFlowchartGraph(graph)
-  return Math.min(560, Math.max(260, height + 24))
-}
-
-export function canRenderAssistantFlowchart(source: string): boolean {
-  return parseFlowchartFallback(source) != null
 }
 
 export const AssistantFlowchartCanvas = memo(AssistantFlowchartCanvasRoot)

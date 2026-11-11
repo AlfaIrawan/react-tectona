@@ -1,19 +1,9 @@
 import { cloneElement, useEffect, useRef, useState, type ReactElement } from 'react'
+import { readChartHostLayoutSize } from './chartHostLayoutSize'
 
 type MeasuredResponsiveContainerProps = {
-  children: ReactElement
+  children: ReactElement<{ width?: number; height?: number }>
   className?: string
-}
-
-/**
- * Layout-box size for Recharts. `getBoundingClientRect()` is visual pixels and is
- * wrong under `html.ui-scale-lock` (page zoom) — the SVG would be
- * smaller than its CSS host and sit off-center inside donuts and bars.
- */
-export function readChartHostLayoutSize(el: HTMLElement): { width: number; height: number } {
-  const width = Math.max(0, Math.floor(el.clientWidth || el.offsetWidth))
-  const height = Math.max(0, Math.floor(el.clientHeight || el.offsetHeight))
-  return { width, height }
 }
 
 /**
@@ -25,8 +15,6 @@ export function MeasuredResponsiveContainer({
   className = 'h-full w-full min-h-0 min-w-0',
 }: MeasuredResponsiveContainerProps) {
   const hostRef = useRef<HTMLDivElement>(null)
-  const childrenRef = useRef(children)
-  childrenRef.current = children
   const [size, setSize] = useState({ width: 0, height: 0 })
   const rafRef = useRef<number | null>(null)
 
@@ -65,7 +53,7 @@ export function MeasuredResponsiveContainer({
   return (
     <div ref={hostRef} className={className}>
       {canRender
-        ? cloneElement(childrenRef.current, { width: size.width, height: size.height })
+        ? cloneElement(children, { width: size.width, height: size.height })
         : null}
     </div>
   )

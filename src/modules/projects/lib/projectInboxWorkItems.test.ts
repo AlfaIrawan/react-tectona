@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest'
+import type { WorkItemApiModel } from '@/lib/api/workApi'
 import {
   acceptInboxWorkItem,
-  countPendingInboxWorkItems,
   declineInboxWorkItem,
   filterNonInboxWorkItems,
   filterPendingInboxWorkItems,
@@ -13,11 +13,12 @@ import { isWorkItemInPendingInbox } from './projectInboxStore'
 
 const PROJECT_ID = '43cced1c-0000-4000-8000-000000000001'
 
-function mockItem(idSuffix: string) {
+function mockItem(idSuffix: string): WorkItemApiModel {
   const prefix = 'PT-43CCED1C'
   return {
     id: `${prefix}-${idSuffix}`,
     title: idSuffix,
+    description: '',
     type: 'Task' as const,
     project: 'Wakatobi',
     workspace: 'Tectona Workspace',

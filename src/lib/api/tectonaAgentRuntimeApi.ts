@@ -991,6 +991,7 @@ export type TectonaProposedAction = {
     | 'document.apply_chat_edit'
     | 'document.transform'
     | 'knowledge.person_alias.add'
+    | 'memory.upsert'
   summary: string
   payload: Record<string, unknown>
   risk_level?: 'low' | 'medium' | 'high'

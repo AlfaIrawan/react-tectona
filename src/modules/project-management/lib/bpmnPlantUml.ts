@@ -493,7 +493,7 @@ export function serializeBpmnCanvasToPlantUml(nodes: Node<ArchimateNodeData>[], 
   if (originalLanes.size && elements.some(node => node.data.kind === 'element' && node.data.bpmnLane === undefined && !originalIds.has(node.id))) return originalSource
   return bpmnGraphToPlantUml({
     nodes: elements.map((node) => {
-      const bpmnType = node.data.notationId || 'task'
+      const bpmnType = (node.data.kind === 'element' && node.data.notationId) || 'task'
       const kind: BpmnParsedKind = bpmnType.includes('Gateway')
         ? 'decision'
         : bpmnType === 'startEvent'

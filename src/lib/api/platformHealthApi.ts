@@ -1,6 +1,6 @@
 import { GATEWAY_RUNTIME_BASE } from '@/lib/api/gatewayBase'
 import { apiFetch, parseApiErrorMessage } from '@/lib/api/httpClient'
-import type { PlatformHealthResponse } from './types'
+import type { PlatformHealthResponse } from '@/lib/platformHealth/types'
 
 const PLATFORM_HEALTH_URL = `${GATEWAY_RUNTIME_BASE}/v1/platform-health`
 const PLATFORM_HEALTH_TIMEOUT_MS = 8_000

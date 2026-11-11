@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   combineKbStructuredChunksBySection,
   detectKbSectionHeaders,
-  extractKbStructuredHtmlFromAnswer,
   enforceCanonicalKbSections,
   listUnknownKbHeadings,
   normalizeKbPlainTextForComparison,
@@ -12,7 +11,8 @@ import {
   restoreKbSoftLineBreaks,
   validateKbStructuredContentPreservesSource,
   splitKbBySectionAware,
-} from './DocumentKnowledgeManagementPage'
+} from '../lib/kbStructuredContent'
+import { extractKbStructuredHtmlFromAnswer } from '../lib/kbStructuredAnswer'
 
 describe('Make Structured helpers', () => {
   beforeEach(() => {
@@ -80,6 +80,26 @@ describe('Make Structured helpers', () => {
       'Enterprise vocabulary optimization',
       'AI-assisted editorial refinement',
     ].join('\n'))
+  })
+
+  it('replaces lexicon headings instead of retaining them across documents', () => {
+    const text = 'An opening sentence.\nCustom Heading\nA description that is long enough.'
+    primeKbStructureLexicon('Custom Heading')
+    expect(detectKbSectionHeaders(text)).toEqual([{ name: 'Custom Heading', index: 1 }])
+    primeKbStructureLexicon('Different Heading')
+    expect(detectKbSectionHeaders(text)).toEqual([])
+  })
+
+  it('sanitizes HTML and hardens links even when no canonical headings are requested', () => {
+    const input = '<p onclick="bad()">Hello <a href="https://example.invalid">safe</a> <a href="javascript:bad()">unsafe</a></p>'
+    const output = document.createElement('div')
+    output.innerHTML = enforceCanonicalKbSections(input, [])
+    const [safe, unsafe] = output.querySelectorAll('a')
+    expect(output.querySelector('p')?.hasAttribute('onclick')).toBe(false)
+    expect(safe.getAttribute('href')).toBe('https://example.invalid')
+    expect(safe.getAttribute('target')).toBe('_blank')
+    expect(safe.getAttribute('rel')).toBe('noreferrer noopener')
+    expect(unsafe.hasAttribute('href')).toBe(false)
   })
 
   it('detects known source sections', () => {

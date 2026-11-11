@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { layoutFlowchartGraph, parseFlowchartFallback } from './mermaidFallbackSvg'
+import { canRenderAssistantFlowchart, flowchartPreviewHeight, layoutFlowchartGraph, parseFlowchartFallback } from './mermaidFallbackSvg'
 
 describe('flowchart diamond layout', () => {
+  it('keeps the assistant preview fallback and height bounds', () => {
+    expect(canRenderAssistantFlowchart('not a diagram')).toBe(false)
+    expect(flowchartPreviewHeight('not a diagram')).toBe(280)
+    const short = 'flowchart TD\nA[First] --> B[Last]'
+    const tall = 'flowchart TD\n' + Array.from({ length: 20 }, (_, index) => `N${index} --> N${index + 1}`).join('\n')
+    expect(canRenderAssistantFlowchart(short)).toBe(true)
+    expect(flowchartPreviewHeight(short)).toBe(276)
+    expect(flowchartPreviewHeight(tall)).toBe(560)
+  })
+
   it('keeps decision nodes square so they render as diamonds, not tilted rectangles', () => {
     const graph = parseFlowchartFallback(`
 flowchart TD

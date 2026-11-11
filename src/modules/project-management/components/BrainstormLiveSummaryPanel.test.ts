@@ -20,7 +20,7 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
 const makeJob = (body = 'Tujuan lengkap, bukan fakta tambahan.') => ({ job_id: 'saved-simulation', status: 'awaiting_input', revision: 'r1', brainstorm_messages: [], live_summary: { status: 'ready', source_revision: 'r1', sections: [{ key: 'objective', title: 'Tujuan', body }] } } as IdeaDraftJobStatusResponse)
-async function render(job: IdeaDraftJobStatusResponse | null, mobileExpanded?: boolean, state: { busy?: boolean; error?: string } = {}) {
+async function render(job: IdeaDraftJobStatusResponse | null, mobileExpanded?: boolean, state: { busy?: boolean; requestFailed?: boolean } = {}) {
   await act(async () => root.render(createElement(BrainstormLiveSummaryPanel, { job, busy: false, mobileExpanded, ...state })))
 }
 function visibleText() {
@@ -67,15 +67,16 @@ it('renders saved content on remount with no animation progress', async () => {
   expect(visibleText()).toBe('Sesi tersimpan dimuat kembali.')
 })
 
-it('seeds persisted ready matching-revision summary on error remount with failure notice', async () => {
-  await render(makeJob('Sumber tersimpan yang valid.'), undefined, { error: 'Draft failed' })
+it('seeds persisted ready matching-revision summary when the separate request failed', async () => {
+  await render(makeJob('Sumber tersimpan yang valid.'), undefined, { requestFailed: true })
   expect(visibleText()).toBe('Sumber tersimpan yang valid.')
-  expect(container.textContent).toContain('Update failed. Showing the last processed summary.')
+  expect(container.textContent).toContain('The separate request error is shown in the conversation.')
+  expect(container.textContent).not.toContain('Update failed.')
 })
 it('never seeds a busy partial result, but can show validated persisted summary when busy ends in error', async () => {
-  await render(makeJob('Sumber tersimpan yang valid.'), undefined, { busy: true, error: 'Draft failed' })
+  await render(makeJob('Sumber tersimpan yang valid.'), undefined, { busy: true, requestFailed: true })
   expect(visibleText()).toBe('')
-  await render(makeJob('Sumber tersimpan yang valid.'), undefined, { busy: false, error: 'Draft failed' })
+  await render(makeJob('Sumber tersimpan yang valid.'), undefined, { requestFailed: true })
   expect(visibleText()).toBe('Sumber tersimpan yang valid.')
 })
 it.each(['mismatch', 'missing', 'unavailable'] as const)('does not seed error remount with %s validation', async kind => {
@@ -83,26 +84,29 @@ it.each(['mismatch', 'missing', 'unavailable'] as const)('does not seed error re
   if (kind === 'mismatch') job.live_summary!.source_revision = 'older'
   if (kind === 'missing') delete job.revision
   if (kind === 'unavailable') job.live_summary!.status = 'unavailable'
-  await render(job, undefined, { error: 'Draft failed' })
+  await render(job, undefined, { requestFailed: true })
   expect(visibleText()).toBe('')
 })
 it('does not replace last processed summary with failed update content', async () => {
   await render(makeJob('Ringkasan sebelumnya.'))
-  await render(makeJob('Konten dari pembaruan gagal.'), undefined, { error: 'Update failed' })
+  const failed = makeJob('Konten dari pembaruan gagal.')
+  failed.live_summary!.status = 'unavailable'
+  await render(failed)
   expect(visibleText()).toBe('Ringkasan sebelumnya.')
+  expect(container.textContent).toContain('Update failed. Showing the last processed summary.')
 })
 it('clears prior job content when the new job has only a failed unvalidated summary', async () => {
   await render(makeJob('Rahasia sesi A.'))
   const next = makeJob('Tidak tervalidasi sesi B.')
   next.job_id = 'different-job'; next.live_summary!.source_revision = 'mismatch'
-  await render(next, undefined, { error: 'Update failed' })
+  await render(next, undefined, { requestFailed: true })
   expect(container.textContent).not.toContain('Rahasia sesi A.')
   expect(visibleText()).toBe('')
 })
 it('can seed only the new job validated summary on a cross-job error resume', async () => {
   await render(makeJob('Sesi A.'))
   const next = makeJob('Ringkasan valid sesi B.'); next.job_id = 'different-job'
-  await render(next, undefined, { error: 'Draft failed' })
+  await render(next, undefined, { requestFailed: true })
   expect(visibleText()).toBe('Ringkasan valid sesi B.')
   expect(container.textContent).not.toContain('Sesi A.')
 })
@@ -112,9 +116,9 @@ it.runIf(Boolean(process.env.BRAINSTORM_ERROR_JOB_FIXTURE))('renders actual pers
   expect(job.live_summary?.status).toBe('ready')
   expect(job.live_summary?.source_revision).toBe(job.revision)
   expect(job.live_summary?.sections).toHaveLength(11)
-  await render(job, undefined, { error: 'Recoverable draft failure' })
+  await render(job, undefined, { requestFailed: true })
   expect(container.querySelectorAll('[data-summary-section]')).toHaveLength(11)
   const visibleLayers = [...container.querySelectorAll('[data-summary-phase] > div')]
   expect(visibleLayers.every(layer => Boolean(layer.textContent?.trim()) && !layer.classList.contains('invisible'))).toBe(true)
-  expect(container.textContent).toContain('Update failed. Showing the last processed summary.')
+  expect(container.textContent).toContain('The separate request error is shown in the conversation.')
 })

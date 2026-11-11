@@ -66,7 +66,7 @@ describe('actual brainstorming assistant reply presentation', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
   it('does not promote suggestion labels into a question or summary', async () => {
-    await render(message({ question_text: null, question_kind: null, text: 'Pilih langkah berikutnya.', summary: null, suggestion_options: [{ label: 'Lanjut bisnis', action: 'business', explanation: 'Saran navigasi' }] }))
+    await render(message({ question_text: null, question_kind: null, text: 'Pilih langkah berikutnya.', summary: null, suggestion_options: [{ label: 'Lanjut bisnis', value: 'business', action: 'choose', explanation: 'Saran navigasi' }] }))
     expect(container.querySelector('[data-brainstorm-question]')).toBeNull()
     expect(container.textContent).not.toContain('Lanjut bisnis')
   })

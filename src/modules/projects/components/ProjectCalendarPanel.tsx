@@ -10,7 +10,7 @@ import {
   Plus,
   User,
 } from 'lucide-react'
-import type { Priority, WorkItemApiModel, WorkItemType, WorkStatus } from '@/lib/api/workApi'
+import type { Priority, WorkItemApiModel, WorkItemPatchBody, WorkItemType, WorkStatus } from '@/lib/api/workApi'
 import { createWorkItem, deleteWorkItem, patchWorkItem, TECTONA_PROJECT_WORKSPACE } from '@/lib/api/workApi'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -677,7 +677,6 @@ function CalendarDayCell({
 
 export function ProjectCalendarPanel({
   project,
-  template: _template,
   ownerName,
   workItems,
   usesApiItems = false,
@@ -1019,7 +1018,7 @@ export function ProjectCalendarPanel({
   }, [])
 
   const commitWorkItemPatch = useCallback(
-    async (itemId: string, patch: Partial<WorkItemApiModel>) => {
+    async (itemId: string, patch: WorkItemPatchBody) => {
       const previousItems = localWorkItemsRef.current
       const nextItems = previousItems.map((item) =>
         item.id === itemId

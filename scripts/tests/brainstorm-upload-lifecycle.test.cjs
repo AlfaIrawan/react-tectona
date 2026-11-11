@@ -12,10 +12,21 @@ vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.Mo
   { exports: mod.exports, module: mod })
 const { BrainstormAttachmentLifecycle } = mod.exports
 const page = fs.readFileSync(candidatePath('IdeaBacklogManagementPage.tsx'), 'utf8')
-const start = page.indexOf('  const handlePickBrainstormDiagram =')
-const end = page.indexOf('  const handleContinueIdeaDraft', start)
-const handlerCode = ts.transpileModule(page.slice(start, end) + '\n globalThis.pick = handlePickBrainstormDiagram',
-  { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+const pageAst = ts.createSourceFile('IdeaBacklogManagementPage.tsx', page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+function compileHandler(name, exportedName) {
+  const matches = []
+  function visit(node) {
+    if (ts.isVariableStatement(node) && node.declarationList.declarations.some(
+      (entry) => ts.isIdentifier(entry.name) && entry.name.text === name,
+    )) matches.push(node.getText(pageAst))
+    ts.forEachChild(node, visit)
+  }
+  visit(pageAst)
+  assert.equal(matches.length, 1, 'Expected one handler declaration: ' + name)
+  return ts.transpileModule(matches[0] + '\n globalThis.' + exportedName + ' = ' + name,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+}
+const handlerCode = compileHandler('handlePickBrainstormDiagram', 'pick')
 const image = (name) => ({ dataUrl: `data:image/jpeg;base64,${name}`, name })
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b }); return { promise, resolve, reject } }
 function setup(resize = async () => 'data:image/jpeg;base64,YQ==') {
@@ -23,7 +34,7 @@ function setup(resize = async () => 'data:image/jpeg;base64,YQ==') {
   lifecycle.bind('job-A')
   const ctx = { brainstormAttachmentLifecycle: lifecycle, brainstormMessages: [],
     isResumingDraft:false,isDraftContinuing:false,isEvidenceDialogOpen:true,
-    isBrainstormThreadIndonesian: () => false, error: '', setBrainstormError: (v) => { ctx.error = v }, resizeDiagramUpload: resize }
+    isBrainstormThreadIndonesian: () => false, resizeDiagramUpload: resize }
   vm.runInNewContext(handlerCode, ctx)
   return { lifecycle, ctx, pick: ctx.pick }
 }
@@ -31,12 +42,12 @@ const file = (name, type='image/png') => ({ name, type })
 test('actual extracted picker: supported formats and filename; no model/network', async () => {
   for (const type of ['image/png','image/jpeg','image/webp','image/gif']) {
     const s = setup(); await s.pick(file('diagram',type))
-    assert.equal(s.lifecycle.state.attachment.name,'diagram'); assert.equal(s.ctx.error,'')
+    assert.equal(s.lifecycle.state.attachment.name,'diagram'); assert.equal(s.lifecycle.state.error,'')
   }
 })
 test('actual extracted picker: valid then unsupported invalidates previous image', async () => {
   const s=setup(); await s.pick(file('A')); await s.pick(file('bad.svg','image/svg+xml'))
-  assert.equal(s.lifecycle.state.attachment,null); assert.match(s.ctx.error,/No image attached/)
+  assert.equal(s.lifecycle.state.attachment,null); assert.match(s.lifecycle.state.error,/Upload a PNG, JPG, WEBP, or GIF image\. No image attached/)
 })
 test('actual extracted picker: unreadable and oversized replacements never retain A', async () => {
   for (const reason of ['unreadable','oversize']) {
@@ -46,7 +57,9 @@ test('actual extracted picker: unreadable and oversized replacements never retai
       return 'data:image/jpeg;base64,'+'A'.repeat(5_333_336) })
     await s.pick(file('A')); await s.pick(file('B'))
     assert.equal(s.lifecycle.state.attachment,null); assert.equal(s.lifecycle.state.preparing,null)
-    assert.match(s.ctx.error,/No image attached/)
+    assert.match(s.lifecycle.state.error,reason==='unreadable'
+      ? /That image could not be read\. Try uploading it again\. No image attached/
+      : /The image is still too large after resizing\. Crop it to the diagram\. No image attached/)
   }
 })
 test('actual extracted picker: both A/B completion orders keep B', async () => {
@@ -69,7 +82,7 @@ test('actual extracted picker: remove, reset, session switch, close, unmount dis
 test('actual extracted picker: late decode failure cannot replace newer status', async () => {
   const d=deferred(),s=setup(f=>f.name==='A'?d.promise:Promise.resolve('data:image/jpeg;base64,Yg=='))
   const pa=s.pick(file('A'));await s.pick(file('B'));d.reject(new Error('old'));await pa
-  assert.equal(s.ctx.error,'');assert.equal(s.lifecycle.state.attachment.name,'B')
+  assert.equal(s.lifecycle.state.error,'');assert.equal(s.lifecycle.state.attachment.name,'B')
 })
 test('pure lifecycle: prepare blocks submit; synchronous duplicate lock and exact payload snapshot', async () => {
   const s=setup(),selection=s.lifecycle.select('A');assert.equal(s.lifecycle.begin(true),null)
@@ -94,16 +107,15 @@ test('pure lifecycle: removal cancels restoration; restored job adoption keeps o
 })
 test('page wiring source checks (not mounted React/UI proof)', () => {
   assert.match(page,/const requestToken = brainstormAttachmentLifecycle\.begin\(!messageOverride, ideaDraftJob.job_id\)/)
-  assert.match(page,/brainstormAttachmentLifecycle\.reset\(\)\s+setIsResumingDraft\(true\)\s+void \(async/)
+  assert.match(page,/brainstormAttachmentLifecycle\.reset\(\)\s+setIsResumingDraft\(true\)\s+setDraftVersionCard\(null\)\s+void \(async/)
   assert.match(page,/if \(!requestIsCurrent\(\)\) return/)
   assert.match(page,/if \(brainstormAttachmentLifecycle\.finish\(requestToken\)\) setIsBrainstormSending\(false\)/)
+  assert.match(page,/BrainstormErrorNotice message=\{brainstormAttachment\.error\}/)
   assert.match(page,/Boolean\(brainstormAttachment\.preparing\) \|\| isBrainstormSending/)
   assert.equal(page.includes('setBrainstormDiagramImage'),false)
 })
 
-const sendStart=page.indexOf('  const handleSendBrainstormMessage =')
-const sendCode=ts.transpileModule(page.slice(sendStart,start)+'\n globalThis.send = handleSendBrainstormMessage',
-  {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
+const sendCode = compileHandler('handleSendBrainstormMessage', 'send')
 function sendSetup(reply) {
   const s=setup(),writes=[],calls=[]
   const selection=s.lifecycle.select('A');s.lifecycle.resolve(selection,image('A'))
@@ -160,8 +172,11 @@ test('actual extracted picker: no selection during resume, draft continuation or
 test('mounted real React hook: StrictMode, session change during decode, close and unmount',async()=>{
   const {JSDOM}=require('jsdom'),React=require('react')
   const dom=new JSDOM('<!DOCTYPE html><div id="root"></div>',{url:'http://localhost/'})
-  const previous={window:global.window,document:global.document,navigator:global.navigator,IS_REACT_ACT_ENVIRONMENT:global.IS_REACT_ACT_ENVIRONMENT}
-  global.window=dom.window;global.document=dom.window.document;global.navigator=dom.window.navigator;global.IS_REACT_ACT_ENVIRONMENT=true
+  const globals = { window: dom.window, document: dom.window.document, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true }
+  const previous = Object.keys(globals).map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)])
+  for (const [name, value] of Object.entries(globals)) {
+    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true })
+  }
   try {
   const {createRoot}=require('react-dom/client')
   const hookModule={exports:{}}
@@ -201,7 +216,13 @@ test('mounted real React hook: StrictMode, session change during decode, close a
     await React.act(async()=>mounted.unmount())
     assert.equal(controller.resolve(token,image('B')),false)
     assert.equal(controller.begin(true,'job-B'),null)
-  }finally{dom.window.close();Object.assign(global,previous)}
+  } finally {
+    dom.window.close()
+    for (const [name, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+      else Reflect.deleteProperty(globalThis, name)
+    }
+  }
 })
 test('attachment status English/Indonesian preserves filenames and localizes empty/preparing/attached',()=>{
   const status=mod.exports.brainstormAttachmentStatus

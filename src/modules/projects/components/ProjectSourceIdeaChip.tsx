@@ -139,7 +139,11 @@ export function ProjectSourceIdeaChip({
             Link another idea
           </DropdownMenuItem>
           {linkedIdeas.length === 1 ? (
-            <DropdownMenuItem disabled={unlinking} onClick={() => void handleUnlink()}>
+            <DropdownMenuItem
+              aria-disabled={unlinking}
+              closeOnSelect={!unlinking}
+              onClick={() => { if (!unlinking) void handleUnlink() }}
+            >
               <Unlink className="mr-2 h-4 w-4" />
               Unlink idea
             </DropdownMenuItem>

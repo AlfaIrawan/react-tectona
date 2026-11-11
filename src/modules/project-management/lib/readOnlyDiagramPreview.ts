@@ -1,4 +1,4 @@
-import { buildReadOnlyDiagramCanvasGraph } from '../components/EditableDiagramCanvas'
+import { buildReadOnlyDiagramCanvasGraph } from './editableDiagramGraph'
 import { canPreviewUmlLosslessly } from './classErdPlantUml'
 import { canPreviewBpmnLosslessly } from './bpmnPreviewFidelity'
 import { toBpmnEditorSource } from './bpmnPlantUml'
@@ -98,7 +98,7 @@ function c4Preview(source: string): CanvasGraph | null {
   return graph
 }
 
-function useCasePreview(source: string): CanvasGraph | null {
+function buildUseCasePreview(source: string): CanvasGraph | null {
   const lines = statements(source, 'use-case')
   if (!lines) return null
   const nodes = new Map<string, { title: string; kind: string; boundary?: string }>()
@@ -155,7 +155,7 @@ export function buildVerifiedNativePreview(source: string, kind: NativePreviewKi
       ? canPreviewBpmnLosslessly(source) ? buildReadOnlyDiagramCanvasGraph(toBpmnEditorSource(source), 'bpmn') : null
       : kind === 'class' || kind === 'erd'
         ? canPreviewUmlLosslessly(source, kind) ? buildReadOnlyDiagramCanvasGraph(source, kind) : null
-        : kind === 'c4' ? c4Preview(source) : kind === 'use-case' ? useCasePreview(source) : archimatePreview(source)
+        : kind === 'c4' ? c4Preview(source) : kind === 'use-case' ? buildUseCasePreview(source) : archimatePreview(source)
     if (!graph) return null
     // Per-element ReactFlow flags override its preview-level defaults. In particular
     // the canonical ArchiMate parser marks its nodes draggable for editor usage.

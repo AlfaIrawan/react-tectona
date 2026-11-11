@@ -41,7 +41,7 @@ export async function fetchProjectWorkspaceDirectoryUsers(): Promise<{
   const session = getSession()
   const [identityResponse, workspaces, ownMemberships] = await Promise.all([
     fetchIdentityUsers({ limit: 500, offset: 0 }),
-    fetchAllWorkspaceOrgWorkspaces({ status: 'active' }),
+    fetchAllWorkspaceOrgWorkspaces(),
     session
       ? fetchSubjectMemberships(TECTONA_WAC_APP_ID, session.user.id, { activeOnly: true })
       : Promise.resolve({ items: [], total: 0 }),

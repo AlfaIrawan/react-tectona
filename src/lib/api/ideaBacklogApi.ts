@@ -843,6 +843,7 @@ export async function patchIdea(
     workspace_id?: string
     project_id?: string | null
     folder_id?: string | null
+    assignee_id?: string | null
     /** Where a title change came from; the backend versions every title change. */
     title_source?: 'idea' | 'document'
     title_source_document_id?: string
@@ -1019,8 +1020,9 @@ export async function generateIdeaDescriptionWithAI(
     throw new Error(`AI assistance failed: ${text || `HTTP ${res.status}`}`)
   }
 
-  const data = (await res.json()) as any
-  const responseText = typeof data?.response === 'string' ? data.response : JSON.stringify(data?.response || data || '')
+  const data: unknown = await res.json()
+  const response = readAgentField(data, 'response')
+  const responseText = typeof response === 'string' ? response : JSON.stringify(response || data || '')
   const result = extractAgentResponseText(responseText)
 
   if (isFallbackLikeResponse({
@@ -1214,7 +1216,7 @@ ${languageInstruction}`
  * Extract plain text from agent response, preferring the answer field when the
  * runtime returns a JSON envelope.
  */
-function extractAgentResponseText(response: any): string {
+function extractAgentResponseText(response: unknown): string {
   if (!response) {
     return ''
   }
@@ -1249,10 +1251,14 @@ function extractAgentResponseText(response: any): string {
   return String(response)
 }
 
-function pickAgentAnswer(payload: any): string {
+function readAgentField(value: unknown, key: string): unknown {
+  return value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined
+}
+
+function pickAgentAnswer(payload: unknown): string {
   const visited = new WeakSet<object>()
 
-  const search = (value: any): string => {
+  const search = (value: unknown): string => {
     if (!value) {
       return ''
     }
@@ -1274,23 +1280,9 @@ function pickAgentAnswer(payload: any): string {
     }
     visited.add(value)
 
-    const directCandidates = [
-      value.answer,
-      value.result,
-      value.content,
-      value.message,
-      value.text,
-      value.data?.answer,
-      value.data?.result,
-      value.data?.content,
-      value.data?.message,
-      value.data?.text,
-      value.response?.answer,
-      value.response?.result,
-      value.response?.content,
-      value.response?.message,
-      value.response?.text,
-    ]
+    const fields = ['answer', 'result', 'content', 'message', 'text']
+    const directCandidates = [value, readAgentField(value, 'data'), readAgentField(value, 'response')]
+      .flatMap((entry) => fields.map((key) => readAgentField(entry, key)))
 
     for (const candidate of directCandidates) {
       const extracted = search(candidate)

@@ -277,7 +277,7 @@ export function ProjectDocsTableView({
                 </button>
               </th>
             ) : null}
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="document"
               pinnedFirstKey="document"
               label="Document"
@@ -291,7 +291,7 @@ export function ProjectDocsTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="type"
               pinnedFirstKey="document"
               label="Type"
@@ -305,7 +305,7 @@ export function ProjectDocsTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="owner"
               pinnedFirstKey="document"
               label="Owner"
@@ -319,7 +319,7 @@ export function ProjectDocsTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="version"
               pinnedFirstKey="document"
               label="Version"
@@ -333,7 +333,7 @@ export function ProjectDocsTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="status"
               pinnedFirstKey="document"
               label="Status"
@@ -347,7 +347,7 @@ export function ProjectDocsTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="kb"
               pinnedFirstKey="document"
               label="KB progress"
@@ -361,7 +361,7 @@ export function ProjectDocsTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="updated"
               pinnedFirstKey="document"
               label="Updated"
@@ -375,7 +375,7 @@ export function ProjectDocsTableView({
               onBeginResize={() => {}}
               draggable={false}
             />
-            <ProjectWorkItemTableHeaderCell
+            <ProjectWorkItemTableHeaderCell<DocsSortKey, DocsSortKey>
               columnKey="access"
               pinnedFirstKey="document"
               label="Access"

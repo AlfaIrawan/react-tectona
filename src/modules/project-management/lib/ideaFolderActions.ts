@@ -1,6 +1,21 @@
 import type { IdeaBacklogFolder } from '../store/ideaFolderStore'
 import { setIdeaFolderClipboard, type IdeaFolderClipboardEntry } from './ideaFolderClipboard'
 
+export function getIdeaFolderAncestors(
+  folderId: string | null,
+  folders: readonly IdeaBacklogFolder[],
+): IdeaBacklogFolder[] {
+  const chain: IdeaBacklogFolder[] = []
+  let nextId = folderId
+  while (nextId) {
+    const folder = folders.find((item) => item.id === nextId)
+    if (!folder) break
+    chain.unshift(folder)
+    nextId = folder.parentId ?? null
+  }
+  return chain
+}
+
 export function copyIdeaFolderToClipboard(
   folder: Pick<IdeaBacklogFolder, 'id' | 'name' | 'parentId'>,
 ): IdeaFolderClipboardEntry {

@@ -5,12 +5,8 @@ import { Button } from '@/components/ui/button'
 import { pushGlobalToast } from '@/components/ui/toast'
 import { diagramPresentation, diagramSourceDescription } from '@/lib/chat/diagramPresentation'
 import { renderProcessDiagram, type ProcessDiagramNotation } from '@/lib/api/tectonaAgentRuntimeApi'
-import { buildFlowchartFallbackSvg, processPlantUmlToMermaid, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
-import {
-  AssistantFlowchartCanvas,
-  canRenderAssistantFlowchart,
-  flowchartPreviewHeight,
-} from '@/modules/core-shell/components/AssistantFlowchartCanvas'
+import { buildFlowchartFallbackSvg, canRenderAssistantFlowchart, flowchartPreviewHeight, processPlantUmlToMermaid, rewriteBareMermaidSource } from '@/lib/chat/mermaidFallbackSvg'
+import { AssistantFlowchartCanvas } from '@/modules/core-shell/components/AssistantFlowchartCanvas'
 import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
 import { diagramScrollSurface, fittedDiagramSize } from '@/modules/core-shell/components/diagramFullscreenFrame'
 import { cn } from '@/lib/utils'
@@ -224,6 +220,8 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
   const [natural, setNatural] = useState({ width: 0, height: 0 })
   const [viewport, setViewport] = useState({ width: 0, height: 0 })
   const fitted = fittedDiagramSize(natural, viewport, zoom)
+  const fittedWidth = fitted?.width
+  const fittedHeight = fitted?.height
   const surface = fitted ? diagramScrollSurface(fitted, viewport) : null
 
   const centerScroll = useCallback(() => {
@@ -283,13 +281,13 @@ function MermaidFullscreenModal({ svgHtml, imageUrl, children, source, onClose }
 
   useEffect(() => {
     const svg = canvasRef.current?.querySelector('svg')
-    if (svg instanceof SVGSVGElement && fitted) {
-      svg.style.width = `${fitted.width}px`
-      svg.style.height = `${fitted.height}px`
+    if (svg instanceof SVGSVGElement && fittedWidth !== undefined && fittedHeight !== undefined) {
+      svg.style.width = `${fittedWidth}px`
+      svg.style.height = `${fittedHeight}px`
     }
     const frame = window.requestAnimationFrame(centerScroll)
     return () => window.cancelAnimationFrame(frame)
-  }, [centerScroll, fitted?.width, fitted?.height])
+  }, [centerScroll, fittedWidth, fittedHeight])
 
   const handleCopy = async () => {
     const ok = await copyTextToClipboard(source)

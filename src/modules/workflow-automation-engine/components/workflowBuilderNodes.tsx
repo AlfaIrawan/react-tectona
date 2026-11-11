@@ -45,7 +45,7 @@ function connectedHandleStyle(
 // A single card component renders every kind; the kind drives the accent,
 // icon, and handle layout. Registered under one nodeTypes key per kind so
 // React Flow keeps stable types (mirrors the integration canvas pattern).
-export function WorkflowBuilderNode({ id, data, selected, width, height }: NodeProps<WorkflowNodeData>) {
+export function WorkflowBuilderNode({ id, data, selected }: NodeProps<WorkflowNodeData>) {
   const meta = WORKFLOW_KIND_META[data.kind]
   const Icon = meta.icon
   const summary = workflowNodeSummary(data)
@@ -80,8 +80,8 @@ export function WorkflowBuilderNode({ id, data, selected, width, height }: NodeP
     return edge ? workflowEdgeEndpoints(edge, nodeInternals, edges)?.target ?? null : null
   }
   const currentNode = nodeInternals.get(id)
-  const nodeWidth = Number(currentNode?.width ?? width ?? 224)
-  const nodeHeight = Number(currentNode?.height ?? height ?? minHeight)
+  const nodeWidth = Number(currentNode?.width ?? 224)
+  const nodeHeight = Number(currentNode?.height ?? minHeight)
   const ports = workflowPerimeterPorts(nodeWidth, nodeHeight).map((port) => ({
     ...port,
     position: port.side === 'top' ? Position.Top : port.side === 'right' ? Position.Right : port.side === 'bottom' ? Position.Bottom : Position.Left,

@@ -1,9 +1,9 @@
 import {
   Fragment,
-  startTransition,
   useCallback,
   useDeferredValue,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -11,9 +11,24 @@ import {
   type ChangeEvent,
   type ComponentType,
   type ReactNode,
-  type RefObject,
 } from 'react'
 import { KbDetailMarkdown, kbLooksLikeMarkdown } from '../components/KbDetailMarkdown'
+import {
+  kbExtractPlainText,
+  kbExtractPlainTextPreserveStructure,
+  primeKbStructureLexicon,
+  restoreKbSoftLineBreaks,
+  sanitizeKbRichHtml,
+  escapeKbHtml,
+  combineKbStructuredChunksBySection,
+  enforceCanonicalKbSections,
+  listUnknownKbHeadings,
+  validateKbStructuredContentPreservesSource,
+  renderKbPlainTextAsDeterministicStructuredHtml,
+  KB_AI_STRUCTURE_CHUNK_MAX_CHARS,
+  detectKbSectionHeaders,
+  splitKbBySectionAware,
+} from '../lib/kbStructuredContent'
 import { KbRichHtmlWithColumnLimits } from '../components/KbRichHtmlWithColumnLimits'
 import { KbEditorTableColumnLimits } from '../components/KbEditorTableColumnLimits'
 import { SystemKbTableEditorForm, type ApplicationCatalogScanProgress, type ApplicationCatalogSuggestion } from '../components/SystemKbTableEditorForm'
@@ -42,7 +57,6 @@ import { readAccessibleWorkspaceIds } from '@/lib/corporateWorkspaceAccess'
 import { TECTONA_TENANT_CHANGED_EVENT } from '@/lib/tenantEvents'
 import { fixDocxPreviewCellDirection } from '@/lib/docxPreviewFixes'
 import { createPortal } from 'react-dom'
-import DOMPurify from 'dompurify'
 import { getExplorerFileTypeLabel } from '@/modules/document-knowledge-management/fileTypeIcon'
 import { UI_SCOPE_DOCUMENT_KNOWLEDGE, useUiLayoutBoolean, useUiLayoutState } from '@/stores/ui-layout-store'
 import {
@@ -81,12 +95,10 @@ import {
   Clock3,
   Code2,
   Copy,
-  BarChart3,
   Cloud,
   Download,
   Eye,
   FileClock,
-  FileInput,
   FileStack,
   FileText,
   FileType,
@@ -110,7 +122,6 @@ import {
   ListOrdered,
   Link2,
   Lock,
-  MoreHorizontal,
   Loader2,
   Maximize2,
   Minimize2,
@@ -155,7 +166,6 @@ import {
   Legend,
   Line,
   LineChart,
-  Pie,
   PieChart,
   PolarAngleAxis,
   PolarGrid,
@@ -254,7 +264,7 @@ import {
 } from '@/lib/api/workspaceAccessControlApi'
 import { listWorkItems, type WorkItemApiModel } from '@/lib/api/workApi'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -262,7 +272,6 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectItem } from '@/components/ui/select'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
-import { Tooltip as UiTooltip } from '@/components/ui/tooltip'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { DndContext } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
@@ -281,7 +290,6 @@ import {
   enterpriseDestructiveOutlineButtonClass,
   enterpriseIndigoGradientActionButtonClass,
   enterprisePrimarySolidButtonClass,
-  enterpriseRoseGradientActionButtonClass,
   enterpriseSecondaryButtonClass,
   registerServicePrimaryButtonClass,
 } from '@/lib/enterpriseButtonClasses'
@@ -298,7 +306,10 @@ import {
   resolveWorkspacePanelHeightStyle,
   workspaceMainPanelViewportHeightStyle,
 } from '@/lib/workspaceNavLayout'
-import { getUiLayoutViewportSize, pointerClientToLayout, visualRectToLayoutRect } from '@/lib/uiScale'
+import { useFixedPopupPosition } from '@/modules/document-knowledge-management/lib/useFixedPopupPosition'
+import { extractKbStructuredHtmlFromAnswer, kbLooksLikeHtml, parseStrictJsonObjectFromAnswer } from '@/modules/document-knowledge-management/lib/kbStructuredAnswer'
+import { getEditorSubmenuPlacement, useEditorContextMenuPosition } from '@/modules/document-knowledge-management/lib/useEditorContextMenuPosition'
+import { useKbFederatedRelationRefresh } from '@/modules/document-knowledge-management/lib/useKbFederatedRelationRefresh'
 import { APP_MAIN_BODY_SELECTOR } from '@/lib/useAppMainBodyWidth'
 import { usePreferencesStore } from '@/stores/preferences-store'
 import {
@@ -343,13 +354,10 @@ import { disableSupersededApplicationCatalogs, applicationSourceNotice, isManage
 import { parseSystemKbTableContent, serializeSystemKbTable, systemKbTablePlainLength, type SystemKbTableEditModel } from '@/lib/kb/systemKbTableEditor'
 import { repairFlattenedComparisonBlocks } from '@/lib/kb/repairComparisonTable'
 import { scrubKbExtractionArtifacts, stripRepeatedRunningLines } from '@/lib/kb/kbExtractionArtifacts'
-import { captureKbEditorHtml, prepareKbRichHtmlContent, sanitizeKbRichHtmlPreservingTables, applyKbTableLayoutStylesFromAttrs } from '@/lib/kb/kbRichTableHtml'
-import { repairKbInlineBoldHtml } from '@/lib/kb/kbInlineBoldRepair'
-import { scrubKbInlineStyles } from '@/lib/kb/kbInlineStyleScrub'
+import { captureKbEditorHtml, prepareKbRichHtmlContent, applyKbTableLayoutStylesFromAttrs } from '@/lib/kb/kbRichTableHtml'
 import {
   applyKbDocStyle,
   getKbDocStyleById,
-  hydrateKbDocStyleInlineStyles,
   KB_DOC_STYLES,
   readActiveKbDocStyleId,
   selectionIsInsideKbTable,
@@ -427,9 +435,6 @@ import {
   extractMemoMetadataFromDocumentText,
   extractMemoPolicySummaryFromDocumentText,
   isMemoAttachmentUpload,
-  isMemoInternalFolderPath,
-  looksLikeMemoAttachmentFileName,
-  looksLikeMemoUploadFileName,
   mergeMemoAttachmentEntriesForUpload,
   mergeMemoMetadataExtract,
   repositoryDocumentKindLabel,
@@ -542,7 +547,6 @@ import { SampleShareDialog } from '@/modules/document-knowledge-management/compo
 import {
   buildSamplesShareFolderDescription,
   listNonPersonalSampleShareTargets,
-  parseSamplesShareWorkspaceIds,
 } from '@/modules/document-knowledge-management/lib/samplesShare'
 import { syncSamplesShareToWorkspaces } from '@/modules/document-knowledge-management/lib/syncSharedSamples'
 import { resolveSampleGoldWorkspacePlan } from '@/modules/document-knowledge-management/lib/resolveSampleGoldWorkspacePlan'
@@ -562,7 +566,6 @@ import {
   type SampleGoldDocument,
   type SampleKindClassification,
 } from '@/modules/document-knowledge-management/lib/classifyFromSamples'
-import { extractDocumentTextPreview } from '@/lib/api/documentParserApi'
 import { transcribeAudio } from '@/lib/api/tectonaVoiceApi'
 import { getFileTypeIcon } from '../fileTypeIcon'
 import { useToast } from '@/components/ui/toast'
@@ -606,20 +609,6 @@ function isOnlyOfficeViewableFile(fileName: string | null | undefined): boolean 
   return ONLYOFFICE_VIEWABLE_FILE_PATTERN.test((fileName ?? '').trim())
 }
 
-// Lazy mammoth import – loaded only when a .docx file is uploaded
-async function extractDocxTextWithMammoth(file: File, maxChars: number): Promise<string> {
-  try {
-    const mammoth = await import('mammoth')
-    const arrayBuffer = await file.arrayBuffer()
-    const result = await mammoth.extractRawText({ arrayBuffer })
-    const text = (result.value ?? '').trim()
-    if (!text) return ''
-    return text.slice(0, maxChars)
-  } catch {
-    return ''
-  }
-}
-
 type DetailEntry = {
   id: string
   title: string
@@ -660,100 +649,6 @@ function clampMemoField(value: string | null | undefined, maxLength: number): st
   return trimmed.length > maxLength ? trimmed.slice(0, maxLength) : trimmed
 }
 
-// Keep a right-click menu on screen: after paint, if it overflows the bottom/right/left it is
-// repositioned so it opens upward / inward. Mirrors the shared ui/context-menu flip behavior.
-function useFlippedMenuPosition(
-  ref: RefObject<HTMLDivElement | null>,
-  open: boolean,
-  x: number,
-  y: number,
-): { x: number; y: number } {
-  const [adjusted, setAdjusted] = useState<{ x: number; y: number } | null>(null)
-
-  useEffect(() => {
-    if (!open) setAdjusted(null)
-  }, [open, x, y])
-
-  useEffect(() => {
-    if (!open || !ref.current) return
-    const el = ref.current
-    const raf = requestAnimationFrame(() => {
-      const origin = pointerClientToLayout(x, y)
-      const rect = visualRectToLayoutRect(el.getBoundingClientRect())
-      const viewport = getUiLayoutViewportSize()
-      let newX = origin.x
-      let newY = origin.y
-      if (rect.bottom > viewport.height) newY = Math.max(8, origin.y - rect.height)
-      if (rect.right > viewport.width) newX = viewport.width - rect.width - 8
-      if (rect.left < 0) newX = 8
-      if (newX !== origin.x || newY !== origin.y) setAdjusted({ x: newX, y: newY })
-    })
-    return () => cancelAnimationFrame(raf)
-  }, [open, x, y, ref])
-
-  return { x: adjusted?.x ?? pointerClientToLayout(x, y).x, y: adjusted?.y ?? pointerClientToLayout(x, y).y }
-}
-
-/** Position a fixed popup under a trigger, then shift inward if it would overflow the viewport. */
-function useFixedPopupPosition(
-  open: boolean,
-  triggerRef: RefObject<HTMLElement | null>,
-  panelRef: RefObject<HTMLElement | null>,
-): { top: number; left: number } {
-  const [pos, setPos] = useState({ top: 0, left: 0 })
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setPos({ top: 0, left: 0 })
-      return
-    }
-
-    let cancelled = false
-    const update = () => {
-      const trigger = triggerRef.current
-      if (!trigger || cancelled) return
-
-      const t = visualRectToLayoutRect(trigger.getBoundingClientRect())
-      const panel = panelRef.current
-      const viewport = getUiLayoutViewportSize()
-      const width = panel && panel.offsetWidth > 0 ? panel.offsetWidth : 176
-      const height = panel && panel.offsetHeight > 0 ? panel.offsetHeight : 168
-      const margin = 8
-
-      // Prefer right-align under trigger (toolbar table button sits near the drawer edge).
-      let top = t.bottom + 6
-      let left = t.right - width
-
-      if (left < margin) left = margin
-      if (left + width > viewport.width - margin) {
-        left = Math.max(margin, viewport.width - width - margin)
-      }
-      if (top + height > viewport.height - margin) {
-        top = Math.max(margin, t.top - height - 6)
-      }
-      if (top < margin) top = margin
-
-      setPos({ top, left })
-    }
-
-    update()
-    const raf1 = requestAnimationFrame(() => {
-      update()
-      requestAnimationFrame(update)
-    })
-    window.addEventListener('resize', update)
-    window.addEventListener('scroll', update, true)
-    return () => {
-      cancelled = true
-      cancelAnimationFrame(raf1)
-      window.removeEventListener('resize', update)
-      window.removeEventListener('scroll', update, true)
-    }
-  }, [open, triggerRef, panelRef])
-
-  return pos
-}
-
 type RepositoryItem = {
   id: string
   name: string
@@ -792,23 +687,8 @@ type RepositoryUploadNamingRule = {
   recommendedExample?: string | null
 }
 
-type RepositoryAutoKbPayload = {
-  kb_title?: string
-  kb_naming_class?: string
-  kb_primary_name?: string
-  kb_secondary_name?: string
-  kb_category?: string
-  kb_priority?: number
-  kb_summary?: string
-  kb_content_html?: string
-  relation_target_title?: string
-  relation_predicate?: string
-  relation_reason?: string
-}
-
 const REPOSITORY_WORKSPACE_KEY = 'react-tectona'
 const BRD_DOCUMENT_NAMING_STANDARD_TITLE = 'BRD Document Naming Standard'
-const BRD_TO_KB_NAMING_STANDARD_TITLE = 'BRD-To-Knowledge Base Naming Standard'
 
 type BrdKbNamingClass = 'capability' | 'application' | 'governance' | 'workflow' | 'ai_feature' | 'generic'
 
@@ -886,7 +766,7 @@ function humanizeSemanticName(value: string): string {
   const cleaned = splitCamelCaseWords(
     value
       .replace(/\.[A-Za-z0-9]+$/, '')
-      .replace(/[_\-]+/g, ' ')
+      .replace(/[_-]+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim(),
   )
@@ -1120,238 +1000,6 @@ function formatKbUpdated(iso: string): string {
     return iso
   }
 }
-
-function kbLooksLikeHtml(content: string): boolean {
-  return /<\/?[a-z][\s\S]*>/i.test(content)
-}
-
-function kbExtractPlainText(content: string): string {
-  if (!content) return ''
-  if (typeof document === 'undefined') {
-    return content.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-  }
-  const root = document.createElement('div')
-  root.innerHTML = content
-  return (root.textContent ?? '').replace(/\u00a0/g, ' ')
-}
-
-function kbExtractPlainTextPreserveStructure(content: string): string {
-  if (!content) return ''
-
-  if (typeof document === 'undefined') {
-    return content
-      .replace(/<\s*br\s*\/?\s*>/gi, '\n')
-      .replace(/<\/(p|h1|h2|h3|li|blockquote|pre|div|section|article|ul|ol)>/gi, '\n')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\u00a0/g, ' ')
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-  }
-
-  if (!kbLooksLikeHtml(content)) {
-    return content
-      .replace(/\u00a0/g, ' ')
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-  }
-
-  const root = document.createElement('div')
-  root.innerHTML = sanitizeKbRichHtml(content)
-
-  const asInnerText = (root as HTMLDivElement).innerText ?? ''
-  if (asInnerText.trim()) {
-    return asInnerText
-      .replace(/\u00a0/g, ' ')
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-  }
-
-  return (root.textContent ?? '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-type KbStructureLexicon = {
-  headings: string[]
-  subsections: string[]
-  listPhrases: string[]
-}
-
-let kbStructureLexicon: KbStructureLexicon = {
-  headings: [],
-  subsections: [],
-  listPhrases: [],
-}
-
-const normalizeKbLexiconKey = (value: string): string => value.toLowerCase().replace(/\s+/g, ' ').trim()
-
-const isTitleLikeLexiconLine = (line: string): boolean => {
-  return /^[A-Z][A-Za-z0-9&()/' -]{2,90}$/.test(line)
-    && !/[.!?]$/.test(line)
-}
-
-function extractKbLexiconCandidatesFromText(text: string): string[] {
-  const plain = kbExtractPlainTextPreserveStructure(text)
-    .replace(/\r\n/g, '\n')
-    .replace(/[\u0000-\u001F\u007F]/g, ' ')
-  const lines = plain
-    .split(/\n+/)
-    .map((line) => line.replace(/^[-*•]\s+/, '').replace(/\s+/g, ' ').trim())
-    .filter(Boolean)
-
-  return Array.from(new Set(lines))
-}
-
-export function primeKbStructureLexicon(...sources: string[]): void {
-  const headingMap = new Map<string, string>()
-  const subsectionMap = new Map<string, string>()
-  const phraseMap = new Map<string, string>()
-
-  sources.forEach((source) => {
-    extractKbLexiconCandidatesFromText(source).forEach((line) => {
-      const key = normalizeKbLexiconKey(line)
-      if (!key) return
-
-      // Collect list-phrase candidates for run-on recovery.
-      if (line.length >= 3 && line.length <= 120) {
-        if (!phraseMap.has(key)) phraseMap.set(key, line)
-      }
-
-      // Heading candidates: concise title-style lines.
-      if (isTitleLikeLexiconLine(line) && line.split(/\s+/).length <= 7) {
-        if (!headingMap.has(key)) headingMap.set(key, line)
-      }
-
-      // Subsection candidates: slightly longer title-style lines.
-      if (isTitleLikeLexiconLine(line) && line.split(/\s+/).length <= 9) {
-        if (!subsectionMap.has(key)) subsectionMap.set(key, line)
-      }
-    })
-  })
-
-  kbStructureLexicon = {
-    headings: Array.from(headingMap.values()),
-    subsections: Array.from(subsectionMap.values()),
-    listPhrases: Array.from(phraseMap.values()),
-  }
-}
-
-function getKbStructureLexicon(): KbStructureLexicon {
-  return kbStructureLexicon
-}
-
-export function restoreKbSoftLineBreaks(value: string): string {
-  const normalized = value
-    .replace(/\r\n/g, '\n')
-    .replace(/\u00a0/g, ' ')
-    .replace(/([.!?])([A-Z])/g, '$1 $2')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[ \t]+/g, ' ')
-    .trim()
-
-  if (!normalized) return ''
-
-  const lexicon = getKbStructureLexicon()
-  const inlineHeadingCandidates = normalized
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter((line) => isTitleLikeLexiconLine(line) && line.split(/\s+/).length <= 7)
-
-  const knownHeadings = Array.from(new Set([...lexicon.headings, ...inlineHeadingCandidates]))
-  const knownSubsections = lexicon.subsections
-
-  const insertBreakBeforePhrase = (input: string, phrase: string, forceCamelBoundary = false): string => {
-    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
-    const rx = new RegExp(escaped, 'gi')
-    return input.replace(rx, (match, offset: number, whole: string) => {
-      const prev = offset > 0 ? whole[offset - 1] : ''
-      const next = offset + match.length < whole.length ? whole[offset + match.length] : ''
-
-      const prevIsAlphaNum = /[A-Za-z0-9]/.test(prev)
-      const nextIsAlphaNum = /[A-Za-z0-9]/.test(next)
-      const allowCamelBoundary = forceCamelBoundary && /[a-z0-9]/.test(prev) && /[A-Z]/.test(match.charAt(0))
-
-      if ((prevIsAlphaNum || nextIsAlphaNum) && !allowCamelBoundary) {
-        return match
-      }
-
-      if (offset <= 0) return match
-      if (prev === '\n') return match
-      return `\n${match}`
-    })
-  }
-
-  let restored = normalized
-  for (const heading of knownHeadings) {
-    restored = insertBreakBeforePhrase(restored, heading, true)
-    const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
-    const rx = new RegExp(escaped, 'gi')
-    restored = restored.replace(rx, (m) => `${m}\n`)
-  }
-
-  for (const label of knownSubsections) {
-    restored = insertBreakBeforePhrase(restored, label, true)
-  }
-
-  restored = restored
-    .replace(/:\s+/g, ':\n')
-    .replace(/\n +/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-
-  return restored
-}
-
-function isLikelyKbSubsectionLabel(line: string, nextNonEmptyLine: string): boolean {
-  // Generic sub-section label heuristic: short title-style line followed by list-like content.
-  const looksLikeTitle = /^[A-Z][A-Za-z0-9&()/' -]{2,70}$/.test(line)
-    && !/[.:;!?]$/.test(line)
-    && line.split(/\s+/).length <= 7
-  if (!looksLikeTitle) return false
-
-  if (!nextNonEmptyLine) return false
-
-  const nextTrimmed = nextNonEmptyLine.trim()
-  if (!nextTrimmed) return false
-
-  const nextIsBullet = /^[-*•]\s+/.test(nextTrimmed)
-  const nextSplitsByKnownPhrases = splitKbRunOnLineByKnownPhrases(nextTrimmed).length > 1
-  const nextLooksLikeShortItem = /^[A-Za-z][A-Za-z0-9&()/' -]{1,80}$/.test(nextTrimmed)
-    && !/[.:;!?]$/.test(nextTrimmed)
-    && nextTrimmed.split(/\s+/).length <= 8
-
-  return nextIsBullet || nextSplitsByKnownPhrases || nextLooksLikeShortItem
-}
-
-function splitKbRunOnLineByKnownPhrases(value: string): string[] {
-  const line = value.replace(/\s+/g, ' ').trim()
-  if (!line) return []
-
-  const normalizedCatalog = Array.from(new Set(getKbStructureLexicon().listPhrases.map((item) => item.trim()).filter(Boolean)))
-    .sort((a, b) => b.length - a.length)
-
-  const escapedAlternatives = normalizedCatalog
-    .map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s*'))
-    .join('|')
-  if (!escapedAlternatives) return [line]
-
-  const matcher = new RegExp(escapedAlternatives, 'gi')
-  const items: string[] = []
-  let match: RegExpExecArray | null
-
-  while ((match = matcher.exec(line)) !== null) {
-    const matched = (match[0] ?? '').replace(/\s+/g, ' ').trim()
-    if (matched) items.push(matched)
-  }
-
-  if (items.length === 0) return [line]
-  return items
-}
-
 function formatKbShortSummary(content: string, maxChars = 110): string {
   const structuredQuestions = parseKbQuestionEditModel(content)
   if (structuredQuestions) {
@@ -1372,7 +1020,7 @@ function formatKbShortSummary(content: string, maxChars = 110): string {
     .trim()
 
   const withoutHeadingLabel = normalizedText
-    .replace(/^(profil perusahaan|masalah|overview)\s*[:\-]?\s*/i, '')
+    .replace(/^(profil perusahaan|masalah|overview)\s*[:-]?\s*/i, '')
     .trim()
 
   const summaryText = withoutHeadingLabel || normalizedText
@@ -1690,60 +1338,6 @@ const KB_RICH_CONTENT_PROSE_CLASSES = [
   '[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:border [&_pre]:border-slate-200 [&_pre]:bg-slate-50 [&_pre]:px-3 [&_pre]:py-2 [&_pre]:font-mono [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre]:text-slate-800',
   '[&_code]:font-mono [&_code]:text-[13px] [&_code]:text-slate-800',
 ].join(' ')
-const KB_ALLOWED_TAGS = ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'span', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'div', 'blockquote', 'a', 'pre', 'code', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'colgroup', 'col']
-// style is kept for table layout + text-align + indent + typography; DOMPurify still strips event handlers.
-const KB_ALLOWED_ATTR = [
-  'href', 'target', 'rel', 'colspan', 'rowspan', 'width', 'height', 'style',
-  'data-kb-header-row', 'data-kb-first-column', 'data-kb-total-row',
-  'data-kb-last-column', 'data-kb-banded-rows', 'data-kb-banded-columns',
-  'data-kb-style', 'data-kb-table-index',
-]
-
-/**
- * Sanitize KB rich HTML with DOMPurify (vetted, mXSS-resistant) using a strict allowlist.
- * Applied both on render (before dangerouslySetInnerHTML) and on save. Anchors are hardened
- * with target=_blank + rel=noopener via a scoped post-pass on the already-sanitized output
- * (no global DOMPurify hooks, so other call sites are unaffected).
- */
-function sanitizeKbRichHtml(content: string): string {
-  if (!content) return ''
-  if (typeof window === 'undefined' || typeof document === 'undefined') return content
-
-  // Fix contentEditable bold quirks before allowlist sanitize (e.g. name<b><br></b>desc).
-  const repairedBold = repairKbInlineBoldHtml(content)
-  // Strip Tailwind --tw-* / paste style dumps that inflate content past the 50k API limit.
-  const scrubbedStyles = scrubKbInlineStyles(repairedBold)
-  // Bake Word-like style visuals into inline styles so View matches Editor.
-  const hydratedStyles = hydrateKbDocStyleInlineStyles(scrubbedStyles)
-  const scrubbedHydrated = scrubKbInlineStyles(hydratedStyles)
-
-  const runPurify = (html: string) => DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: KB_ALLOWED_TAGS,
-    ALLOWED_ATTR: KB_ALLOWED_ATTR,
-    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|#)/i,
-    ALLOW_DATA_ATTR: false,
-  })
-
-  const clean = sanitizeKbRichHtmlPreservingTables(scrubbedHydrated, runPurify)
-
-  if (!clean.includes('<a')) {
-    const trimmedOnly = clean.trim()
-    const withLayout = applyKbTableLayoutStylesFromAttrs(trimmedOnly === '<br>' ? '' : trimmedOnly)
-    return withLayout
-  }
-
-  const root = document.createElement('div')
-  root.innerHTML = clean
-  root.querySelectorAll('a[href]').forEach((anchor) => {
-    anchor.setAttribute('target', '_blank')
-    anchor.setAttribute('rel', 'noreferrer noopener')
-  })
-
-  const sanitizedHtml = root.innerHTML.trim()
-  const withLayout = applyKbTableLayoutStylesFromAttrs(sanitizedHtml === '<br>' ? '' : sanitizedHtml)
-  return withLayout
-}
-
 function KbRelationTargetDropdown({
   id,
   value,
@@ -2438,7 +2032,7 @@ function normalizeKbTitleForSubmit(value: string): string {
 
 function isKbTitleValid(value: string): boolean {
   // Allowed: letters, numbers, &, (, ), -, and single spaces between tokens.
-  return /^[A-Za-z0-9&()\-]+(?: [A-Za-z0-9&()\-]+)*$/.test(value)
+  return /^[A-Za-z0-9&()-]+(?: [A-Za-z0-9&()-]+)*$/.test(value)
 }
 
 function normalizeKbCategoryLabelInput(value: string): string {
@@ -2454,7 +2048,7 @@ function normalizeKbCategoryLabelForSubmit(value: string): string {
 }
 
 function isKbCategoryLabelValid(value: string): boolean {
-  return /^[A-Za-z0-9&()\-]+(?: [A-Za-z0-9&()\-]+)*$/.test(value)
+  return /^[A-Za-z0-9&()-]+(?: [A-Za-z0-9&()-]+)*$/.test(value)
 }
 
 function normalizeKbPredicateLabelInput(value: string): string {
@@ -2609,57 +2203,6 @@ function RepositoryDuplicateMatchDetails({ match }: {
     </div>
   )
 }
-
-function escapeKbHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
-function renderKbInlineTextAsHtml(value: string): string {
-  const escaped = escapeKbHtml(value)
-  return escaped
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/__(.+?)__/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-}
-
-function parseStrictJsonObjectFromAnswer<T extends Record<string, unknown>>(value: string): T | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-
-  const tryParseObject = (candidate: string): T | null => {
-    const text = candidate.trim()
-    if (!text.startsWith('{') || !text.endsWith('}')) return null
-    try {
-      const parsed = JSON.parse(text)
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-      return parsed as T
-    } catch {
-      return null
-    }
-  }
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
-  if (fenced?.[1]) {
-    const parsedFromFence = tryParseObject(fenced[1])
-    if (parsedFromFence) return parsedFromFence
-  }
-
-  const parsedDirect = tryParseObject(trimmed)
-  if (parsedDirect) return parsedDirect
-
-  const firstBrace = trimmed.indexOf('{')
-  const lastBrace = trimmed.lastIndexOf('}')
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    const parsedEmbedded = tryParseObject(trimmed.slice(firstBrace, lastBrace + 1))
-    if (parsedEmbedded) return parsedEmbedded
-  }
-
-  return null
-}
-
 function parseJsonArrayFromAnswer(value: string): unknown[] | null {
   const trimmed = value.trim()
   if (!trimmed) return null
@@ -2689,39 +2232,6 @@ function parseJsonArrayFromAnswer(value: string): unknown[] | null {
   }
 
   return null
-}
-
-function extractStructuredHtmlFromJsonObject(parsed: Record<string, unknown>): string {
-  const candidateKeys = ['content_html', 'contentHtml', 'html', 'content', 'body', 'result', 'text'] as const
-
-  for (const key of candidateKeys) {
-    const candidate = parsed[key]
-    if (typeof candidate !== 'string') continue
-
-    const trimmed = candidate.trim()
-    if (!trimmed) continue
-
-    if (kbLooksLikeHtml(trimmed)) {
-      return trimmed
-    }
-
-    const nestedParsed = parseStrictJsonObjectFromAnswer<Record<string, unknown>>(trimmed)
-    if (nestedParsed) {
-      const nestedHtml = extractStructuredHtmlFromJsonObject(nestedParsed)
-      if (nestedHtml) return nestedHtml
-    }
-  }
-
-  return ''
-}
-
-export function extractKbStructuredHtmlFromAnswer(answer: string): string {
-  const parsed = parseStrictJsonObjectFromAnswer<Record<string, unknown>>(answer)
-  const parsedHtml = parsed ? extractStructuredHtmlFromJsonObject(parsed) : ''
-  const fencedHtml = answer.match(/```(?:html)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim() ?? ''
-  const directAnswer = answer.trim()
-  const directHtml = kbLooksLikeHtml(directAnswer) ? directAnswer : ''
-  return parsedHtml || fencedHtml || directHtml
 }
 
 function toBase64Utf8(value: string): string {
@@ -2792,586 +2302,10 @@ function dedupeRepeatedKbHeadings(value: string): string {
 
   return sanitizeKbRichHtml(root.innerHTML)
 }
-
-export function normalizeKbHeadingKey(value: string): string {
-  return value
-    .toLocaleLowerCase('en-US')
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function stripSectionHeadingFromChunkHtml(value: string, sectionName: string): string {
-  const safeHtml = sanitizeKbRichHtml(value)
-  if (!safeHtml) return ''
-  if (typeof document === 'undefined') return safeHtml
-
-  const targetKey = normalizeKbHeadingKey(sectionName)
-  if (!targetKey) return safeHtml
-
-  const root = document.createElement('div')
-  root.innerHTML = safeHtml
-
-  root.querySelectorAll('h2,h3').forEach((node) => {
-    const key = normalizeKbHeadingKey(node.textContent ?? '')
-    if (key === targetKey) {
-      node.remove()
-    }
-  })
-
-  return sanitizeKbRichHtml(root.innerHTML)
-}
-
-export function combineKbStructuredChunksBySection(
-  chunks: Array<{ sectionName: string | null; html: string }>,
-  sectionOrder: string[]
-): string {
-  const intro: string[] = []
-  const sectionBuckets = new Map<string, string[]>()
-  const sectionLabelMap = new Map<string, string>()
-
-  const normalizedOrder = sectionOrder
-    .map((name) => ({ key: normalizeKbHeadingKey(name), name }))
-    .filter((item) => item.key)
-
-  for (const item of normalizedOrder) {
-    if (!sectionBuckets.has(item.key)) sectionBuckets.set(item.key, [])
-    sectionLabelMap.set(item.key, item.name)
-  }
-
-  for (const chunk of chunks) {
-    const safeHtml = sanitizeKbRichHtml(chunk.html)
-    if (!safeHtml) continue
-
-    const sectionName = (chunk.sectionName ?? '').trim()
-    const sectionKey = normalizeKbHeadingKey(sectionName)
-    if (!sectionKey) {
-      intro.push(safeHtml)
-      continue
-    }
-
-    const bucket = sectionBuckets.get(sectionKey) ?? []
-    const cleanedHtml = bucket.length > 0 ? stripSectionHeadingFromChunkHtml(safeHtml, sectionName) : safeHtml
-    if (cleanedHtml.trim()) bucket.push(cleanedHtml)
-
-    if (!sectionBuckets.has(sectionKey)) sectionBuckets.set(sectionKey, bucket)
-    if (!sectionLabelMap.has(sectionKey)) sectionLabelMap.set(sectionKey, sectionName)
-  }
-
-  const orderedSections: string[] = []
-  normalizedOrder.forEach((item) => orderedSections.push(item.key))
-  Array.from(sectionBuckets.keys()).forEach((key) => {
-    if (!orderedSections.includes(key)) orderedSections.push(key)
-  })
-
-  const combined: string[] = []
-  if (intro.length > 0) combined.push(intro.join('\n'))
-
-  for (const sectionKey of orderedSections) {
-    const sectionParts = sectionBuckets.get(sectionKey) ?? []
-    if (sectionParts.length === 0) continue
-
-    const firstPart = sectionParts[0]
-    if (firstPart) {
-      combined.push(firstPart)
-    }
-
-    if (sectionParts.length > 1) {
-      for (let i = 1; i < sectionParts.length; i += 1) {
-        const nextPart = sectionParts[i]
-        if (nextPart && nextPart.trim()) combined.push(nextPart)
-      }
-    }
-  }
-
-  return sanitizeKbRichHtml(combined.join('\n'))
-}
-
-export function enforceCanonicalKbSections(value: string, sectionOrder: string[]): string {
-  const safeHtml = sanitizeKbRichHtml(value)
-  if (!safeHtml) return ''
-  if (typeof document === 'undefined') return safeHtml
-
-  const canonical = sectionOrder
-    .map((name) => ({ key: normalizeKbHeadingKey(name), label: name.trim() }))
-    .filter((item) => item.key)
-  if (canonical.length === 0) return safeHtml
-
-  const canonicalMap = new Map(canonical.map((item) => [item.key, item.label]))
-  const sectionBuckets = new Map<string, string[]>()
-  canonical.forEach((item) => sectionBuckets.set(item.key, []))
-  const introParts: string[] = []
-
-  const root = document.createElement('div')
-  root.innerHTML = safeHtml
-
-  let activeSectionKey: string | null = null
-
-  // Traverse all block nodes in document order so nested headings cannot bypass canonical enforcement.
-  const blocks = Array.from(root.querySelectorAll('h2,h3,p,ul,ol,pre,blockquote'))
-  blocks.forEach((node) => {
-    if (/H2|H3/.test(node.tagName)) {
-      const heading = (node.textContent ?? '').trim()
-      const key = normalizeKbHeadingKey(heading)
-      if (key && canonicalMap.has(key)) {
-        activeSectionKey = key
-        return
-      }
-
-      // Unknown heading is demoted to emphasis within current section to avoid creating rogue top-level sections.
-      const demoted = `<p><strong>${escapeKbHtml(heading)}</strong></p>`
-      if (activeSectionKey) {
-        const bucket = sectionBuckets.get(activeSectionKey)
-        if (bucket) bucket.push(demoted)
-      } else {
-        introParts.push(demoted)
-      }
-      return
-    }
-
-    const html = node.outerHTML.trim()
-    if (!html) return
-
-    if (activeSectionKey) {
-      const bucket = sectionBuckets.get(activeSectionKey)
-      if (bucket) bucket.push(html)
-    } else {
-      introParts.push(html)
-    }
-  })
-
-  const output: string[] = []
-  if (introParts.length > 0) output.push(introParts.join('\n'))
-
-  canonical.forEach(({ key, label }) => {
-    const parts = sectionBuckets.get(key) ?? []
-    if (parts.length === 0) return
-    output.push(`<h2>${escapeKbHtml(label)}</h2>`)
-    output.push(parts.join('\n'))
-  })
-
-  return sanitizeKbRichHtml(output.join('\n'))
-}
-
-export function listUnknownKbHeadings(value: string, sectionOrder: string[]): string[] {
-  const safeHtml = sanitizeKbRichHtml(value)
-  if (!safeHtml) return []
-  if (typeof document === 'undefined') return []
-
-  const canonicalKeys = new Set(sectionOrder.map((name) => normalizeKbHeadingKey(name)).filter(Boolean))
-  if (canonicalKeys.size === 0) return []
-
-  const root = document.createElement('div')
-  root.innerHTML = safeHtml
-
-  const unknown: string[] = []
-  root.querySelectorAll('h2,h3').forEach((node) => {
-    const label = (node.textContent ?? '').replace(/\s+/g, ' ').trim()
-    if (!label) return
-    const key = normalizeKbHeadingKey(label)
-    if (!key || !canonicalKeys.has(key)) {
-      unknown.push(label)
-    }
-  })
-  return Array.from(new Set(unknown))
-}
-
-export function normalizeKbPlainTextForComparison(value: string): string {
-  const normalizeText = (input: string) => input
-    .replace(/\u0000/g, ' ')
-    .replace(/\u00a0/g, ' ')
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/__(.+?)__/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\s*:\s*/g, ': ')
-    .replace(/\s*;\s*/g, '; ')
-    .replace(/\s*,\s*/g, ', ')
-    .replace(/\(\s+/g, '(')
-    .replace(/\s+\)/g, ')')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  const raw = value ?? ''
-
-  if (kbLooksLikeHtml(raw) && typeof document !== 'undefined') {
-    const root = document.createElement('div')
-    root.innerHTML = sanitizeKbRichHtml(raw)
-
-    const blockTexts = Array.from(root.querySelectorAll('h1,h2,h3,p,li,blockquote,pre'))
-      .map((node) => (node.textContent ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
-
-    if (blockTexts.length > 0) {
-      return normalizeText(blockTexts.join(' '))
-    }
-  }
-
-  return normalizeText(kbExtractPlainText(raw))
-}
-
-export function validateKbStructuredContentPreservesSource(sourceValue: string, structuredValue: string): { valid: boolean; reason?: string } {
-  const toTokenList = (input: string): string[] => (
-    input.toLowerCase().match(/[a-z0-9]+(?:[._:/-][a-z0-9]+)*/g) ?? []
-  )
-
-  const toTokenCountMap = (tokens: string[]): Map<string, number> => {
-    const counts = new Map<string, number>()
-    tokens.forEach((token) => {
-      counts.set(token, (counts.get(token) ?? 0) + 1)
-    })
-    return counts
-  }
-
-  const sourcePlain = normalizeKbPlainTextForComparison(sourceValue)
-  const structuredPlain = normalizeKbPlainTextForComparison(structuredValue)
-
-  if (!sourcePlain && !structuredPlain) {
-    return { valid: true }
-  }
-
-  if (!sourcePlain) {
-    return { valid: false, reason: 'Source content is empty after normalization.' }
-  }
-
-  if (!structuredPlain) {
-    return { valid: false, reason: 'Structured output is empty after normalization.' }
-  }
-
-  if (sourcePlain === structuredPlain) {
-    return { valid: true }
-  }
-
-  const sourceTokens = toTokenList(sourcePlain)
-  const structuredTokens = toTokenList(structuredPlain)
-  if (sourceTokens.length < 12 || structuredTokens.length < 12) {
-    return { valid: false, reason: 'Structured output changes the source wording or content order.' }
-  }
-
-  const sourceTokenCounts = toTokenCountMap(sourceTokens)
-  const structuredTokenCounts = toTokenCountMap(structuredTokens)
-
-  const isCriticalToken = (token: string): boolean => {
-    if (/\d/.test(token)) return true // numbers/version/date-like tokens must be exact
-    if (/[._:/-]/.test(token)) return true // id/code-like token must be exact
-    if (token.length >= 12) return true // long domain terms are treated as critical
-    return false
-  }
-
-  for (const [token, count] of sourceTokenCounts.entries()) {
-    if (!isCriticalToken(token)) continue
-    if ((structuredTokenCounts.get(token) ?? 0) !== count) {
-      return { valid: false, reason: 'Structured output changes the source wording or content order.' }
-    }
-  }
-
-  // Allow very small wording drift from LLM formatting as long as token coverage stays high.
-  let missingTokens = 0
-  let addedTokens = 0
-
-  for (const [token, count] of sourceTokenCounts.entries()) {
-    const other = structuredTokenCounts.get(token) ?? 0
-    if (other < count) missingTokens += (count - other)
-  }
-  for (const [token, count] of structuredTokenCounts.entries()) {
-    const other = sourceTokenCounts.get(token) ?? 0
-    if (other < count) addedTokens += (count - other)
-  }
-
-  const sourceTotal = sourceTokens.length
-  const structuredTotal = structuredTokens.length
-  const missingRatio = sourceTotal > 0 ? (missingTokens / sourceTotal) : 0
-  const addedRatio = structuredTotal > 0 ? (addedTokens / structuredTotal) : 0
-
-  const missingAllowedAbsolute = Math.max(2, Math.ceil(sourceTotal * 0.06))
-  const addedAllowedAbsolute = Math.max(2, Math.ceil(structuredTotal * 0.06))
-
-  if (missingRatio > 0.12 || addedRatio > 0.12) {
-    return { valid: false, reason: 'Structured output changes the source wording or content order.' }
-  }
-
-  if (missingTokens > missingAllowedAbsolute || addedTokens > addedAllowedAbsolute) {
-    return { valid: false, reason: 'Structured output changes the source wording or content order.' }
-  }
-
-  return { valid: true }
-}
-
-function renderPlainTextChunkAsStructuredHtml(value: string, sectionName: string | null): string {
-  const normalized = value.replace(/\r\n/g, '\n').trim()
-  if (!normalized) return ''
-
-  const lines = normalized
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  if (lines.length === 0) return ''
-
-  const safeSectionName = (sectionName ?? '').trim()
-  if (safeSectionName && lines.length > 0 && normalizeKbHeadingKey(lines[0]) === normalizeKbHeadingKey(safeSectionName)) {
-    lines.shift()
-  }
-
-  const blocks: string[] = []
-  if (safeSectionName) {
-    blocks.push(`<h2>${renderKbInlineTextAsHtml(safeSectionName)}</h2>`)
-  }
-
-  let listItems: string[] = []
-  const flushList = () => {
-    if (listItems.length === 0) return
-    blocks.push(`<ul>${listItems.map((item) => `<li>${renderKbInlineTextAsHtml(item)}</li>`).join('')}</ul>`)
-    listItems = []
-  }
-
-  for (const line of lines) {
-    const bulletMatch = line.match(/^[-*•]\s+(.+)$/)
-    if (bulletMatch) {
-      listItems.push(bulletMatch[1].trim())
-      continue
-    }
-
-    flushList()
-    blocks.push(`<p>${renderKbInlineTextAsHtml(line)}</p>`)
-  }
-
-  flushList()
-  return sanitizeKbRichHtml(blocks.join('\n'))
-}
-
-export function renderKbPlainTextAsDeterministicStructuredHtml(value: string): string {
-  const normalized = value.replace(/\r\n/g, '\n').trim()
-  if (!normalized) return ''
-
-  const lines = normalized.split('\n')
-  const headerMap = new Map<number, string>()
-  detectKbSectionHeaders(normalized).forEach((header) => {
-    headerMap.set(header.index, header.name)
-  })
-
-  const blocks: string[] = []
-  let listMode = false
-  let listItems: string[] = []
-  let activeSectionKey = ''
-  const knownSubsectionKeySet = new Set(getKbStructureLexicon().subsections.map((label) => normalizeKbLexiconKey(label)))
-
-  const ruleListSectionKeys = new Set([
-    'rules',
-    'language handling',
-    'constraints',
-    'formatting',
-    'quality checklist',
-  ])
-
-  const isPromotableSubsectionLabel = (input: string, nextLine: string): boolean => {
-    const trimmed = input.trim()
-    if (!/[:：]$/.test(trimmed)) return false
-
-    const label = trimmed.replace(/[:：]+$/, '').trim()
-    if (!label) return false
-    if (looksLikeJsonOrCodeLine(label)) return false
-    if (label.split(/\s+/).length > 5) return false
-    if (looksLikeJsonOrCodeLine(nextLine)) return false
-    return true
-  }
-
-  const looksLikeJsonOrCodeLine = (input: string): boolean => {
-    const line = input.trim()
-    if (!line) return false
-    if (/^[{}\[\]]$/.test(line)) return true
-    if (/^"[^"]+"\s*:\s*/.test(line)) return true
-    if (/^\{.*:.*\}$/.test(line)) return true
-    return false
-  }
-
-  const flushList = () => {
-    if (listItems.length === 0) return
-    blocks.push(`<ul>${listItems.map((item) => `<li>${renderKbInlineTextAsHtml(item)}</li>`).join('')}</ul>`)
-    listItems = []
-  }
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].trim()
-
-    if (!line) {
-      flushList()
-      listMode = false
-      continue
-    }
-
-    const header = headerMap.get(i)
-    if (header) {
-      flushList()
-      listMode = false
-      blocks.push(`<h2>${renderKbInlineTextAsHtml(header)}</h2>`)
-      activeSectionKey = normalizeKbHeadingKey(header)
-      continue
-    }
-
-    const bullet = line.match(/^[-*•]\s+(.+)$/)
-    if (bullet) {
-      listItems.push(bullet[1].trim())
-      continue
-    }
-
-    let nextNonEmptyLine = ''
-    for (let j = i + 1; j < lines.length; j += 1) {
-      const candidate = lines[j].trim()
-      if (candidate) {
-        nextNonEmptyLine = candidate
-        break
-      }
-    }
-
-    const normalizedLineKey = line.toLowerCase().replace(/\s+/g, ' ').trim()
-    const isKnownSubsection = knownSubsectionKeySet.has(normalizedLineKey)
-    const isAdaptiveSubsection = !listMode && isLikelyKbSubsectionLabel(line, nextNonEmptyLine)
-
-    if (isKnownSubsection || isAdaptiveSubsection) {
-      flushList()
-      listMode = true
-      blocks.push(`<p><strong>${renderKbInlineTextAsHtml(line)}</strong></p>`)
-      continue
-    }
-
-    if (ruleListSectionKeys.has(activeSectionKey) && !looksLikeJsonOrCodeLine(line)) {
-      listMode = true
-      listItems.push(line)
-      continue
-    }
-
-    const inlineList = line.match(/^(.+?:)\s*(.+)$/)
-    if (inlineList) {
-      const head = (inlineList[1] ?? '').trim()
-      const tail = (inlineList[2] ?? '').trim()
-      if (head) {
-        flushList()
-        blocks.push(`<h3>${renderKbInlineTextAsHtml(head.replace(/:+$/, ''))}</h3>`)
-      }
-      if (tail) {
-        const detectedInlineItems = splitKbRunOnLineByKnownPhrases(tail)
-        if (detectedInlineItems.length > 1) {
-          listItems.push(...detectedInlineItems)
-          flushList()
-          listMode = false
-          continue
-        }
-      }
-    }
-
-    if (listMode) {
-      const detected = splitKbRunOnLineByKnownPhrases(line)
-      if (detected.length > 1) {
-        listItems.push(...detected)
-      } else {
-        listItems.push(line)
-      }
-      continue
-    }
-
-    if (isPromotableSubsectionLabel(line, nextNonEmptyLine)) {
-      const label = line.replace(/[:：]+$/, '').trim()
-      flushList()
-      blocks.push(`<h3>${renderKbInlineTextAsHtml(label)}</h3>`)
-      const nextLooksLikeBullet = /^[-*•]\s+/.test(nextNonEmptyLine)
-      const nextSplitsByKnownPhrases = splitKbRunOnLineByKnownPhrases(nextNonEmptyLine).length > 1
-      const nextLooksLikeShortListItem = /^[A-Za-z][A-Za-z0-9&()/' -]{1,80}$/.test(nextNonEmptyLine)
-        && !/[.,;!?]$/.test(nextNonEmptyLine)
-        && nextNonEmptyLine.split(/\s+/).length <= 8
-      const nextLooksLikeJsonOrCode = looksLikeJsonOrCodeLine(nextNonEmptyLine)
-
-      listMode = !nextLooksLikeJsonOrCode && (nextLooksLikeBullet || nextSplitsByKnownPhrases || nextLooksLikeShortListItem)
-      continue
-    }
-
-    blocks.push(`<p>${renderKbInlineTextAsHtml(line)}</p>`)
-  }
-
-  flushList()
-  return sanitizeKbRichHtml(blocks.join('\n'))
-}
-
-export function renderKbPlainTextAsStrictPreservedHtml(value: string): string {
-  const normalized = value.replace(/\r\n/g, '\n').trim()
-  if (!normalized) return ''
-
-  const lines = normalized.split('\n')
-  const headerMap = new Map<number, string>()
-  detectKbSectionHeaders(normalized).forEach((header) => {
-    headerMap.set(header.index, header.name)
-  })
-
-  const blocks: string[] = []
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].trim()
-    if (!line) continue
-
-    const header = headerMap.get(i)
-    if (header) {
-      blocks.push(`<h2>${renderKbInlineTextAsHtml(header)}</h2>`)
-      continue
-    }
-
-    const bullet = line.match(/^[-*•]\s+(.+)$/)
-    if (bullet) {
-      blocks.push(`<ul><li>${renderKbInlineTextAsHtml(bullet[1].trim())}</li></ul>`)
-      continue
-    }
-
-    blocks.push(`<p>${renderKbInlineTextAsHtml(line)}</p>`)
-  }
-
-  return sanitizeKbRichHtml(blocks.join('\n'))
-}
-
-function canExtractTextForKbFromFile(file: File): boolean {
-  const contentType = (file.type || '').toLowerCase()
-  if (contentType.startsWith('text/')) return true
-  if (contentType.includes('json') || contentType.includes('xml')) return true
-  if (contentType.includes('yaml') || contentType.includes('csv')) return true
-  if (contentType.includes('javascript') || contentType.includes('typescript')) return true
-  if (contentType.includes('markdown')) return true
-
-  const lowerName = file.name.toLowerCase()
-  return ['.txt', '.md', '.json', '.xml', '.yml', '.yaml', '.csv', '.log', '.ts', '.tsx', '.js', '.jsx']
-    .some((ext) => lowerName.endsWith(ext))
-}
-
-const KB_UPLOAD_PREVIEW_MAX_CHARS = 2500
 const KB_RUNTIME_MESSAGE_MAX_CHARS = 4900
 const KB_AI_FORM_CONTENT_MAX_CHARS = 2200
-const KB_AI_STRUCTURE_CHUNK_MAX_CHARS = 1200
 const KB_MAKE_STRUCTURED_PROMPT_TEMPLATE_ID = '9cd9e955-5af5-48da-bf17-f0e39759b86c'
 const KB_MAKE_STRUCTURED_PROMPT_TEMPLATE_TITLE = 'Make Structured AI Prompt Template'
-
-function normalizeExtractedTextPreviewForKb(value: string, maxChars: number): string {
-  const compact = value
-    .replace(/\u0000/g, ' ')
-    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (!compact) return ''
-
-  if (
-    compact.startsWith('PK\u0003\u0004')
-    || compact.includes('[Content_Types].xml')
-    || compact.includes('word/document.xml')
-  ) {
-    return ''
-  }
-
-  const totalLength = compact.length
-  const replacementCharCount = (compact.match(/\uFFFD/g) ?? []).length
-  const noisyCharCount = (compact.match(/[^A-Za-z0-9\s.,;:!?"'()\-_/\\[\]{}@#%&*+=<>|]/g) ?? []).length
-
-  // If parser output is heavily corrupted/noisy, skip preview to avoid KB garbage.
-  if ((replacementCharCount / totalLength) > 0.02) return ''
-  if (totalLength > 120 && (noisyCharCount / totalLength) > 0.45) return ''
-
-  return compact.slice(0, maxChars)
-}
 
 function truncateRuntimeMessage(value: string, maxChars = KB_RUNTIME_MESSAGE_MAX_CHARS): string {
   if (value.length <= maxChars) return value
@@ -3379,222 +2313,6 @@ function truncateRuntimeMessage(value: string, maxChars = KB_RUNTIME_MESSAGE_MAX
   const head = Math.max(0, maxChars - suffix.length)
   return `${value.slice(0, head).trimEnd()}${suffix}`
 }
-
-interface KbSectionChunk {
-  content: string
-  sectionNames: string[]
-  chunkIndex: number
-  totalChunks: number
-}
-
-export function detectKbSectionHeaders(text: string): { name: string; index: number }[] {
-  const lines = text.split('\n')
-  const headers: { name: string; index: number }[] = []
-  const knownHeadingSet = new Set(getKbStructureLexicon().headings.map((item) => normalizeKbLexiconKey(item)))
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
-    if (!line) continue
-
-    // Pattern 1: All uppercase (or mostly uppercase) with some words = section header
-    const isAllCaps = /^[A-Z][A-Z\s&()_-]*$/.test(line) && line.length > 2 && line.length < 100
-    // Pattern 2: Title Case pattern with no sentence structure (no period/comma/etc)
-    const isTitleCase = /^[A-Z][A-Za-z0-9\s&()_-]*$/.test(line)
-      && !/[.,:;!?]/.test(line)
-      && line.length < 80
-      && line.split(/\s+/).length <= 5
-      && /[A-Za-z0-9)]/.test(line.charAt(line.length - 1))
-
-    const lowerLine = line.toLocaleLowerCase('en-US')
-    const isKnownHeading = knownHeadingSet.has(lowerLine)
-    const prevLine = i > 0 ? lines[i - 1].trim() : ''
-    const isLikelyStandaloneHeader = isKnownHeading || prevLine.length === 0
-
-    if ((isAllCaps || isTitleCase) && isLikelyStandaloneHeader && line.length > 3) {
-      // Avoid false positives: skip if next line is empty or very short
-      const nextLine = i + 1 < lines.length ? lines[i + 1].trim() : ''
-      if (nextLine && nextLine.length > 10) {
-        headers.push({ name: line, index: i })
-      }
-    }
-  }
-
-  return headers
-}
-
-export function splitKbBySectionAware(value: string, maxChars = KB_AI_STRUCTURE_CHUNK_MAX_CHARS): KbSectionChunk[] {
-  const normalized = value.replace(/\r\n/g, '\n').trim()
-  if (!normalized) return []
-
-  const headers = detectKbSectionHeaders(normalized)
-  if (headers.length === 0) {
-    // Fallback to paragraph-based chunking if no sections detected
-    const fallbackChunks = splitKbPlainTextForAi(normalized, maxChars)
-    return fallbackChunks.map((content, index) => ({
-      content,
-      sectionNames: [],
-      chunkIndex: index,
-      totalChunks: fallbackChunks.length,
-    }))
-  }
-
-  const lines = normalized.split('\n')
-  const chunks: KbSectionChunk[] = []
-  const sortedHeaders = [...headers].sort((a, b) => a.index - b.index)
-
-  const firstHeaderIndex = sortedHeaders[0]?.index ?? -1
-  if (firstHeaderIndex > 0) {
-    const introText = lines.slice(0, firstHeaderIndex).join('\n').trim()
-    if (introText) {
-      const introParts = splitKbPlainTextForAi(introText, maxChars)
-      introParts.forEach((part) => {
-        chunks.push({
-          content: part,
-          sectionNames: [],
-          chunkIndex: chunks.length,
-          totalChunks: 0,
-        })
-      })
-    }
-  }
-
-  for (let h = 0; h < sortedHeaders.length; h += 1) {
-    const header = sortedHeaders[h]
-    const headerName = header.name.trim()
-    const sectionStart = header.index
-    const sectionEnd = h + 1 < sortedHeaders.length ? sortedHeaders[h + 1].index : lines.length
-    const sectionLines = lines.slice(sectionStart, sectionEnd)
-    const sectionText = sectionLines.join('\n').trim()
-    if (!sectionText) continue
-
-    if (sectionText.length <= maxChars) {
-      chunks.push({
-        content: sectionText,
-        sectionNames: [headerName],
-        chunkIndex: chunks.length,
-        totalChunks: 0,
-      })
-      continue
-    }
-
-    const bodyText = lines.slice(sectionStart + 1, sectionEnd).join('\n').trim()
-    if (!bodyText) {
-      chunks.push({
-        content: sectionText.slice(0, maxChars),
-        sectionNames: [headerName],
-        chunkIndex: chunks.length,
-        totalChunks: 0,
-      })
-      continue
-    }
-
-    const bodyParts = splitKbPlainTextForAi(bodyText, Math.max(500, maxChars - headerName.length - 2))
-    bodyParts.forEach((part) => {
-      const content = `${headerName}\n${part}`
-      chunks.push({
-        content,
-        sectionNames: [headerName],
-        chunkIndex: chunks.length,
-        totalChunks: 0,
-      })
-    })
-  }
-
-  // Update total chunk count for all
-  const totalChunks = chunks.length
-  chunks.forEach((chunk) => {
-    chunk.totalChunks = totalChunks
-  })
-
-  return chunks
-}
-
-function splitKbPlainTextForAi(value: string, maxChars = KB_AI_STRUCTURE_CHUNK_MAX_CHARS): string[] {
-  const normalized = value.replace(/\r\n/g, '\n').trim()
-  if (!normalized) return []
-
-  const paragraphs = normalized.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean)
-  if (paragraphs.length === 0) return []
-
-  const chunks: string[] = []
-  let current = ''
-
-  const pushCurrent = () => {
-    const safe = current.trim()
-    if (safe) chunks.push(safe)
-    current = ''
-  }
-
-  const appendPart = (part: string) => {
-    if (!part) return
-    const candidate = current ? `${current}\n\n${part}` : part
-    if (candidate.length <= maxChars) {
-      current = candidate
-      return
-    }
-
-    if (current) pushCurrent()
-
-    if (part.length <= maxChars) {
-      current = part
-      return
-    }
-
-    // Fallback for extra-long paragraph: split by words while preserving order.
-    const words = part.split(/\s+/).filter(Boolean)
-    let wordChunk = ''
-    for (const word of words) {
-      const wordCandidate = wordChunk ? `${wordChunk} ${word}` : word
-      if (wordCandidate.length <= maxChars) {
-        wordChunk = wordCandidate
-        continue
-      }
-
-      if (wordChunk) chunks.push(wordChunk)
-      wordChunk = word.length <= maxChars ? word : word.slice(0, maxChars)
-    }
-
-    if (wordChunk) chunks.push(wordChunk)
-  }
-
-  paragraphs.forEach(appendPart)
-  if (current) pushCurrent()
-
-  return chunks
-}
-
-async function extractUploadTextPreviewForKb(file: File, maxChars = KB_UPLOAD_PREVIEW_MAX_CHARS): Promise<string> {
-  const maxReadableBytes = 2 * 1024 * 1024
-  const lowerName = file.name.toLowerCase()
-
-  // .docx: use mammoth for clean, structured text extraction in the browser
-  if (
-    lowerName.endsWith('.docx')
-    || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  ) {
-    const text = await extractDocxTextWithMammoth(file, maxChars)
-    if (text) return text
-    // fall through to parser service if mammoth yields nothing
-  }
-
-  if (file.size > 0 && file.size <= maxReadableBytes && canExtractTextForKbFromFile(file)) {
-    try {
-      const raw = await file.text()
-      const plain = normalizeExtractedTextPreviewForKb(raw, maxChars)
-      if (plain) return plain
-    } catch {
-      // Continue to parser service fallback.
-    }
-  }
-
-  try {
-    const parsed = await extractDocumentTextPreview(file, maxChars)
-    return normalizeExtractedTextPreviewForKb(parsed.text || '', maxChars)
-  } catch {
-    return ''
-  }
-}
-
 function formatKbCategoryLabel(categoryValue: string, options?: Array<{ value: string; label: string }>): string {
   const normalizedValue = (categoryValue || '').trim()
   if (!normalizedValue) return ''
@@ -3606,7 +2324,10 @@ function formatKbCategoryLabel(categoryValue: string, options?: Array<{ value: s
 
   return normalizedValue
     .replace(/_/g, ' ')
-    .replace(/\w/g, (char) => char.toUpperCase())
+    // Preserve the legacy capitalization after a literal backspace, not at word boundaries.
+    .split('\b')
+    .map((part, index) => index === 0 ? part : part.replace(/^\w/, (char) => char.toUpperCase()))
+    .join('\b')
 }
 
 function kbApiToKnowledgeEntry(
@@ -4436,12 +3157,15 @@ function MeetingPeopleMultiSelect({
 }) {
   const [query, setQuery] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [previousActive, setPreviousActive] = useState(active)
 
-  useEffect(() => {
-    if (active) return
-    setQuery('')
-    setPickerOpen(false)
-  }, [active])
+  if (previousActive !== active) {
+    setPreviousActive(active)
+    if (!active) {
+      setQuery('')
+      setPickerOpen(false)
+    }
+  }
 
   const optionById = useMemo(
     () => new Map(options.map((option) => [option.subjectId, option])),
@@ -4549,24 +3273,6 @@ function formatVoiceElapsed(totalSec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-function SkeletonList() {
-  return (
-    <div className="space-y-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-3">
-      <div className="flex items-center justify-between">
-        <div className="h-2.5 w-28 animate-pulse rounded-full bg-slate-200" />
-        <div className="h-2.5 w-12 animate-pulse rounded-full bg-slate-200" />
-      </div>
-      {Array.from({ length: 3 }).map((_, index) => (
-        <div key={index} className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-          <div className="h-2.5 w-2/3 animate-pulse rounded-full bg-slate-200" />
-          <div className="h-2.5 w-1/2 animate-pulse rounded-full bg-slate-100" />
-          <div className="h-8 animate-pulse rounded-xl bg-slate-100" />
-        </div>
-      ))}
-    </div>
-  )
-}
-
 type DocPanelId =
   | 'overview'
   | 'repository'
@@ -4662,12 +3368,6 @@ const DOC_PANEL_ITEMS: DocPanelNavItem[] = [
   },
 ]
 
-const DOC_PANEL_GROUPS: Array<{ group: DocPanelNavItem['group']; items: DocPanelNavItem[] }> = [
-  { group: 'Command Center', items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Command Center') },
-  { group: 'Control Library', items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Control Library') },
-  { group: 'Assurance & Traceability', items: DOC_PANEL_ITEMS.filter((i) => i.group === 'Assurance & Traceability') },
-]
-
 function buildDocPanelGroups() {
   // Full DKM nav for all users — Command Center (overview) + Knowledge Base integration are never hidden.
   return [
@@ -4761,8 +3461,6 @@ function nextUntitledDocumentFolderName(folders: DocumentFolder[], parentId: str
   const nextNum = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : 1
   return `Untitled ${nextNum}`
 }
-
-const PIE_COLORS_DOC = ['#6366f1', '#0ea5e9', '#10b981', '#a78bfa', '#f59e0b']
 
 type OverviewPaletteName = 'pastel' | 'vivid'
 
@@ -5126,33 +3824,6 @@ function DocPanelSection({
   )
 }
 
-function DocStatCard({
-  label,
-  value,
-  subtitle,
-  icon: Icon,
-}: {
-  label: string
-  value: string
-  subtitle: string
-  icon: ComponentType<{ className?: string }>
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">{label}</p>
-          <p className="mt-2 text-2xl font-bold text-slate-900">{value}</p>
-          <p className="mt-1 text-xs text-slate-600">{subtitle}</p>
-        </div>
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-2 text-blue-700">
-          <Icon className="h-4 w-4" />
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function isTemplateDraftStatusError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? '')
   return /invalid status_code:\s*draft/i.test(message) || /invalid template status_code/i.test(message)
@@ -5253,13 +3924,6 @@ export function DocumentKnowledgeManagementPage() {
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
   const [filters, setFilters] = useState(defaultFilters)
   const [searchQuery, setSearchQuery] = useState('')
-  const drillToRepository = useCallback((next: Partial<typeof defaultFilters>) => {
-    setActivePanel('repository')
-    setShowFiltersPanel(true)
-    setFilters((current) => ({ ...current, ...next }))
-    setSearchQuery('')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [])
   const [selectedDetailId, setSelectedDetailId] = useState('')
   /** Set when the user deliberately cleared the selection, so auto-select stands down. */
   const [detailAutoSelectSuppressed, setDetailAutoSelectSuppressed] = useState(false)
@@ -5602,6 +4266,7 @@ export function DocumentKnowledgeManagementPage() {
   const [kbEditorOpenSeed, setKbEditorOpenSeed] = useState(0)
   const [kbEditingEntryId, setKbEditingEntryId] = useState<string | null>(null)
   const [kbViewEntry, setKbViewEntry] = useState<KbEntryResponse | null>(null)
+  const kbViewEntryId = kbViewEntry?.id
   const [kbViewFullscreen, setKbViewFullscreen] = useState(false)
   const [kbDetailTab, setKbDetailTab] = useState<'detail' | 'relations' | 'version'>('detail')
   const [kbCategoryOptions, setKbCategoryOptions] = useState<{ value: string; label: string }[]>(() => {
@@ -5697,7 +4362,7 @@ export function DocumentKnowledgeManagementPage() {
   const [kbOverviewRelationsLoading, setKbOverviewRelationsLoading] = useState(false)
   const [kbGraphMode, setKbGraphMode] = useState<KbGraphMode>('federated')
   const [kbFederatedScope, setKbFederatedScope] = useState<string>('all')
-  const [kbFederatedPageCap, setKbFederatedPageCap] = useState(5)
+  const [kbFederatedPageCap] = useState(5)
   // Opsi A — ONE graph, toggleable layers (not mutually-exclusive modes). Structure = deterministic
   // document-centric backbone (default on, 100% metadata facts); kb = concept relations from the KB
   // service; impact = AI-inferred impact/dependency overlay (clearly labelled, may contain noise).
@@ -5791,7 +4456,7 @@ export function DocumentKnowledgeManagementPage() {
   const [templateDeleteTarget, setTemplateDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [templateRenameTarget, setTemplateRenameTarget] = useState<{ id: string; name: string } | null>(null)
   const [templateRenameValue, setTemplateRenameValue] = useState('')
-  const kbEditorTableMenuPos = useFlippedMenuPosition(
+  const kbEditorTableMenuPos = useEditorContextMenuPosition(
     kbEditorTableMenuRef,
     !!kbEditorTableMenu,
     kbEditorTableMenu?.x ?? 0,
@@ -5830,6 +4495,13 @@ export function DocumentKnowledgeManagementPage() {
     'showFiltersPanel',
     true,
   )
+  const drillToRepository = useCallback((next: Partial<typeof defaultFilters>) => {
+    setActivePanel('repository')
+    setShowFiltersPanel(true)
+    setFilters((current) => ({ ...current, ...next }))
+    setSearchQuery('')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [setShowFiltersPanel])
   const [showEnterpriseNavPanel, setShowEnterpriseNavPanel] = useUiLayoutBoolean(
     UI_SCOPE_DOCUMENT_KNOWLEDGE,
     'showEnterpriseNavPanel',
@@ -6447,7 +5119,7 @@ export function DocumentKnowledgeManagementPage() {
 
   const loadKbWorkspaceOptions = useCallback(async () => {
     try {
-      const workspaces = await fetchAllWorkspaceOrgWorkspaces({ status: 'active' })
+      const workspaces = await fetchAllWorkspaceOrgWorkspaces()
       setKbWorkspaceOptions(workspaces)
     } catch {
       setKbWorkspaceOptions([])
@@ -6572,13 +5244,16 @@ export function DocumentKnowledgeManagementPage() {
       })
   }, [searchParams, kbLive, kbApiItems, addToast, setSearchParams])
 
+  const captureRepositoryPreviewClose = useEffectEvent(() => closeRepositoryDocumentPreview)
+
   useEffect(() => {
     const documentId = (searchParams.get('documentId') || '').trim()
     if (!documentId) return
 
+    const closePreview = captureRepositoryPreviewClose()
     const openDocument = () => {
       setActivePanel('repository')
-      closeRepositoryDocumentPreview()
+      closePreview()
       setSelectedDetailId(documentId)
       setDocDetailTab('detail')
       setDetailDrawerOpen(true)
@@ -6661,7 +5336,6 @@ export function DocumentKnowledgeManagementPage() {
   }, [kbFormDepartmentId, kbFormDivisionId, kbOrgDivisions])
 
   const mapDocumentToRepositoryItem = useCallback((doc: DocumentResponse, projectName: string): RepositoryItem => {
-    const primaryContext = doc.context_links[0]
     const projectContext = doc.context_links.find((ctx) => {
       const linkType = (ctx.link_type_code || '').toLowerCase()
       return linkType === 'project'
@@ -9677,10 +8351,6 @@ export function DocumentKnowledgeManagementPage() {
     runRepositoryUploadTree,
   ])
 
-  const queueRepositoryUploadFile = useCallback((file: File, folderId?: string | null) => {
-    queueRepositoryUploadFiles([file], folderId)
-  }, [queueRepositoryUploadFiles])
-
   const handleRepositoryFilePicked = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const files = collectBrowserFiles(event.target.files)
     event.target.value = ''
@@ -10036,7 +8706,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setKbOverviewRelationsLoading(false)
     }
-  }, [kbFederatedPageCap, kbFederatedScope, kbLive, activeWorkspaceApiId, dkmWorkspaceScope])
+  }, [kbFederatedPageCap, kbLive, activeWorkspaceApiId, dkmWorkspaceScope])
 
   const loadKbVersions = useCallback(
     async (entryId: string) => {
@@ -10085,15 +8755,12 @@ export function DocumentKnowledgeManagementPage() {
     void loadKbVersions(kbViewEntry.id)
   }, [kbViewEntry, loadKbRelations, loadKbVersions])
 
-  useEffect(() => {
-    if (kbGraphMode !== 'federated') return
-    void loadKbOverviewRelations()
-  }, [kbGraphMode, loadKbOverviewRelations])
+  useKbFederatedRelationRefresh(kbGraphMode === 'federated', kbFederatedScope, loadKbOverviewRelations)
 
   useEffect(() => {
-    if (!kbViewEntry) return
+    if (kbViewEntryId === undefined) return
     setKbDetailTab('detail')
-  }, [kbViewEntry?.id])
+  }, [kbViewEntryId])
 
   useEffect(() => {
     if (kbGraphFullscreen) {
@@ -10289,25 +8956,28 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [templateRenameTarget, templateStatusBusyId])
 
+  const captureKbDrawerClose = useEffectEvent(() => closeKbAddDrawer)
+
   useEffect(() => {
     if (!kbAddOpen) return
 
+    const closeDrawer = captureKbDrawerClose()
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      if (kbManageCatOpen) return // let the manage categories modal handle Esc first
+      if (kbManageCatOpen || kbEditorTableMenu) return // dismiss the inner overlay first
       if (kbAddFullscreen) {
         event.preventDefault()
         setKbAddFullscreen(false)
         return
       }
-      closeKbAddDrawer()
+      closeDrawer()
     }
 
     window.addEventListener('keydown', onWindowKeyDown)
     return () => {
       window.removeEventListener('keydown', onWindowKeyDown)
     }
-  }, [kbAddOpen, kbSaving, kbCategoryOptions, kbManageCatOpen, kbAddFullscreen])
+  }, [kbAddOpen, kbSaving, kbCategoryOptions, kbManageCatOpen, kbAddFullscreen, kbEditorTableMenu])
 
   useEffect(() => {
     if (!kbEditorTableMenu) return
@@ -10570,11 +9240,6 @@ export function DocumentKnowledgeManagementPage() {
     const vals = contentHealth.map((c) => c.valuePct)
     return Math.round(vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length))
   }, [contentHealth, repositoryItems.length])
-
-  const distributionPie = useMemo(
-    () => distributionByType.map((d) => ({ name: d.label, value: d.value })),
-    [distributionByType],
-  )
 
   function openDetail(id: string, tab: 'detail' | 'version' | 'activity' = 'detail') {
     closeRepositoryDocumentPreview()
@@ -11484,7 +10149,7 @@ export function DocumentKnowledgeManagementPage() {
       page += 1
     }
 
-    throw new Error(`Prompt template \"${templateTitle}\" was not found or is empty in the KB.`)
+    throw new Error(`Prompt template "${templateTitle}" was not found or is empty in the KB.`)
   }, [kbApiItems])
 
   const requestKbAiBackend = useCallback(async (instruction: string, options?: { contentEncoding?: 'plain' | 'base64'; contentPlainOverride?: string; suppressPolicyToast?: boolean }) => {
@@ -11747,7 +10412,7 @@ export function DocumentKnowledgeManagementPage() {
     }
 
     const knownNames = new Set(existingRows.map((row) => row.name?.trim().toLowerCase()).filter(Boolean))
-    return finalizeScan(candidates.flatMap((candidate) => {
+    return finalizeScan(candidates.flatMap<ApplicationCatalogSuggestion>((candidate) => {
       if (!candidate || typeof candidate !== 'object') return []
       const value = candidate as Record<string, unknown>
       const name = typeof value.name === 'string' ? value.name.trim() : ''
@@ -12587,11 +11252,14 @@ export function DocumentKnowledgeManagementPage() {
     }
   }, [kbStylesOpen])
 
+  // Only the open cycle should seed the editable DOM; form echoes must not rewrite it.
+  const readKbEditorOpeningContent = useEffectEvent(() => kbFormContent)
+
   useEffect(() => {
     if (!kbAddOpen) return
     const editor = kbContentEditorRef.current
     if (!editor) return
-    editor.innerHTML = applyKbTableLayoutStylesFromAttrs(kbFormContent)
+    editor.innerHTML = applyKbTableLayoutStylesFromAttrs(readKbEditorOpeningContent())
     setKbEditorTableScanTick((tick) => tick + 1)
   }, [kbAddOpen, kbEditorOpenSeed])
 
@@ -15170,7 +13838,6 @@ export function DocumentKnowledgeManagementPage() {
     resolveRepositoryUploadNamingRule,
     resolveTemplateWorkspaceCandidates,
     templateApiItems,
-    templateBusy,
     userWorkspaceOptions,
   ])
 
@@ -15211,13 +13878,6 @@ export function DocumentKnowledgeManagementPage() {
     }
     void runTemplateUploadBatch(files, resolved.workspaceId, options)
   }, [resolveRepositoryUploadWorkspaceCandidates, runTemplateUploadBatch, templateBusy])
-
-  const handleUploadMasterTemplateFile = useCallback(async (
-    file: File,
-    options?: { category_code?: string; document_type_code?: string },
-  ) => {
-    queueTemplateUploadFiles([file], options)
-  }, [queueTemplateUploadFiles])
 
   const processCreateMasterTemplate = useCallback(async (workspaceId: string | null) => {
     if (!workspaceId?.trim()) {
@@ -15274,7 +13934,7 @@ export function DocumentKnowledgeManagementPage() {
     } finally {
       setTemplateBusy(false)
     }
-  }, [addToast, loadMasterTemplates, templateBusy])
+  }, [addToast, loadMasterTemplates])
 
   const handleCreateMasterTemplate = useCallback(async () => {
     if (templateBusy) return
@@ -16926,7 +15586,7 @@ export function DocumentKnowledgeManagementPage() {
 
             {isWorkspaceCollapsed ? (
               <div className={cn(workspaceNavMenuScrollClass(), 'pt-0')}>
-                <EnterpriseNavIconRail
+                <EnterpriseNavIconRail<DocPanelId>
                   items={docPanelItems}
                   activeId={activePanel}
                   onSelect={setActivePanel}
@@ -17103,7 +15763,7 @@ export function DocumentKnowledgeManagementPage() {
                           registerServicePrimaryButtonClass(),
                           'group inline-flex shrink-0 items-center justify-center whitespace-nowrap bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-700 active:bg-blue-800 disabled:pointer-events-none disabled:opacity-50',
                         )}
-                        onClick={openRepositoryUploadPicker}
+                        onClick={() => openRepositoryUploadPicker()}
                         disabled={repositoryUploadBusy}
                       >
                         {repositoryUploadBusy ? (
@@ -17592,7 +16252,7 @@ export function DocumentKnowledgeManagementPage() {
                     className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   >
                     {!kbLoading && !kbLive ? (
-                      <motion.div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
                         Knowledge Base Graph is empty because the API failed
                         {kbLoadError ? `: ${kbLoadError}` : ''}. Fix the connection to{' '}
                         <code className="rounded bg-white/90 px-1">/api/gateway-runtime/api/tectona-kb/v1</code>{' '}
@@ -17604,7 +16264,7 @@ export function DocumentKnowledgeManagementPage() {
                           Platform Settings → Knowledge Base
                         </Link>
                         , then reload the page.
-                      </motion.div>
+                      </div>
                     ) : null}
                     {/* ROW 1 — Knowledge Base Graph */}
                     {(() => {
@@ -19562,7 +18222,7 @@ export function DocumentKnowledgeManagementPage() {
                           </div>
                           {kbViewMode === 'table' ? (
                             <>
-                              <EnterpriseGroupByControl
+                              <EnterpriseGroupByControl<KbTableGroupByKey>
                                 options={KB_TABLE_GROUP_BY_OPTIONS}
                                 value={kbTableGroupBy}
                                 onChange={setKbTableGroupBy}
@@ -19788,7 +18448,7 @@ export function DocumentKnowledgeManagementPage() {
                                           />
                                         ) : undefined
                                       return (
-                                        <EnterpriseSortableHeaderCell
+                                        <EnterpriseSortableHeaderCell<KbTableColumnKey>
                                           key={key}
                                           columnKey={key}
                                           label={kbTableColumnLabel(key)}
@@ -20405,7 +19065,7 @@ export function DocumentKnowledgeManagementPage() {
               )}
               right={
                 <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
-                  <EnterpriseGroupByControl
+                  <EnterpriseGroupByControl<TemplateGroupByKey>
                     options={TEMPLATE_GROUP_BY_OPTIONS}
                     value={templateGroupBy}
                     onChange={setTemplateGroupBy}
@@ -25580,13 +24240,7 @@ export function DocumentKnowledgeManagementPage() {
                     role="menu"
                     aria-label="Insert table parts"
                     className="absolute top-0 z-[1] w-[230px] rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)]"
-                    style={{
-                      // Flip submenu inward if it would overflow the viewport.
-                      left: kbEditorTableMenuPos.x + 220 + 230 > window.innerWidth - 8 ? 'auto' : '100%',
-                      right: kbEditorTableMenuPos.x + 220 + 230 > window.innerWidth - 8 ? '100%' : 'auto',
-                      marginLeft: kbEditorTableMenuPos.x + 220 + 230 > window.innerWidth - 8 ? 0 : -4,
-                      marginRight: kbEditorTableMenuPos.x + 220 + 230 > window.innerWidth - 8 ? -4 : 0,
-                    }}
+                    style={getEditorSubmenuPlacement(kbEditorTableMenuPos.x, 220, 230)}
                   >
                     <button type="button" role="menuitem" className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100" onClick={() => handleKbEditorTableInsertColumn('left')}>
                       Insert Columns to the Left
@@ -25625,12 +24279,7 @@ export function DocumentKnowledgeManagementPage() {
                     role="menu"
                     aria-label="Delete table parts"
                     className="absolute top-0 z-[1] w-[200px] rounded-xl border border-border/60 bg-white/96 p-1.5 shadow-[0_18px_38px_-20px_rgba(15,23,42,0.45)]"
-                    style={{
-                      left: kbEditorTableMenuPos.x + 220 + 200 > window.innerWidth - 8 ? 'auto' : '100%',
-                      right: kbEditorTableMenuPos.x + 220 + 200 > window.innerWidth - 8 ? '100%' : 'auto',
-                      marginLeft: kbEditorTableMenuPos.x + 220 + 200 > window.innerWidth - 8 ? 0 : -4,
-                      marginRight: kbEditorTableMenuPos.x + 220 + 200 > window.innerWidth - 8 ? -4 : 0,
-                    }}
+                    style={getEditorSubmenuPlacement(kbEditorTableMenuPos.x, 220, 200)}
                   >
                     <button type="button" role="menuitem" className="w-full rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-100" onClick={handleKbEditorTableDeleteRow}>
                       Delete Row

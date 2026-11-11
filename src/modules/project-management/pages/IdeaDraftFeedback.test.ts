@@ -82,11 +82,30 @@ it.each(['Valid saved title', 'Singleword'])('resume revalidates saved title %s'
 })
 it('explicit generation retry clears previous feedback before its request and retains any new failure', async () => {
   const h = stateHarness(); h.apply(job())
-  const request = vi.fn(async () => { expect(h.state).toEqual({ chat: '', drawer: '' }); throw new Error('NEW_FAILURE') })
-  const handler = bind(expression('handleContinueIdeaDraft'), { ...h.deps, ideaDraftJob: { job_id: 'synthetic', status: 'awaiting_input' }, isDraftContinuing: false, brainstormReady: true, setIsDraftContinuing: vi.fn(), setAiAssistanceLoading: vi.fn(), continueIdeaDraftJob: request, isIdeaDraftJobLostError: () => false, setIsEvidenceDialogOpen: vi.fn() })
+  const inFlight = { current: false }
+  const stateAtRequest = vi.fn()
+  const request = vi.fn(async () => {
+    stateAtRequest({ ...h.state }, inFlight.current)
+    throw new Error('NEW_FAILURE')
+  })
+  const handler = bind(expression('handleContinueIdeaDraft'), {
+    ...h.deps,
+    ideaDraftJob: { job_id: 'synthetic', status: 'awaiting_input' },
+    brainstormGenerationDisabled: false,
+    continueIdeaDraftInFlightRef: inFlight,
+    brainstormAttachmentLifecycle: { state: { preparing: false, attachment: null } },
+    brainstormReady: true,
+    setIsDraftContinuing: vi.fn(),
+    setAiAssistanceLoading: vi.fn(),
+    continueIdeaDraftJob: request,
+    isIdeaDraftJobLostError: () => false,
+    setIsEvidenceDialogOpen: vi.fn(),
+  })
   await handler('use_brainstorm')
   expect(request).toHaveBeenCalledOnce()
+  expect(stateAtRequest).toHaveBeenCalledWith({ chat: '', drawer: '' }, true)
   expect(h.state).toEqual({ chat: 'NEW_FAILURE', drawer: 'NEW_FAILURE' })
+  expect(inFlight.current).toBe(false)
 })
 it('retains existing successful send/edit boundary that clears chat feedback', () => {
   const send = expression('handleSendBrainstormMessage')

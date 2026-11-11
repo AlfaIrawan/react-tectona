@@ -56,7 +56,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Business Role',
         title: 'Komite Multi Finance',
         description: ['Sponsor ide, review,', 'dan pemilik prioritas'],
-        variant: 'business-role',
+        notationId: 'business-layer-role',
       },
       style: { width: 180 },
     },
@@ -70,7 +70,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Application Component',
         title: 'Idea Intelligence Engine',
         description: ['Pengayaan AI, scoring risiko,', 'dan orkestrasi rekomendasi'],
-        variant: 'application-component',
+        notationId: 'application-layer-component',
       },
       style: { width: 210 },
     },
@@ -84,7 +84,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Application Component',
         title: 'API Gateway',
         description: ['Enforcement kebijakan, authz,', 'routing, dan observability'],
-        variant: 'application-component',
+        notationId: 'application-layer-component',
       },
       style: { width: 210 },
     },
@@ -98,7 +98,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Application Service',
         title: 'API Rekomendasi AI',
         description: ['Permukaan eksekusi sinkron'],
-        variant: 'application-service',
+        notationId: 'application-layer-service',
       },
       style: { width: 210 },
     },
@@ -112,7 +112,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Application Service',
         title: 'Hub Integrasi',
         description: ['Orkestrasi API, event, dan batch'],
-        variant: 'application-service',
+        notationId: 'application-layer-service',
       },
       style: { width: 210 },
     },
@@ -126,7 +126,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Data Object',
         title: 'Paket Sinyal SLA KPR',
         description: ['Indikator historis dan real-time', 'keterlambatan persetujuan'],
-        variant: 'data-object',
+        notationId: 'application-layer-data',
       },
       style: { width: 210 },
     },
@@ -140,7 +140,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Data Object',
         title: 'Hasil Insight',
         description: ['Paket keputusan untuk', 'consumer downstream'],
-        variant: 'data-object',
+        notationId: 'application-layer-data',
       },
       style: { width: 210 },
     },
@@ -154,7 +154,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Technology Node',
         title: 'Platform CRM',
         description: ['Pertukaran data nasabah', 'dan status persetujuan'],
-        variant: 'technology-node',
+        notationId: 'technology-layer-node',
       },
       style: { width: 150 },
     },
@@ -168,7 +168,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Technology Node',
         title: 'Platform LOS/ERP',
         description: ['Publikasi event approval', 'dan konfirmasi finansial'],
-        variant: 'technology-node',
+        notationId: 'technology-layer-node',
       },
       style: { width: 150 },
     },
@@ -182,7 +182,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Technology Node',
         title: 'Data Platform',
         description: ['Konsolidasi histori SLA dan', 'dataset feature engineering'],
-        variant: 'technology-node',
+        notationId: 'technology-layer-node',
       },
       style: { width: 150 },
     },
@@ -196,7 +196,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Technology Node',
         title: 'Layanan Eksternal',
         description: ['Verifikasi dokumen eksternal', 'dan data pendukung risiko'],
-        variant: 'technology-node',
+        notationId: 'technology-layer-node',
       },
       style: { width: 150 },
     },
@@ -210,7 +210,7 @@ export function buildDefaultIntegrationArchitecture(): {
         stereotype: 'Technology Node',
         title: 'Workspace Delivery',
         description: ['Workspace eksekusi dan', 'target aksi downstream'],
-        variant: 'technology-node',
+        notationId: 'technology-layer-node',
       },
       style: { width: 150 },
     },
@@ -428,8 +428,8 @@ export function normalizeIntegrationNodesForCanvas(nodes: Node<ArchimateNodeData
     return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
   }
   const dimensions = (node: Node<ArchimateNodeData>) => ({
-    width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 200),
-    height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 90),
+    width: Number(node.width ?? node.style?.width ?? 200),
+    height: Number(node.height ?? node.style?.height ?? 90),
   })
 
   for (const candidateChild of repaired) {
@@ -485,8 +485,8 @@ export function normalizeIntegrationNodesForCanvas(nodes: Node<ArchimateNodeData
 }
 
 export function isIntegrationNodeContainable(node: Node<ArchimateNodeData>): boolean {
-  if (node.type === 'archimateBoundary') return node.data.arrange?.containable !== false
-  if (node.type === 'archimateElement') return node.data.arrange?.containable === true
+  if (node.type === 'archimateBoundary' && node.data.kind === 'boundary') return node.data.arrange?.containable !== false
+  if (node.type === 'archimateElement' && node.data.kind === 'element') return node.data.arrange?.containable === true
   return false
 }
 

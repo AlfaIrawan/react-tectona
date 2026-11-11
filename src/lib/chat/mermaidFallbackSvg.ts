@@ -108,6 +108,17 @@ export function processPlantUmlToMermaid(source: string): string | null {
   return lines.length > 2 ? lines.join('\n') : null
 }
 
+export function flowchartPreviewHeight(source: string): number {
+  const graph = parseFlowchartFallback(source)
+  if (!graph) return 280
+  const { height } = layoutFlowchartGraph(graph)
+  return Math.min(560, Math.max(260, height + 24))
+}
+
+export function canRenderAssistantFlowchart(source: string): boolean {
+  return parseFlowchartFallback(source) != null
+}
+
 export function parseFlowchartFallback(source: string): FallbackGraph | null {
   const text = cleanSource(source)
   if (!text) return null

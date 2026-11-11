@@ -2,7 +2,7 @@ import { readSelectedSourceReferences, supportsReadOnlyTechnicalPreview } from '
 
 import { getSession } from '@/auth/authService'
 import { createNotification, TECTONA_APP_ID } from '@/lib/api/notificationApi'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
@@ -10,50 +10,32 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { LucideIcon } from 'lucide-react'
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
   ArrowLeft,
   Bot,
-  Brain,
   Briefcase,
   Building2,
   Check,
   ChevronLeft,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   ClipboardList,
   Copy,
   Cpu,
-  CircleHelp,
   DollarSign,
   Download,
-  Eraser,
   ExternalLink,
   FileText,
   FileStack,
   Files,
   Gauge,
   GitBranch,
-  IndentDecrease,
-  IndentIncrease,
   ImageDown,
   Layers,
-  List,
-  PaintBucket,
-  ListChevronsUpDown,
-  ListOrdered,
   ListTree,
   MoveRight,
-  Type,
   RefreshCcw,
   Send,
   Sparkles,
-  Strikethrough,
-  Subscript,
-  Superscript,
-  Table,
   Boxes,
   Database,
   Target,
@@ -64,7 +46,6 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
-  Plus,
   Folder,
   FolderPlus,
   PencilLine,
@@ -104,7 +85,7 @@ import { useMobileLayout } from '@/hooks/useMobileLayout'
 import { useCommunicationViewport } from '@/hooks/useCommunicationViewport'
 import { MobileIdeaSectionNav } from '../components/MobileIdeaSectionNav'
 import { ideaDocsFolderErrorMessage } from '../lib/ideaDocsFolderError'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -155,14 +136,9 @@ import {
   type IdeaIntakeAnswer,
   type IdeaIntakeAnswers,
   type IdeaIntakeFollowup,
-  type RuntimeSummaryDecisionSignal,
-  type RuntimeSummaryKpiCard,
-  type RuntimeSummaryReadinessSignal,
   type RuntimeSummaryResponse,
-  type RuntimeSummaryStrategicFramingItem,
 } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
-  createProjectDocument,
   deleteDocument,
   getDocumentRevisionFillPayload,
   instantiateTemplateFromProject,
@@ -256,7 +232,6 @@ import { DiagramSyncIndicator, diagramSyncKey } from '@/modules/project-manageme
 import {
   extractScoringDimensions,
   getIdeaById,
-  patchIdea,
   getPersistentIdeaSummary,
   getPersistentIdeaIntegration,
   upsertPersistentIdeaIntegration,
@@ -274,7 +249,6 @@ import {
   type ScoringResponseApi,
   type IdeaSectionKey,
   upsertPersistentIdeaSummary,
-  toBackendStatus,
   toDisplayStatus,
   type IdeaApi,
   type IdeaSummaryPersistent,
@@ -447,12 +421,6 @@ type BrdTemplate = {
 }
 
 type PanelKey = IdeaPanelKey
-
-type BrdSection = {
-  key: string
-  title: string
-  content: string
-}
 
 const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request', 'Transformation', 'Issue']
 const WORKSPACE_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -711,87 +679,6 @@ function extractSupportingDocumentsFromText(text: string): string[] {
   return items.slice(0, 40)
 }
 
-const DEFAULT_SUMMARY: RuntimeSummaryResponse = {
-  summary_title: 'Sistem deteksi dini keterlambatan persetujuan KPR multi finance',
-  executive_brief:
-    'Inisiatif ini membangun lapisan peringatan dini berbasis AI yang menggabungkan sinyal SLA dokumen, beban reviewer, dan bottleneck dependensi lintas tim agar intervensi dapat dilakukan sebelum keterlambatan menjadi kritikal.',
-  core_pressure:
-    'Banyak kasus KPR melewati SLA karena sinyal keterlambatan terlambat terlihat dan prioritas eskalasi antar fungsi belum konsisten.',
-  strategic_response:
-    'Terapkan sinyal AI untuk memunculkan early warning dan rekomendasi aksi sehingga tim operasional bisa bertindak sebelum antrean memburuk.',
-  value_thesis:
-    'Menurunkan pelanggaran SLA persetujuan, mempercepat keputusan eskalasi, dan meningkatkan konsistensi layanan pada seluruh entitas multi finance.',
-  decision_signal: {
-    overall_score: '75',
-    decision_bias: 'Accelerate',
-    decision_bias_detail: 'Suitable for conversion into structured backlog and delivery planning.',
-    priority: 'Medium Priority',
-  },
-  board_note:
-    'AI assessment indicates strong business leverage with manageable delivery risk, making this proposal a credible candidate for executive-backed prioritization.',
-  kpi_cards: [
-    {
-      label: 'Penurunan Pelanggaran SLA',
-      value: '-20%',
-      detail: 'Target pengurangan kasus approval KPR yang melewati SLA.',
-    },
-    {
-      label: 'Lead Time Intervensi',
-      value: '+2.4w',
-      detail: 'Tambahan waktu respons sebelum keterlambatan masuk kategori kritikal.',
-    },
-    {
-      label: 'Cakupan Keputusan',
-      value: 'Lintas Entitas',
-      detail: 'Dampak lintas PMO, Operasi, Risk, Legal, dan Finance Governance.',
-    },
-    {
-      label: 'Postur Eksekusi',
-      value: 'Ready',
-      detail: 'Cukup matang untuk backlog shaping dan elaborasi BRD.',
-    },
-  ],
-  strategic_framing: [
-    {
-      title: 'Visibilitas Multi Finance',
-      detail: 'Mengkonsolidasikan sinyal keterlambatan persetujuan KPR dari berbagai sistem menjadi satu tampilan operasional.',
-    },
-    {
-      title: 'Disiplin Operasional',
-      detail: 'Meningkatkan kualitas pengendalian proses approval sebelum dampak keterlambatan meluas ke tahap pencairan.',
-    },
-    {
-      title: 'Kesesuaian Model Operasi',
-      detail: 'Selaras dengan alur intake terstruktur, konversi backlog, dan checkpoint governance yang sudah ada.',
-    },
-  ],
-  governance_readiness: {
-    title: 'Signals supporting next-stage approval',
-    badge: 'Reviewable',
-  },
-  readiness_signals: [
-    {
-        title: 'Business case ready for review',
-        detail: 'The value proposition narrative is aligned for cross-functional decision making.',
-      tone: 'positive',
-    },
-    {
-        title: 'Integration dependencies need early validation',
-        detail: 'Data source confirmation and delivery orchestration should be validated in the BRD phase.',
-      tone: 'warning',
-    },
-    {
-        title: 'Stakeholder adoption path is credible',
-        detail: 'PMO, Operations, Risk, Legal, and Finance Governance are clearly defined as target users.',
-      tone: 'positive',
-    },
-  ],
-  confidence_score: 0,
-  evidence: [],
-  warnings: [],
-  correlation_id: '',
-}
-
 const EMPTY_RUNTIME_SUMMARY: RuntimeSummaryResponse = {
   summary_title: '',
   executive_brief: '',
@@ -886,111 +773,6 @@ function weightedIntakeScore(idea: Idea): number | null {
   const { businessValue, effort, risk, roi } = idea.scoring
   return businessValue * 3 + roi * 3 + (11 - effort) * 2 + (11 - risk) * 2
 }
-
-function buildIdeaSummaryFallback(idea: Idea): RuntimeSummaryResponse {
-  const totalScore = weightedIntakeScore(idea)
-  const priority = totalScore == null
-    ? 'Pending scoring'
-    : totalScore >= 80
-      ? 'High Priority'
-      : totalScore >= 60
-        ? 'Medium Priority'
-        : 'Low Priority'
-  const decisionBias = totalScore == null
-    ? 'Awaiting scores'
-    : totalScore >= 80
-      ? 'Accelerate'
-      : totalScore >= 60
-        ? 'Shape First'
-        : 'Refine First'
-  const executionPosture = idea.scoring.effort <= 5 && idea.scoring.risk <= 5 ? 'Ready' : idea.scoring.effort <= 7 && idea.scoring.risk <= 7 ? 'Controlled' : 'Caution'
-  const workspaceLabel = idea.workspace?.trim() || 'Cross-functional'
-  const tagsLabel = idea.tags.length > 0 ? idea.tags.slice(0, 3).join(', ') : 'Priority initiative'
-
-  return {
-    summary_title: idea.title,
-    executive_brief: `This initiative focuses on ${idea.description.charAt(0).toLowerCase()}${idea.description.slice(1)}. The panel is currently using a local fallback generated from idea data because the AI runtime is not yet available.`,
-    core_pressure: `The main need is in the ${tagsLabel} area, with business pressure to improve decision quality, progress visibility, and execution consistency in a ${workspaceLabel} context.`,
-    strategic_response: 'Run structured backlog shaping, validate key dependencies, then continue to BRD elaboration so business narrative, execution controls, and implementation readiness stay aligned.',
-    value_thesis: `Expected value comes from improving business value ${idea.scoring.businessValue}/10 and ROI ${idea.scoring.roi}/10, while keeping effort ${idea.scoring.effort}/10 and risk ${idea.scoring.risk}/10 manageable.`,
-    decision_signal: {
-      overall_score: totalScore == null ? '' : String(totalScore),
-      decision_bias: decisionBias,
-      decision_bias_detail: totalScore == null
-        ? 'Intake scores are still empty, so no composite overall score is calculated.'
-        : 'This local fallback is generated directly from the active idea attributes and intake scores.',
-      priority,
-    },
-    board_note: `The local fallback summary indicates this proposal is currently in ${idea.status} status and still needs the AI runtime for richer evidence-first analysis.`,
-    kpi_cards: [
-      {
-        label: 'Business Value',
-        value: `${idea.scoring.businessValue}/10`,
-        detail: 'Business impact signal from current intake scoring.',
-      },
-      {
-        label: 'ROI Signal',
-        value: `${idea.scoring.roi}/10`,
-        detail: 'Indicates potential value leverage and payback.',
-      },
-      {
-        label: 'Execution Context',
-        value: workspaceLabel,
-        detail: 'Primary workspace or domain affected.',
-      },
-      {
-        label: 'Execution Posture',
-        value: executionPosture,
-        detail: 'Derived locally from available effort and risk scoring.',
-      },
-    ],
-    strategic_framing: [
-      {
-        title: 'Context from Intake',
-        detail: idea.description,
-      },
-      {
-        title: 'Current Stage',
-        detail: `The idea is currently at ${idea.status} stage and waiting for runtime enrichment for a fuller executive narrative.`,
-      },
-      {
-        title: 'Primary Tags',
-        detail: tagsLabel,
-      },
-    ],
-    governance_readiness: {
-      title: 'Signals supporting next-stage approval',
-      badge: totalScore != null && totalScore >= 60 ? 'Reviewable' : 'Needs Refinement',
-    },
-    readiness_signals: [
-      {
-        title: 'Intake data is available',
-        detail: 'Title, description, status, tags, and core scoring are available to generate a local fallback.',
-        tone: 'positive',
-      },
-      {
-        title: 'AI runtime is not yet synchronized',
-        detail: 'Evidence-first narrative is not available yet, so the panel temporarily uses a local idea-based summary.',
-        tone: 'warning',
-      },
-      {
-        title: 'Regeneration needed after runtime recovery',
-        detail: 'Run regenerate so summary, KPIs, and board note come from the live runtime.',
-        tone: 'warning',
-      },
-    ],
-    confidence_score: 0,
-    evidence: [],
-    warnings: [],
-    correlation_id: '',
-  }
-}
-
-const FALLBACK_KPI_CARDS: RuntimeSummaryKpiCard[] = DEFAULT_SUMMARY.kpi_cards
-const FALLBACK_DECISION_SIGNAL: RuntimeSummaryDecisionSignal = DEFAULT_SUMMARY.decision_signal
-const FALLBACK_STRATEGIC_FRAMING: RuntimeSummaryStrategicFramingItem[] = DEFAULT_SUMMARY.strategic_framing
-const FALLBACK_READINESS_SIGNALS: RuntimeSummaryReadinessSignal[] = DEFAULT_SUMMARY.readiness_signals
-const FALLBACK_GOVERNANCE_READINESS = DEFAULT_SUMMARY.governance_readiness
 
 type SummaryWarningTone = 'critical' | 'degraded' | 'info'
 
@@ -1227,71 +1009,6 @@ function parseScoringGenerationError(error: unknown): string {
   return 'Scoring analysis failed. Please try again.'
 }
 
-function stripCodeFence(value: string): string {
-  return value
-    .replace(/^```(?:json|markdown|text)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim()
-}
-
-function extractBalancedJsonObject(value: string, startIndex: number): string | null {
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = startIndex; i < value.length; i += 1) {
-    const ch = value[i]
-    if (inString) {
-      if (escaped) {
-        escaped = false
-      } else if (ch === '\\') {
-        escaped = true
-      } else if (ch === '"') {
-        inString = false
-      }
-      continue
-    }
-    if (ch === '"') {
-      inString = true
-      continue
-    }
-    if (ch === '{') depth += 1
-    if (ch === '}') {
-      depth -= 1
-      if (depth === 0) return value.slice(startIndex, i + 1)
-    }
-  }
-  return null
-}
-
-function extractJsonObject(value: string): string | null {
-  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fenced?.[1]) {
-    const fromFence = extractBalancedJsonObject(fenced[1].trim(), fenced[1].trim().indexOf('{'))
-    if (fromFence) return fromFence
-  }
-
-  const stripped = stripCodeFence(value)
-  if (!stripped) return null
-  const first = stripped.indexOf('{')
-  if (first === -1) return null
-  return extractBalancedJsonObject(stripped, first)
-}
-
-function isFallbackLikeRuntimeAnswer(answer: string, warnings: string[] = []): boolean {
-  const haystack = `${answer}\n${warnings.join('\n')}`.toLowerCase()
-  return [
-    'llm_fallback_used',
-    'llm_fallback_reason',
-    'upstream_auth',
-    'billing_disabled',
-    'primary_unavailable',
-    'saya dapat membantu',
-    'i can help',
-    'ringkasan keputusan',
-    'kesjapan eksekusi',
-  ].some((marker) => haystack.includes(marker))
-}
-
 function agentConfidencePercent(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     if (value >= 0 && value <= 1) return Math.round(value * 100)
@@ -1303,136 +1020,6 @@ function agentConfidencePercent(value: unknown): number {
     if (Number.isFinite(parsed)) return agentConfidencePercent(parsed)
   }
   return 0
-}
-
-function parseRuntimeScoringAnalysis(answer: string): RuntimeScoringAnalysis {
-  const jsonText = extractJsonObject(answer)
-  if (!jsonText) {
-    throw new Error('Scoring analysis did not return valid JSON.')
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(jsonText)
-  } catch {
-    try {
-      parsed = JSON.parse(jsonText.replace(/,\s*([}\]])/g, '$1'))
-    } catch {
-      throw new Error('Scoring analysis returned malformed JSON.')
-    }
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Scoring analysis payload is invalid.')
-  }
-
-  const payload = parsed as Record<string, unknown>
-  const status = payload.status === 'ok' ? 'ok' : payload.status === 'insufficient_data' ? 'insufficient_data' : null
-  if (!status) {
-    throw new Error('Scoring analysis status is missing.')
-  }
-
-  const toText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
-  const missingFields = Array.isArray(payload.missing_fields)
-    ? payload.missing_fields.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : []
-  const kpiCards = Array.isArray(payload.kpi_cards)
-    ? payload.kpi_cards
-        .map((item) => {
-          if (!item || typeof item !== 'object') return null
-          const record = item as Record<string, unknown>
-          const label = toText(record.label)
-          const value = toText(record.value)
-          const detail = toText(record.detail)
-          if (!label || !value || !detail) return null
-          return { label, value, detail }
-        })
-        .filter((item): item is RuntimeScoringCard => item !== null)
-    : []
-
-  return {
-    status,
-    summary_title: toText(payload.summary_title),
-    executive_brief: toText(payload.executive_brief),
-    priority: toText(payload.priority),
-    overall_score: toText(payload.overall_score),
-    score_posture: toText(payload.score_posture),
-    decision_bias: toText(payload.decision_bias),
-    decision_bias_detail: toText(payload.decision_bias_detail),
-    primary_strength: toText(payload.primary_strength),
-    primary_strength_detail: toText(payload.primary_strength_detail),
-    execution_posture: toText(payload.execution_posture),
-    execution_posture_detail: toText(payload.execution_posture_detail),
-    main_watchpoint: toText(payload.main_watchpoint),
-    main_watchpoint_detail: toText(payload.main_watchpoint_detail),
-    recommended_action: toText(payload.recommended_action),
-    commentary: toText(payload.commentary),
-    positive_signal_title: toText(payload.positive_signal_title),
-    positive_signal_detail: toText(payload.positive_signal_detail),
-    watchpoint_signal_title: toText(payload.watchpoint_signal_title),
-    watchpoint_signal_detail: toText(payload.watchpoint_signal_detail),
-    labels_id: payload.labels_id && typeof payload.labels_id === 'object' ? (payload.labels_id as Record<string, string>) : {},
-    missing_fields: missingFields,
-    kpi_cards: kpiCards,
-    confidence_score: agentConfidencePercent(
-      payload.analysis_confidence ?? payload.confidence_score ?? payload.confidence,
-    ) / 100,
-  }
-}
-
-function buildScoringAnalysisPrompt(idea: Idea): string {
-  const scoring = idea.latestScoring
-  const scoringDimensions = (scoring?.score_dimensions ?? []).map((dimension) => ({
-    key: dimension.key,
-    label: dimension.label,
-    score: dimension.score,
-    weight: dimension.weight ?? null,
-    reason: dimension.reason ?? null,
-  }))
-
-  const payload = {
-    idea: {
-      id: idea.id,
-      title: idea.title,
-      description: idea.description || null,
-      business_objective: idea.businessObjective ?? null,
-      scope_summary: idea.scopeSummary ?? null,
-      risk_summary: idea.riskSummary ?? null,
-      status: idea.status,
-      tags: idea.tags,
-    },
-    scoring: scoring
-      ? {
-          source_mode: scoring.source_mode,
-          total_score: scoring.total_score ?? null,
-          score_dimensions: scoringDimensions,
-          reason_codes: scoring.reason_codes ?? [],
-          explainability_summary: scoring.explainability_summary ?? null,
-          summary: scoring.summary ?? null,
-          scored_at: scoring.scored_at,
-        }
-      : null,
-  }
-
-  return [
-    'Anda adalah analis portfolio dan governance untuk Idea & Backlog.',
-    'Gunakan seluruh evidence yang bisa diakses runtime dari Tectona untuk ide ini, termasuk Idea & Backlog, Knowledge Base, dokumen terkait, dan context workspace/delivery bila tersedia.',
-    'Analisis HARUS tetap jujur. Jangan mengarang data, jangan pakai fallback, jangan menutup error dengan narasi umum.',
-    'Jika direct scoring belum tersedia, Anda tetap boleh menganalisis scoring posture dari evidence lintas Tectona yang berhasil Anda akses. Namun jika evidence nyata tetap tidak cukup, set status = "insufficient_data" dan sebutkan field atau evidence yang kurang di missing_fields.',
-    'Jika data cukup, set status = "ok" dan berikan analisa scoring yang tajam, singkat, dan bisa dipakai board.',
-    'Jangan menyebut model, fallback, prompt, atau instruksi internal.',
-    'Balas STRICT JSON tanpa markdown/code fence dengan schema ini:',
-    '{"status":"ok|insufficient_data","analysis_confidence":0.0,"summary_title":"","executive_brief":"","priority":"","overall_score":"","score_posture":"","decision_bias":"","decision_bias_detail":"","primary_strength":"","primary_strength_detail":"","execution_posture":"","execution_posture_detail":"","main_watchpoint":"","main_watchpoint_detail":"","recommended_action":"","commentary":"","positive_signal_title":"","positive_signal_detail":"","watchpoint_signal_title":"","watchpoint_signal_detail":"","missing_fields":[""],"kpi_cards":[{"label":"","value":"","detail":""}]}',
-    'Aturan:',
-    '- analysis_confidence: 0.0–1.0 keyakinan analisa berdasarkan evidence nyata, bukan kelengkapan form.',
-    '- overall_score boleh string kosong jika memang tidak ada angka score yang valid atau belum bisa dihitung jujur dari evidence.',
-    '- priority, score_posture, decision_bias, primary_strength, execution_posture, main_watchpoint harus sesuai data yang ada; jangan melebih-lebihkan.',
-    '- commentary maksimal 3 kalimat.',
-    '- kpi_cards maksimal 4 item.',
-    '',
-    'Data input:',
-    JSON.stringify(payload, null, 2),
-  ].join('\n')
 }
 
 function hasUsableScoringSource(idea: Idea): { ok: boolean; missingFields: string[] } {
@@ -1482,147 +1069,6 @@ const typeAccent: Record<IdeaType, string> = {
   Transformation: '#f59e0b',
   Issue: '#f43f5e',
 }
-
-const INITIAL_BRD_SECTIONS: BrdSection[] = [
-  {
-    key: 'document-control',
-    title: 'Kontrol dokumen',
-    content:
-      'Document ID: BRD-IDEA-3105. Versi: 0.9 (Draft). Pemilik: Komite Intake Multi Finance. Siklus review: mingguan hingga siap handoff ke eksekusi.',
-  },
-  {
-    key: 'revision-history',
-    title: 'Riwayat revisi',
-    content:
-      'v0.7: Draft awal dari konteks intake. v0.8: Menambah batasan integrasi lintas entitas multi finance. v0.9: Memperjelas kebutuhan fungsional dan kriteria penerimaan.',
-  },
-  {
-    key: 'stakeholders-raci',
-    title: 'Stakeholder dan RACI',
-    content:
-      'Business owner: Head Operasi Kredit Multi Finance. Accountable: Komite Intake Multi Finance. Responsible: Tim Delivery Tectona dan Tim Integrasi. Consulted: Risk, Legal, Finance Controller, Enterprise Architecture. Informed: PMO dan Lead Delivery domain.',
-  },
-  {
-    key: 'executive-summary',
-    title: 'Ringkasan eksekutif',
-    content:
-      'Inisiatif pembangunan sistem deteksi dini keterlambatan persetujuan KPR pada lingkungan multi finance agar keputusan intervensi dapat dilakukan lebih cepat, konsisten, dan terukur.',
-  },
-  {
-    key: 'business-background',
-    title: 'Latar belakang bisnis',
-    content:
-      'Saat ini sinyal keterlambatan persetujuan KPR tersebar di banyak sistem (dokumen, underwriting, legal, dan cabang), sehingga eskalasi sering terlambat dan SLA lintas entitas tidak stabil.',
-  },
-  {
-    key: 'business-case',
-    title: 'Business case dan hipotesis nilai',
-    content:
-      'Outcome utama: penurunan kasus lewat SLA, peningkatan kecepatan keputusan eskalasi, dan penurunan rework operasional. Nilai bisnis datang dari proses persetujuan yang lebih cepat dan konsisten di seluruh entitas multi finance.',
-  },
-  {
-    key: 'problem-statement',
-    title: 'Pernyataan masalah',
-    content:
-      'Pengambilan keputusan masih reaktif sehingga tindakan mitigasi terlambat, volume eskalasi meningkat, dan prediksi pencapaian SLA menjadi kurang andal.',
-  },
-  {
-    key: 'current-state',
-    title: 'Analisis kondisi saat ini (as-is)',
-    content:
-      'Pemantauan antrean dan SLA masih dilakukan manual di beberapa dashboard terpisah. Dampaknya adalah keterlambatan visibilitas, interpretasi tidak seragam antar tim, dan tidak ada standar waktu intervensi.',
-  },
-  {
-    key: 'target-state',
-    title: 'Kondisi target (to-be)',
-    content:
-      'Sistem terpadu berbasis AI menyediakan skor risiko keterlambatan, rekomendasi aksi prioritas, serta evidence audit yang terintegrasi dari intake ide hingga konversi backlog dan eksekusi.',
-  },
-  {
-    key: 'objectives',
-    title: 'Tujuan',
-    content:
-      'Menurunkan pelanggaran SLA persetujuan KPR, mempercepat respons eskalasi lintas fungsi, dan memberi rekomendasi proaktif untuk PMO, Operasi, Risk, dan Finance Governance.',
-  },
-  {
-    key: 'scope-in-out',
-    title: 'Ruang lingkup (in/out)',
-    content:
-      'In scope: akuisisi sinyal SLA, scoring risiko keterlambatan, dashboard operasional, dan orkestrasi eskalasi. Out of scope: perubahan inti transaksi LOS/ERP pada fase pertama.',
-  },
-  {
-    key: 'functional-requirements',
-    title: 'Kebutuhan fungsional',
-    content:
-      'Membangun layanan prediksi keterlambatan, aturan prioritas alert, dan alur keputusan eskalasi yang dapat dikonversi otomatis menjadi epic-story-task di workspace delivery.',
-  },
-  {
-    key: 'data-requirements',
-    title: 'Kebutuhan data',
-    content:
-      'Data wajib mencakup SLA dokumen, durasi approval per tahap, antrean reviewer, status dependensi legal/risk, dan histori outcome persetujuan KPR. Ambang kualitas data dan frekuensi refresh harus ditetapkan.',
-  },
-  {
-    key: 'reporting-requirements',
-    title: 'Kebutuhan pelaporan dan dashboard',
-    content:
-      'Dashboard wajib menampilkan tren skor risiko keterlambatan, faktor penyebab utama, unit/cabang terdampak, rekomendasi aksi, serta jejak audit waktu keputusan.',
-  },
-  {
-    key: 'non-functional-requirements',
-    title: 'Kebutuhan non-fungsional',
-    content:
-      'Mendukung akses API aman, rekomendasi yang dapat diaudit, latensi pembaruan mendekati real-time, dan ketersediaan layanan tinggi.',
-  },
-  {
-    key: 'security-compliance',
-    title: 'Kebutuhan keamanan dan kepatuhan',
-    content:
-      'Kontrol akses berbasis peran, auditability keputusan, serta pengelolaan data harus selaras dengan kebijakan enterprise, regulasi internal, dan standar kontrol audit.',
-  },
-  {
-    key: 'assumptions',
-    title: 'Asumsi',
-    content:
-      'Data historis SLA cukup representatif dan seluruh entitas multi finance bersedia mengadopsi checkpoint review yang seragam.',
-  },
-  {
-    key: 'dependencies',
-    title: 'Dependensi',
-    content:
-      'Ketergantungan utama: API Gateway, pipeline Data Platform, endpoint integrasi LOS/CRM/Legal, serta sinkronisasi workflow ke workspace eksekusi.',
-  },
-  {
-    key: 'constraints',
-    title: 'Batasan',
-    content:
-      'Rollout awal wajib memakai kontrak integrasi yang sudah ada dan cadence governance saat ini, tanpa perubahan skema transaksi inti pada fase pertama.',
-  },
-  {
-    key: 'risk-mitigation',
-    title: 'Risiko dan rencana mitigasi',
-    content:
-      'Risiko utama mencakup drift model, adopsi proses yang tidak seragam, dan latensi integrasi lintas sistem. Mitigasi dilakukan melalui monitoring model, rollout bertahap, dan fallback checkpoint manual.',
-  },
-  {
-    key: 'success-metrics',
-    title: 'Metrik keberhasilan (KPI)',
-    content:
-      'Target KPI: menurunkan kasus pelanggaran SLA persetujuan KPR sebesar 20%, meningkatkan ketepatan prioritas eskalasi, dan menambah waktu intervensi rata-rata sebelum kasus kritikal.',
-  },
-  {
-    key: 'acceptance-criteria',
-    title: 'Kriteria penerimaan',
-    content:
-      'Solusi dinyatakan diterima saat skor risiko terhasilkan stabil, rekomendasi dapat ditelusuri end-to-end, dashboard dipakai pada review rutin, dan perbaikan KPI baseline terbukti terukur.',
-  },
-  {
-    key: 'implementation-plan',
-    title: 'Rencana implementasi dan rollout',
-    content:
-      'Fase 1: integrasi data SLA lintas sistem dan baseline scoring. Fase 2: dashboard operasional dan workflow eskalasi rekomendasi. Fase 3: adopsi lintas entitas multi finance dan optimasi berkelanjutan.',
-  },
-]
 
 function confidenceClass(value: number) {
   if (value >= 90) return 'text-emerald-700 bg-emerald-50 border-emerald-200'
@@ -1719,16 +1165,6 @@ function buildScoreDataFromIdea(idea: Idea): ScoringDimensionRow[] {
       barTrackClass: theme.barTrackClass,
     }
   })
-}
-
-function scoringBarFill(item: ScoringDimensionRow, hasNumericScoring: boolean): string {
-  if (hasNumericScoring && item.score > 0) return item.fill
-  return item.fillMuted
-}
-
-function scoringBarWidth(item: ScoringDimensionRow, hasNumericScoring: boolean): string {
-  if (hasNumericScoring && item.score > 0) return `${(item.score / 10) * 100}%`
-  return '12%'
 }
 
 type ScoringEvidenceItem = {
@@ -1959,27 +1395,20 @@ function buildCostBenefitQualitativeLevers(
 function buildCostBenefitScenarioBands(
   benefitAnalysis: GenerateBenefitAnalysisResponse | null,
 ): BenefitScenarioBand[] {
-  const extended = benefitAnalysis as GenerateBenefitAnalysisResponse & {
-    scenarios?: Array<{
-      name?: string
-      scenario_name?: string
-      roi_percentage?: number
-      description?: string
-      label?: string
-    }>
-  }
-
-  const scenarios = extended?.scenarios ?? []
-  if (scenarios.length === 0) return []
-
-  return scenarios.slice(0, 3).map((scenario, index) => {
-    const name = scenario.name || scenario.scenario_name || scenario.label || `Scenario ${index + 1}`
-    const roi = scenario.roi_percentage
-    return {
+  return (benefitAnalysis?.scenarios ?? []).slice(0, 3).flatMap((scenario, index) => {
+    if (!scenario || typeof scenario !== 'object') return []
+    const name = [
+      'name' in scenario ? scenario.name : undefined,
+      'scenario_name' in scenario ? scenario.scenario_name : undefined,
+      'label' in scenario ? scenario.label : undefined,
+    ].find((value): value is string => typeof value === 'string' && value.length > 0)
+      ?? `Scenario ${index + 1}`
+    const roi = 'roi_percentage' in scenario ? scenario.roi_percentage : undefined
+    return [{
       name,
       roiLabel: typeof roi === 'number' && roi > 0 ? `${roi.toFixed(0)}% ROI (hipotesis)` : 'Qualitative band',
-      description: scenario.description,
-    }
+      description: 'description' in scenario && typeof scenario.description === 'string' ? scenario.description : undefined,
+    }]
   })
 }
 
@@ -2647,90 +2076,6 @@ function IdeaDocSourceDiagramPreview({ diagram }: { diagram: ExtractedProcessDia
   )
 }
 
-function CollapsiblePanel({
-  panelKey,
-  title,
-  description,
-  isOpen,
-  onToggle,
-  showToggle = true,
-  confidence,
-  statusBadge,
-  headerActions,
-  fillHeight = false,
-  immersive = false,
-  children,
-}: {
-  panelKey: PanelKey
-  title: string
-  description: string
-  isOpen: boolean
-  onToggle: (key: PanelKey) => void
-  showToggle?: boolean
-  confidence?: number
-  statusBadge?: { label: string; className: string }
-  headerActions?: React.ReactNode
-  fillHeight?: boolean
-  immersive?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <Card
-      className={cn(
-        'liquid-glass-enterprise-panel rounded-2xl border-border/30 shadow-sm',
-        fillHeight && 'flex h-full min-h-0 flex-col overflow-hidden',
-        immersive && 'overflow-hidden',
-      )}
-    >
-      {!immersive && (
-      <CardHeader className={cn('pb-3', fillHeight && 'shrink-0')}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base leading-tight text-slate-900">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border/40 bg-white/90">
-                <Sparkles className="h-3 w-3 text-slate-600" />
-              </span>
-              {title}
-            </CardTitle>
-            <CardDescription className="mt-0.5 leading-tight">{description}</CardDescription>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {statusBadge ? (
-              <Badge variant="outline" className={cn('text-[10px] font-semibold', statusBadge.className)}>
-                {statusBadge.label}
-              </Badge>
-            ) : typeof confidence === 'number' ? (
-              <Badge variant="outline" className={cn('text-[10px] font-semibold', confidenceClass(confidence))}>
-                Confidence {confidence}%
-              </Badge>
-            ) : null}
-            {headerActions}
-            {showToggle && (
-              <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => onToggle(panelKey)}>
-                {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </Button>
-            )}
-          </div>
-        </div>
-      </CardHeader>
-      )}
-      {isOpen && (
-        <CardContent
-          className={cn(
-            immersive && 'min-h-0 flex-1 overflow-hidden p-0',
-            !immersive &&
-              fillHeight &&
-              'min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
-          )}
-        >
-          {children}
-        </CardContent>
-      )}
-    </Card>
-  )
-}
-
 const IDEA_DETAIL_SIDEBAR_STORAGE_KEY = 'idea-detail-context-sidebar-collapsed'
 const IDEA_DETAIL_BRD_POLISH_MODE_STORAGE_KEY = 'idea-detail-brd-polish-mode'
 
@@ -3244,45 +2589,6 @@ function ActionControlGroupCard({
   )
 }
 
-function BrdTemplateHeader({
-  ideaId,
-  title,
-  reviewer,
-  priority,
-  version,
-  page,
-  totalPages,
-}: {
-  ideaId: string
-  title: string
-  reviewer: string
-  priority: string
-  version: string
-  page: number
-  totalPages: number
-}) {
-  return (
-    <div className="border border-slate-500">
-      <div className="grid grid-cols-[1.15fr_2fr] border-b border-slate-500">
-        <div className="border-r border-slate-500 px-2 py-1 text-[10px] leading-4 text-slate-700 font-['Arial',sans-serif]">
-          <p>BRD #: {ideaId}</p>
-          <p>Priority: {priority}</p>
-          <p>Date: {new Date().toLocaleDateString('en-GB')}</p>
-          <p>Version: {version}</p>
-        </div>
-        <div className="px-2 py-1 text-center font-['Arial',sans-serif]">
-          <p className="text-[28px] font-semibold leading-8 text-slate-700">Business Requirement Document</p>
-          <p className="mt-1 text-[14px] leading-5 text-sky-700">
-            System Name: <span className="font-semibold">{title}</span>
-          </p>
-        </div>
-      </div>
-      <div className="px-2 py-1 text-right text-[10px] text-slate-600 font-['Arial',sans-serif]">
-        Page {page} of {totalPages} {String.fromCharCode(0xb7)} Owner: {reviewer}
-      </div>
-    </div>
-  )
-}
 /*
 function BrdCanvasText({
   value,
@@ -3846,12 +3152,7 @@ export function IdeaDetailPage() {
   const [identityUserNameById, setIdentityUserNameById] = useState<Record<string, string>>({})
   const [reviewerMemberships, setReviewerMemberships] = useState<WacMembershipDto[]>([])
   const [isReviewerOptionsLoading, setIsReviewerOptionsLoading] = useState(false)
-  const [reviewerOptionsError, setReviewerOptionsError] = useState('')
-  const [isMetaPatchSaving, setIsMetaPatchSaving] = useState(false)
-  const [metaPatchInlineError, setMetaPatchInlineError] = useState<string | null>(null)
-  const [metaPatchLastSavedAt, setMetaPatchLastSavedAt] = useState<Date | null>(null)
-  const lastMetaToastRef = useRef<{ key: string; at: number } | null>(null)
-
+  const [, setReviewerOptionsError] = useState('')
   const { options: userWorkspaceOptions } = useUserWorkspaceOptions()
 
   const [brdPages, setBrdPages] = useState<string[]>([''])
@@ -4149,7 +3450,6 @@ export function IdeaDetailPage() {
   const brdContentNormalizationRef = useRef(false)
   const [brdHeaders, setBrdHeaders] = useState<string[]>([''])
   const brdHeadersRef = useRef<string[]>([''])
-  const [editingHeaderIndex, setEditingHeaderIndex] = useState<number | null>(null)
   // Use the same minimum as the ResizeObserver clamp to avoid a one-time re-render
   // that can steal the caret on the first keystroke in the body.
   const [brdHeaderHeights, setBrdHeaderHeights] = useState<number[]>([18])
@@ -4161,19 +3461,18 @@ export function IdeaDetailPage() {
   const brdWordCountRaf = useRef<number | null>(null)
   const brdWordCountUpdateFnRef = useRef<(count: number) => void>(() => {})
   const [brdActivePageIndex, setBrdActivePageIndex] = useState(0)
-  const [brdZoom, setBrdZoom] = useState(0.9)
+  const [, setBrdZoom] = useState(0.9)
   const brdViewportRef = useRef<HTMLDivElement | null>(null)
-  const [brdMaxZoomFit, setBrdMaxZoomFit] = useState(1.5)
-  const [brdFontFamily, setBrdFontFamily] = useState<"Aptos" | "Arial" | "Calibri" | "Times New Roman">('Aptos')
-  const [brdFontSize, setBrdFontSize] = useState<11 | 12 | 14 | 15 | 16 | 18>(12)
-  const [brdLineHeight, setBrdLineHeight] = useState<1.5 | 1.7 | 2>(1.7)
-  const [brdLayoutPolishMode, setBrdLayoutPolishMode] = useState<'conservative' | 'aggressive'>(() => {
+  const [, setBrdMaxZoomFit] = useState(1.5)
+  const [brdFontFamily] = useState<"Aptos" | "Arial" | "Calibri" | "Times New Roman">('Aptos')
+  const [brdFontSize] = useState<11 | 12 | 14 | 15 | 16 | 18>(12)
+  const [brdLineHeight] = useState<1.5 | 1.7 | 2>(1.7)
+  const [brdLayoutPolishMode] = useState<'conservative' | 'aggressive'>(() => {
     const raw = localStorage.getItem(IDEA_DETAIL_BRD_POLISH_MODE_STORAGE_KEY)
     return raw === 'conservative' || raw === 'aggressive' ? raw : 'aggressive'
   })
   const brdLastFocusedPage = useRef<number>(0)
   const [brdTextColor, setBrdTextColor] = useState('#0f172a')
-  const brdTextColorInputRef = useRef<HTMLInputElement | null>(null)
   const brdTextColorButtonRef = useRef<HTMLButtonElement | null>(null)
   const [brdTextColorMenuOpen, setBrdTextColorMenuOpen] = useState(false)
   const brdTextColorMenuRef = useRef<HTMLDivElement | null>(null)
@@ -4221,7 +3520,7 @@ export function IdeaDetailPage() {
   const [brdExportOpen, setBrdExportOpen] = useState(false)
   const brdExportMenuRef = useRef<HTMLDivElement | null>(null)
   const brdExportButtonRef = useRef<HTMLButtonElement | null>(null)
-  const [brdExportMenuPos, setBrdExportMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const [, setBrdExportMenuPos] = useState<{ top: number; right: number } | null>(null)
   const BRD_TEMPLATE_STORAGE_KEY = 'tectona_brd_templates_v1'
   const BRD_TEMPLATE_SELECTED_KEY = 'tectona_brd_templates_selected_v1'
   const defaultBrdTemplates: BrdTemplate[] = useMemo(
@@ -4239,9 +3538,7 @@ export function IdeaDetailPage() {
   )
   const [brdTemplates, setBrdTemplates] = useState<BrdTemplate[]>(defaultBrdTemplates)
   const [brdSelectedTemplateId, setBrdSelectedTemplateId] = useState<string>('blank')
-  const [manageBrdTemplatesOpen, setManageBrdTemplatesOpen] = useState(false)
-  const [editingTemplate, setEditingTemplate] = useState<BrdTemplate | null>(null)
-  const [collapsed, setCollapsed] = useState<Record<PanelKey, boolean>>({
+  const [, setCollapsed] = useState<Record<PanelKey, boolean>>({
     summary: true,
     scoring: true,
     impact: true,
@@ -4283,8 +3580,8 @@ export function IdeaDetailPage() {
     conversion: 0,
     document: 0,
   })
-  const isBrdGenerating = regenerating.brd
-  const [isBrdRenderLocked, setIsBrdRenderLocked] = useState(false)
+  const [isBrdGenerating, setIsBrdGenerating] = useState(false)
+  const [isBrdRenderLocked] = useState(false)
   const isBrdRenderLockedRef = useRef(false)
 
   const isUnknownIdentityToken = useCallback((value: string | null | undefined) => {
@@ -4674,11 +3971,6 @@ export function IdeaDetailPage() {
     return [...ids]
   }, [reviewerMemberships])
 
-  const reviewerDisplayName = useMemo(
-    () => resolveIdentityDisplayName(idea.reviewer),
-    [idea.reviewer, resolveIdentityDisplayName]
-  )
-
   const [resolvedWorkspaceName, setResolvedWorkspaceName] = useState<string | null>(null)
 
   useEffect(() => {
@@ -4746,13 +4038,14 @@ export function IdeaDetailPage() {
     confidence_score: 0.89,
     warnings: [],
   })
-  const [brdWarnings, setBrdWarnings] = useState<string[]>([])
-  const [brdLastRefreshedAt, setBrdLastRefreshedAt] = useState<Date | null>(null)
+  const [, setBrdWarnings] = useState<string[]>([])
+  const [, setBrdLastRefreshedAt] = useState<Date | null>(null)
 
   // Loader for BRD (mirrors loadRuntimeSummary)
   const loadRuntimeBrd = useCallback(async (
     options: { forceRefresh?: boolean } = {},
   ) => {
+    setIsBrdGenerating(true)
     try {
       const response = await generateIdeaBrd({
         idea_id: idea.id,
@@ -4801,6 +4094,8 @@ export function IdeaDetailPage() {
       setBrdLastRefreshedAt(new Date())
       setConfidence((prev) => ({ ...prev, brd: 72 }))
       return fallback
+    } finally {
+      setIsBrdGenerating(false)
     }
   }, [
     idea.description,
@@ -4840,7 +4135,7 @@ export function IdeaDetailPage() {
   const runtimeIntegrationAnalysisRef = useRef(runtimeIntegrationAnalysis)
   runtimeIntegrationAnalysisRef.current = runtimeIntegrationAnalysis
   const [integrationLoaded, setIntegrationLoaded] = useState(false)
-  const [integrationMissing, setIntegrationMissing] = useState(false)
+  const [, setIntegrationMissing] = useState(false)
   const [integrationWarnings, setIntegrationWarnings] = useState<string[]>([])
   const [integrationGenerationError, setIntegrationGenerationError] = useState<string | null>(null)
   const [integrationBootstrapRecord, setIntegrationBootstrapRecord] = useState<IntegrationGraphRecord | null>(null)
@@ -4882,7 +4177,6 @@ export function IdeaDetailPage() {
     [],
   )
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
-  const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
   // What the integration view still misses: elements without a relation, read live from the canvas,
   // and the generator's other checks (data owner, step performer) while the view is unedited.
   const integrationChecks = useMemo(() => {
@@ -5097,7 +4391,7 @@ export function IdeaDetailPage() {
       : existing?.submittedBy && existing.submittedBy !== actor.id
         ? [existing.submittedBy]
         : []
-    const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+    const linkUrl = workspaceScopedPath(tenant?.slug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
     void Promise.allSettled(recipients.map((userId) => createNotification({
       app_id: TECTONA_APP_ID,
       user_id: userId,
@@ -5115,7 +4409,7 @@ export function IdeaDetailPage() {
       created_from: 'tectona-architecture-review',
     })))
     setDiagramStudio((studio) => studio?.diagramKey === `c4-level-${level === 'L1' ? '1' : '2'}` ? { ...studio, savedGraph: nextAnalysis.canvasGraph, diagramSource: nextAnalysis.plantumlSource } : studio)
-  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
+  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.slug])
   const saveNonC4ArchitectureReview = useCallback(async (
     target: 'integration' | 'bpmn-high',
     action: C4ReviewAction,
@@ -5145,8 +4439,8 @@ export function IdeaDetailPage() {
       throw new Error('Only the person who submitted this version can cancel its review.')
     }
     const source = target === 'integration'
-      ? current.plantumlSource
-      : current.canvasGraph?.source || current.bpmnXml
+      ? runtimeIntegrationAnalysisRef.current.plantumlSource
+      : bpmnHighAnalysisRef.current.canvasGraph?.source || bpmnHighAnalysisRef.current.bpmnXml
     const review = buildArchitectureReview(existing, action, actor, trimmedComment, { source })
     if (target === 'integration') {
       const next = { ...runtimeIntegrationAnalysisRef.current, architectureReview: review }
@@ -5171,7 +4465,7 @@ export function IdeaDetailPage() {
     const recipients = action === 'submit'
       ? architectureReviewerIds.filter((id) => id !== actor.id)
       : existing?.submittedBy && existing.submittedBy !== actor.id ? [existing.submittedBy] : []
-    const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+    const linkUrl = workspaceScopedPath(tenant?.slug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
     void Promise.allSettled(recipients.map((userId) => createNotification({
       app_id: TECTONA_APP_ID,
       user_id: userId,
@@ -5183,7 +4477,7 @@ export function IdeaDetailPage() {
       created_by: actor.id,
       created_from: 'tectona-architecture-review',
     })))
-  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
+  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.slug])
   const c4Level1Preview = usePlantUmlPngPreview(
     c4Level1Analysis.plantumlSource ? normalizeC4PlantUml(c4Level1Analysis.plantumlSource, 'L1') : null,
   )
@@ -5268,7 +4562,7 @@ export function IdeaDetailPage() {
   const processDetailsByKeyRef = useRef(processDetailsByKey)
   bpmnHighAnalysisRef.current = bpmnHighAnalysis
   processDetailsByKeyRef.current = processDetailsByKey
-  const [isFreshIdea, setIsFreshIdea] = useState(() => {
+  const [, setIsFreshIdea] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
       const isFresh = !!window.sessionStorage.getItem(`tectona-fresh-idea-${initialIdea.id}`)
@@ -5326,7 +4620,6 @@ export function IdeaDetailPage() {
     ].join('\n')
   }
 
-  const [brdSections, setBrdSections] = useState<BrdSection[]>(INITIAL_BRD_SECTIONS)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const stored = localStorage.getItem(IDEA_DETAIL_SIDEBAR_STORAGE_KEY)
     return stored ? JSON.parse(stored) : false
@@ -5649,15 +4942,6 @@ export function IdeaDetailPage() {
   ])
   useTectonaPageContextReporter(location.pathname, ideaPageContext)
 
-  const metaSavedAtLabel = useMemo(() => {
-    if (!metaPatchLastSavedAt) return null
-    return metaPatchLastSavedAt.toLocaleTimeString('id-ID', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-  }, [metaPatchLastSavedAt])
-
   const reviewerOptions = useMemo((): IdeaReviewerOption[] => {
     const dedup = new Map<string, IdeaReviewerOption>()
     for (const row of reviewerMemberships) {
@@ -5888,6 +5172,7 @@ export function IdeaDetailPage() {
     runtimeUserId,
     idea.tags,
     idea.title,
+    idea.version,
     idea.workspace,
   ])
 
@@ -5912,7 +5197,7 @@ export function IdeaDetailPage() {
           // New official scores (an approved "Score this idea"): the AI readout
           // was written without them, so it is regenerated from the scores.
           if ((api.latest_scoring?.scored_at ?? null) !== (idea.latestScoring?.scored_at ?? null)) {
-            void loadRuntimeScoringRef.current(refreshed, { forceRefresh: true })
+            void loadRuntimeScoringRef.current(refreshed)
           }
           const persistentSummary = await getPersistentIdeaSummary(idea.id)
           if (persistentSummary) {
@@ -5956,10 +5241,7 @@ export function IdeaDetailPage() {
     }
   }, [idea.id])
 
-  const loadRuntimeScoring = useCallback(async (
-    sourceIdea: Idea = idea,
-    options: { forceRefresh?: boolean } = {},
-  ) => {
+  const loadRuntimeScoring = useCallback(async (sourceIdea: Idea = idea) => {
     setScoringGenerationError(null)
 
     const scoringSourceCheck = hasUsableScoringSource(sourceIdea)
@@ -6919,7 +6201,7 @@ export function IdeaDetailPage() {
             forceRefresh: wasFreshIdea,
             autoGenerateIfMissing: wasFreshIdea,
           }),
-          loadRuntimeScoringRef.current(hydratedIdea, { forceRefresh: wasFreshIdea }),
+          loadRuntimeScoringRef.current(hydratedIdea),
           loadRuntimeBenefitRef.current(hydratedIdea),
           loadRuntimeConversionRef.current(hydratedIdea),
           loadRuntimeIntegrationRef.current(hydratedIdea),
@@ -7024,18 +6306,10 @@ export function IdeaDetailPage() {
     }
   }, [idea.scoring, totalScore])
 
-  const brdContentLookup = useMemo<Record<string, string>>(() => {
-    return brdSections.reduce<Record<string, string>>((acc, section) => {
-      acc[section.key] = section.content
-      return acc
-    }, {})
-  }, [brdSections])
-
   const scoreData = useMemo(() => buildScoreDataFromIdea(idea), [idea])
   const hasNumericScoring = scoreData.some((item) => item.score > 0)
 
   const scoringEvidenceItems = useMemo(() => buildScoringEvidenceChecklist(idea), [idea])
-  const showScoringFrameworkDraft = !scoringLoaded || scoringMissing
   const scoringPendingReason = hasNumericScoring
     ? null
     : `Awaiting evidence · ${scoringEvidenceItems.filter((item) => item.complete).length}/${scoringEvidenceItems.length}`
@@ -7212,7 +6486,7 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [brainstormProcessDiagrams, idea.id, diagramSourcesReloadKey])
+  }, [brainstormProcessDiagrams, idea.id, diagramSourcesReloadKey, tenant?.workspaceId])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -7715,6 +6989,7 @@ export function IdeaDetailPage() {
   }, [isConversionPanelFullscreen])
 
   const ideaDocCurrentFolder = ideaDocFolderStack[ideaDocFolderStack.length - 1] ?? null
+  const ideaDocCurrentFolderId = ideaDocCurrentFolder?.id
   const isIdeaDocAtProjectRoot = ideaDocFolderStack.length <= 1
   const ideaDocsInCurrentFolder = useMemo(() => {
     if (!ideaDocCurrentFolder) return ideaGeneratedDocs
@@ -7833,10 +7108,10 @@ export function IdeaDetailPage() {
   }, [activePanel, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject, ideaDocsLoadedScope, ideaDocsFolderSignature, resolvedIdeaId, ideaDocFolderRetry])
 
   useEffect(() => {
-    if (activePanel !== 'document' || !ideaDocCurrentFolder) return
+    if (activePanel !== 'document' || ideaDocCurrentFolderId === undefined) return
     let cancelled = false
     void fetchDocumentFolders({
-      parent_id: ideaDocCurrentFolder.id,
+      parent_id: ideaDocCurrentFolderId,
       page: 1,
       page_size: 100,
     })
@@ -7849,7 +7124,7 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [activePanel, ideaDocCurrentFolder?.id])
+  }, [activePanel, ideaDocCurrentFolderId])
 
   const openIdeaDocSubfolder = useCallback((folder: DocumentFolder) => {
     setIdeaDocFolderStack((prev) => [...prev, { id: folder.id, name: folder.name }])
@@ -8089,7 +7364,7 @@ export function IdeaDetailPage() {
     } catch (error) {
       addToast({ title: 'Revisi approved belum dapat dimuat', description: error instanceof Error ? error.message : '', variant: 'error' })
     }
-  }, [addToast, idea.description, idea.id, idea.title, ideaDocTemplates, refreshIdeaDocWorkflowGate])
+  }, [addToast, idea.description, idea.id, idea.title, idea.workspace, ideaDocTemplates, refreshIdeaDocWorkflowGate])
 
   // A notification or email about a comment links here with ?generate=<template>&part=<key>: open
   // the Generate dialog on that template and select the part (its comments show beside it).
@@ -8401,7 +7676,6 @@ export function IdeaDetailPage() {
     addToast,
     currentUserDisplayName,
     currentUserId,
-    idea.description,
     idea.id,
     idea.title,
     idea.workspace,
@@ -8649,245 +7923,6 @@ export function IdeaDetailPage() {
     isBrdRenderLockedRef.current = isBrdRenderLocked
   }, [isBrdRenderLocked])
 
-  const togglePanel = (key: PanelKey) => {
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
-  }
-
-  const regeneratePanel = (key: PanelKey) => {
-    setRegenerating((prev) => ({ ...prev, [key]: true }))
-
-    if (key === 'summary') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          await loadRuntimeSummary('llm_first', { forceRefresh: true, autoGenerateIfMissing: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'scoring') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current idea snapshot if refresh fails
-          }
-          await loadRuntimeScoringRef.current(refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'costBenefit') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          await loadRuntimeBenefitRef.current(idea)
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          if (elapsedMs < 700) {
-            await new Promise((resolve) => window.setTimeout(resolve, 700 - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'conversion') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          await loadRuntimeConversionRef.current(idea)
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          if (elapsedMs < 700) {
-            await new Promise((resolve) => window.setTimeout(resolve, 700 - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'integration') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current snapshot
-          }
-          await loadRuntimeIntegrationRef.current(refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'c4Level1' || key === 'c4Level2') {
-      const level: C4ArchitectureLevel = key === 'c4Level1' ? 'L1' : 'L2'
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current snapshot
-          }
-          await loadRuntimeC4ArchitectureRef.current(level, refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'bpmnHigh') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current snapshot
-          }
-          await loadRuntimeProcessDiagramRef.current(refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    window.setTimeout(() => {
-      setConfidence((prev) => {
-        const next = Math.min(98, Math.max(70, prev[key] + (Math.random() > 0.5 ? 1 : -1) * 3))
-        return { ...prev, [key]: next }
-      })
-      setRegenerating((prev) => ({ ...prev, [key]: false }))
-    }, 900)
-  }
-
-  const addMetaToast = useCallback((
-    key: string,
-    toast: { variant: 'success' | 'error'; title: string; description: string }
-  ) => {
-    const now = Date.now()
-    const recent = lastMetaToastRef.current
-    if (recent && recent.key === key && now - recent.at < 1200) return
-    lastMetaToastRef.current = { key, at: now }
-    addToast(toast)
-  }, [addToast])
-
-  const persistIdeaMetaPatch = useCallback(async (patch: { status?: IdeaStatus; reviewer?: string }) => {
-    setIsMetaPatchSaving(true)
-    const baseVersion = idea.version
-    try {
-      const updated = await patchIdea(idea.id, {
-        status_code: patch.status ? toBackendStatus(patch.status) : undefined,
-        assignee_id: patch.reviewer,
-        version: baseVersion,
-      })
-      setIdea(ideaFromApi(updated))
-      return { ok: true as const }
-    } catch (firstError) {
-      try {
-        const latest = await getIdeaById(idea.id)
-        const retried = await patchIdea(idea.id, {
-          status_code: patch.status ? toBackendStatus(patch.status) : undefined,
-          assignee_id: patch.reviewer,
-          version: latest.version,
-        })
-        setIdea(ideaFromApi(retried))
-        return { ok: true as const }
-      } catch (retryError) {
-        console.warn('[IdeaDetail] failed to persist status/reviewer update', retryError || firstError)
-        const message =
-          retryError instanceof Error
-            ? retryError.message
-            : firstError instanceof Error
-              ? firstError.message
-              : 'Failed to persist idea updates.'
-        return { ok: false as const, message }
-      }
-    } finally {
-      setIsMetaPatchSaving(false)
-    }
-  }, [idea.id, idea.version])
-
-  const quickUpdateReviewer = (reviewer: string) => {
-    if (isMetaPatchSaving || reviewer === idea.reviewer) return
-    const previousReviewer = idea.reviewer
-    setMetaPatchInlineError(null)
-    setIdea((prev) => ({ ...prev, reviewer }))
-    void persistIdeaMetaPatch({ status: idea.status, reviewer }).then((result) => {
-      if (result.ok) {
-        setMetaPatchLastSavedAt(new Date())
-        setMetaPatchInlineError(null)
-        addMetaToast('reviewer:ok', {
-          variant: 'success',
-          title: 'Reviewer updated',
-          description: 'Reviewer assignment has been saved.',
-        })
-        return
-      }
-      setIdea((prev) => ({ ...prev, reviewer: previousReviewer }))
-      setMetaPatchInlineError(result.message)
-      addMetaToast('reviewer:error', {
-        variant: 'error',
-        title: 'Reviewer update failed',
-        description: result.message,
-      })
-    })
-  }
-
   const updateActivePanelActionGroups = useCallback((groups: IdeaActionControlGroup[]) => {
     persistActionControlStore({
       ...actionControlStore,
@@ -9097,12 +8132,6 @@ export function IdeaDetailPage() {
     tenant?.orgId,
   ])
 
-  const updateBrdSection = (sectionKey: string, nextContent: string) => {
-    setBrdSections((prev) =>
-      prev.map((section) => (section.key === sectionKey ? { ...section, content: nextContent } : section))
-    )
-  }
-
   const navigateToPanel = (panel: PanelKey) => {
     userChosePanelRef.current = true
     appliedInitialPanelForIdea.current = idea.id
@@ -9113,18 +8142,12 @@ export function IdeaDetailPage() {
   }
 
   const BRD_PAGE_WIDTH_PX = 794
-  const BRD_PAGE_HEIGHT_PX = 1123
-  const BRD_PAGE_PADDING_X_PX = 64 * 2
-  const BRD_CONTENT_WIDTH_PX = BRD_PAGE_WIDTH_PX - BRD_PAGE_PADDING_X_PX
   const BRD_CONTENT_HEIGHT_PX = 995
-  const BRD_HEADER_TOP_PX = 24
   const BRD_HEADER_BODY_GAP_PX = 6
   const BRD_BOTTOM_PADDING_PX = 40 // Safety margin at bottom to prevent overflow
   const BRD_ZOOM_MIN = 0.5
   const BRD_ZOOM_MAX = 1.5
   const BRD_ZOOM_STEP = 0.05
-  const BRD_PAGE_GAP_PX = 24
-
   useEffect(() => {
     brdPagesRef.current = brdPages
   }, [brdPages])
@@ -9143,7 +8166,6 @@ export function IdeaDetailPage() {
       brdHeadersRef.current = next
       return next
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brdPages.length])
 
   useEffect(() => {
@@ -9160,7 +8182,6 @@ export function IdeaDetailPage() {
       brdHeaderHeightsRef.current = next
       return next
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brdPages.length])
 
   useEffect(() => {
@@ -9178,7 +8199,6 @@ export function IdeaDetailPage() {
     recalc()
     window.addEventListener('resize', recalc)
     return () => window.removeEventListener('resize', recalc)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const countWords = (text: string) => {
@@ -9187,8 +8207,6 @@ export function IdeaDetailPage() {
     return trimmed.split(/\s+/g).filter(Boolean).length
   }
 
-  /** True when serialized page body includes a table (store innerHTML, not innerText). */
-  const brdBodyHasTableMarkup = (s: string) => /<\s*table[\s>]/i.test(s)
   const brdBodyHasHtmlMarkup = (s: string) => /<\s*[a-z][^>]*>/i.test(s)
 
   const escapeBrdHtml = (text: string) => {
@@ -9294,14 +8312,14 @@ export function IdeaDetailPage() {
   const isBrdListItemStartLine = (line: string) => {
     const trimmed = line.trim()
     if (!trimmed) return false
-    return /^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â– â–âœ“âž¤]|\d+[.)]|[A-Za-z][.)]|[ivxlcdm]+[.)])\s+/i.test(trimmed)
+    return /^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â–\u00a0â–âœ“âž¤]|\d+[.)]|[A-Za-z][.)]|[ivxlcdm]+[.)])\s+/i.test(trimmed)
   }
 
   const getBrdListItemMeta = (line: string): { listType: 'ul' | 'ol'; listClassName?: string; content: string } | null => {
     const trimmed = line.trim()
     if (!trimmed) return null
 
-    const unorderedMatch = trimmed.match(/^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â– â–âœ“âž¤])\s+(.+)$/)
+    const unorderedMatch = trimmed.match(/^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â–\u00a0â–âœ“âž¤])\s+(.+)$/)
     if (unorderedMatch) {
       const content = unorderedMatch[1].trim()
       return { listType: 'ul', listClassName: 'brd-editor-ul', content: content }
@@ -9591,215 +8609,6 @@ export function IdeaDetailPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const generateBrdCoverPage = () => {
-    const coverHtml = `
-      <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; text-align: center; padding: 80px 60px;">
-        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-          <div style="font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 40px; font-weight: 500; font-family: 'Aptos', 'Calibri', Arial, sans-serif;">Business Requirements Document</div>
-          <h1 style="font-size: 48px; font-weight: 700; color: #0f172a; margin: 0; line-height: 1.2; margin-bottom: 50px; font-family: 'Aptos', 'Calibri', Arial, sans-serif; letter-spacing: -0.5px;">${escapeBrdHtml(idea.title)}</h1>
-        </div>
-        <div style="flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; width: 100%;">
-          <div style="border-top: 1px solid #e2e8f0; padding-top: 30px; text-align: center;">
-            <div style="font-size: 13px; color: #64748b; font-family: 'Aptos', 'Calibri', Arial, sans-serif; letter-spacing: 0.3px;">Submitted by</div>
-            <div style="font-size: 14px; font-weight: 500; color: #0f172a; margin-top: 8px; font-family: 'Aptos', 'Calibri', Arial, sans-serif;">${escapeBrdHtml(submittedByDisplayName)}</div>
-          </div>
-        </div>
-      </div>
-    `
-    return coverHtml.trim()
-  }
-
-  const extractBrdHeadings = (pages: string[]): Array<{ level: number; text: string; pageNum: number }> => {
-    const headings: Array<{ level: number; text: string; pageNum: number }> = []
-
-    const stripMarkdownHeadingPrefix = (text: string) => text.trim().replace(/^#{1,6}\s+/, '')
-
-    const inferTocLevel = (text: string, fallbackLevel: number) => {
-      const trimmed = stripMarkdownHeadingPrefix(text)
-      if (/^(?:[IVXLCDM]{2,}|[IVX])\.\s+/i.test(trimmed)) return 2
-      if (/^[A-Z]\.\s+/.test(trimmed)) return 3
-      if (/^\d+\.\d+\.\d+\s+/.test(trimmed)) return 4
-      if (/^\d+\.\d+\s+/.test(trimmed)) return 3
-      return fallbackLevel
-    }
-
-    pages.forEach((pageContent, pageIdx) => {
-      if (!pageContent) return
-
-      if (brdBodyHasHtmlMarkup(pageContent)) {
-        const container = document.createElement('div')
-        container.innerHTML = pageContent
-        Array.from(container.querySelectorAll('h2, h3, h4')).forEach((el) => {
-          const domLevel = parseInt(el.tagName[1])
-          const text = el.textContent?.trim() || ''
-          if (text) {
-            const level = inferTocLevel(text, domLevel)
-            headings.push({ level, text, pageNum: pageIdx + 1 }) // +1 for 1-based page numbering
-          }
-        })
-      } else {
-        const lines = pageContent.split('\n')
-        lines.forEach((line) => {
-          const meta = getBrdHeadingMeta(line)
-          if (meta) {
-            const text = line.trim()
-            const level = inferTocLevel(text, meta.level)
-            headings.push({ level, text, pageNum: pageIdx + 1 })
-          }
-        })
-      }
-    })
-
-    const getHeadingPrefixToken = (text: string) => {
-      const trimmed = stripMarkdownHeadingPrefix(text)
-      const match = trimmed.match(/^((?:[IVXLCDM]+\.)|(?:[A-Z]\.)|(?:\d+(?:\.\d+)*\.?))\s+/i)
-      return (match?.[1] ?? '').toUpperCase()
-    }
-
-    const normalizeHeadingBase = (text: string) => {
-      const withoutPrefix = text
-        .trim()
-        .replace(/^((?:[IVXLCDM]+\.)|(?:[A-Z]\.)|(?:\d+(?:\.\d+)*\.?))\s+/i, '')
-      const withoutParen = withoutPrefix.replace(/\([^)]*\)/g, ' ')
-      const withoutAsterisk = withoutParen.replace(/\*/g, ' ')
-      const beforeDash = withoutAsterisk.split(/\s+[â€“-]\s+/)[0] ?? withoutAsterisk
-      return beforeDash
-        .toLowerCase()
-        .replace(/[^a-z0-9\s/]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-    }
-
-    // Normalize hierarchy context so lettered sections (A/B/C/D)
-    // are consistently treated as children of active Roman sections (I/II/III).
-    const normalizedHeadings: Array<{ level: number; text: string; pageNum: number }> = []
-    let hasRomanContext = false
-    for (const heading of headings) {
-      const text = stripMarkdownHeadingPrefix(heading.text)
-      const next = { ...heading }
-
-      if (/^(?:[IVXLCDM]{2,}|[IVX])\.\s+/i.test(text)) {
-        next.level = 2
-        hasRomanContext = true
-      } else if (/^[A-Z]\.\s+/.test(text)) {
-        next.level = hasRomanContext ? 3 : Math.max(3, heading.level)
-      } else if (/^\d+\.\d+\.\d+\s+/.test(text)) {
-        next.level = 4
-      } else if (/^\d+\.\d+\s+/.test(text)) {
-        next.level = 3
-      }
-
-      normalizedHeadings.push(next)
-    }
-
-    // Remove duplicates that can appear from page reflow/splitting
-    // and variant heading text for the same section key.
-    const deduped: Array<{ level: number; text: string; pageNum: number }> = []
-    for (const heading of normalizedHeadings) {
-      const prev = deduped[deduped.length - 1]
-      if (!prev) {
-        deduped.push(heading)
-        continue
-      }
-
-      const sameLevel = prev.level === heading.level
-      const nearPage = heading.pageNum === prev.pageNum || heading.pageNum === prev.pageNum + 1
-      if (sameLevel && nearPage) {
-        const prevText = prev.text.trim().toLowerCase()
-        const nextText = heading.text.trim().toLowerCase()
-        const sameText = prevText === nextText
-        if (sameText) continue
-
-        const prevPrefix = getHeadingPrefixToken(prev.text)
-        const nextPrefix = getHeadingPrefixToken(heading.text)
-        const samePrefix = Boolean(prevPrefix) && prevPrefix === nextPrefix
-
-        const prevBase = normalizeHeadingBase(prev.text)
-        const nextBase = normalizeHeadingBase(heading.text)
-        const sameBase = Boolean(prevBase) && prevBase === nextBase
-        const baseOverlaps =
-          Boolean(prevBase) &&
-          Boolean(nextBase) &&
-          (prevBase.startsWith(nextBase) || nextBase.startsWith(prevBase))
-
-        if ((samePrefix && sameBase) || (samePrefix && baseOverlaps)) continue
-      }
-
-      deduped.push(heading)
-    }
-
-    return deduped
-  }
-
-  const generateBrdTableOfContents = (allPages: string[]) => {
-    const headings = extractBrdHeadings(allPages)
-    if (!headings.length) {
-      return '<div style="padding: 20px; color: #94a3b8; font-family: Aptos, Arial, sans-serif;"><p>No sections found in document.</p></div>'
-    }
-
-    const sanitizeHeadingForPrefix = (text: string) =>
-      text
-        .trim()
-        .replace(/^#{1,6}\s+/, '')
-        .replace(/[\u00A0\u200B-\u200D\uFEFF]/g, ' ')
-        .replace(/^[\s"'`~*_\-â€“â€”â€¢â–ªâ—¦â€£â—â—‹â– â–âœ“âž¤:;,.()\[\]{}]+/, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-
-    const isRomanSectionPrefix = (text: string) => {
-      const match = text.match(/^([IVXLCDM]+)\s*[.)]\s*/i)
-      if (!match) return false
-      const token = match[1].toUpperCase()
-      // Prevent alpha sections like C. / D. from being treated as Roman headings.
-      if (token.length === 1 && token !== 'I' && token !== 'V' && token !== 'X') return false
-      return true
-    }
-    const isAlphaSectionPrefix = (text: string) => /^[A-Z]\s*[.)]\s*/i.test(text)
-    const isNumericSubPrefix = (text: string) => /^\d+\.\d+\s*/.test(text)
-    const isNumericSubSubPrefix = (text: string) => /^\d+\.\d+\.\d+\s*/.test(text)
-
-    const resolveDisplayLevel = (text: string, fallbackLevel: number) => {
-      const normalized = sanitizeHeadingForPrefix(text)
-      if (isRomanSectionPrefix(normalized)) return 2
-      if (isAlphaSectionPrefix(normalized)) return 3
-      if (isNumericSubSubPrefix(normalized)) return 4
-      if (isNumericSubPrefix(normalized)) return 3
-      return fallbackLevel
-    }
-
-    let tocHtml = '<div style="font-family: Aptos, Arial, sans-serif; color: #0f172a; padding: 0;">'
-    tocHtml += '<h2 style="font-size: 20px; font-weight: 700; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin: 0 0 24px 0; text-transform: uppercase; letter-spacing: 1px;">Table of Contents</h2>'
-    tocHtml += '<table style="width: 100%; border-collapse: collapse; border: none; table-layout: fixed;">'
-    tocHtml += '<colgroup><col style="width: auto;" /><col style="width: 40px;" /></colgroup>'
-
-    headings.forEach((heading) => {
-      const headingText = sanitizeHeadingForPrefix(heading.text)
-      const displayLevel = resolveDisplayLevel(headingText, heading.level)
-
-      const paddingLeft = displayLevel === 2 ? '0px' : displayLevel === 3 ? '24px' : '48px'
-      const fontSize = displayLevel === 2 ? '14px' : displayLevel === 3 ? '13px' : '12px'
-      const fontWeight = displayLevel === 2 ? '600' : '400'
-      const paddingTop = displayLevel === 2 ? '10px' : '5px'
-      const paddingBottom = displayLevel === 2 ? '10px' : '5px'
-      const borderTop = displayLevel === 2 ? 'border-top: 1px solid #e2e8f0;' : ''
-      const sectionText = escapeBrdHtml(headingText)
-      const color = displayLevel === 2 ? '#0f172a' : '#334155'
-
-      tocHtml += `
-        <tr style="${borderTop}">
-          <td style="border: none; padding: ${paddingTop} 0 ${paddingBottom} ${paddingLeft}; font-size: ${fontSize}; font-weight: ${fontWeight}; color: ${color}; vertical-align: bottom; white-space: nowrap; overflow: hidden; text-overflow: clip;">
-            <span>${sectionText}</span><span style="display: inline-block; width: 100%; overflow: hidden; color: #cbd5e1; letter-spacing: 2px; font-weight: 400; font-size: 11px; padding-left: 6px; vertical-align: bottom; line-height: 1.8;">&nbsp;${`${String.fromCharCode(0xb7)} `.repeat(80).trimEnd()}</span>
-          </td>
-          <td style="border: none; padding: ${paddingTop} 0 ${paddingBottom} 8px; font-size: ${fontSize}; font-weight: ${fontWeight}; color: #64748b; text-align: right; vertical-align: bottom; white-space: nowrap; width: 40px;">${heading.pageNum}</td>
-        </tr>
-      `
-    })
-
-    tocHtml += '</table>'
-    tocHtml += '</div>'
-    return tocHtml
-  }
-
   const splitBrdBlockIntoStickyUnits = (block: string) => {
     const lines = block.replace(/\r\n/g, '\n').split('\n')
     const trimmedLines = lines.map((line) => line.trim())
@@ -9901,7 +8710,7 @@ export function IdeaDetailPage() {
   const convertBrdTextBlocksToHtmlBlocks = (text: string) => splitBrdTextIntoBlocks(text).map((block) => htmlTextToParagraph(block))
 
   useEffect(() => {
-    if (activePanel !== 'brd') return
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
     if (brdContentNormalizationRef.current) return
 
     const normalizedPages = brdPagesRef.current.map((page) => normalizeBrdBodyContent(page))
@@ -10357,7 +9166,7 @@ export function IdeaDetailPage() {
   }, [brdTableMenuOpen])
 
   useEffect(() => {
-    if (activePanel !== 'brd') return
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
     const onSelectionChange = () => {
       const selection = window.getSelection()
       if (!selection || selection.rangeCount === 0) return
@@ -10389,7 +9198,6 @@ export function IdeaDetailPage() {
     } catch {
       // ignore
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -10407,29 +9215,6 @@ export function IdeaDetailPage() {
       // ignore
     }
   }, [brdSelectedTemplateId])
-
-  const applyBrdTemplateById = (templateId: string) => {
-    const t = brdTemplates.find((x) => x.id === templateId) ?? defaultBrdTemplates.find((x) => x.id === templateId) ?? null
-    setBrdSelectedTemplateId(templateId)
-    if (!t) return
-    setEditingHeaderIndex(null)
-    const normalizedBody = normalizeBrdBodyContent(t.body ?? '')
-    brdPagesRef.current = [normalizedBody]
-    setBrdPages([normalizedBody])
-    brdHeadersRef.current = [t.header ?? '']
-    setBrdHeaders([t.header ?? ''])
-    brdHeaderHeightsRef.current = [18]
-    setBrdHeaderHeights([18])
-    scheduleWordCountUpdate()
-    window.requestAnimationFrame(() => {
-      brdPageEditableRefs.current[0]?.focus()
-    })
-  }
-
-  const newTemplateId = () => {
-    const id = globalThis.crypto?.randomUUID?.()
-    return id ?? `tpl_${Date.now()}_${Math.random().toString(16).slice(2)}`
-  }
 
   const brdTextColorMenu = brdTextColorMenuOpen
     ? createPortal(
@@ -11611,318 +10396,8 @@ export function IdeaDetailPage() {
       )
     : null
 
-  const getBrdExportPages = () => {
-    const pages = brdPagesRef.current
-    const headers = brdHeadersRef.current
-    return pages.map((body, idx) => ({
-      header: (headers[idx] ?? '').trim(),
-      body: (body ?? '').replace(/\u00A0/g, ' ').trimEnd(),
-    }))
-  }
-
-  const downloadBlob = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  }
-
-  const exportBrdMarkdown = () => {
-    const pages = getBrdExportPages()
-    const md = pages
-      .map(({ header, body }, idx) => {
-        const parts: string[] = []
-        if (header) parts.push(`#### ${header}`)
-        if (body) parts.push(body)
-        if (!header && !body) parts.push('')
-        // Page separator
-        if (idx < pages.length - 1) parts.push('\n---\n')
-        return parts.join('\n\n')
-      })
-      .join('\n\n')
-
-    downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), 'BRD.md')
-  }
-
-  const getBrdExportBlocks = (body: string): Array<{ type: 'paragraph'; lines: string[] } | { type: 'table'; rows: string[][] }> => {
-    const normalized = (body ?? '').replace(/\u00A0/g, ' ').trim()
-    if (!normalized) return []
-
-    if (!brdBodyHasHtmlMarkup(normalized)) {
-      return normalized
-        .split(/\n\s*\n/)
-        .map((block) => block.trim())
-        .filter(Boolean)
-        .map((block) => ({
-          type: 'paragraph' as const,
-          lines: block.split('\n').map((line) => line.trimEnd()),
-        }))
-    }
-
-    const container = document.createElement('div')
-    container.innerHTML = normalized
-    const blocks: Array<{ type: 'paragraph'; lines: string[] } | { type: 'table'; rows: string[][] }> = []
-
-    const appendParagraphFromText = (text: string) => {
-      const cleaned = text.replace(/\u00A0/g, ' ').trim()
-      if (!cleaned) return
-      blocks.push({
-        type: 'paragraph',
-        lines: cleaned.split('\n').map((line) => line.trimEnd()),
-      })
-    }
-
-    for (const node of Array.from(container.childNodes)) {
-      if (node.nodeType === globalThis.Node.TEXT_NODE) {
-        appendParagraphFromText(node.textContent ?? '')
-        continue
-      }
-
-      if (node.nodeType !== globalThis.Node.ELEMENT_NODE) continue
-      const el = node as HTMLElement
-      if (el.tagName.toLowerCase() === 'table') {
-        const rows = Array.from(el.querySelectorAll('tr'))
-          .map((row) =>
-            Array.from(row.querySelectorAll('th,td')).map((cell) => (cell as HTMLElement).innerText.replace(/\u00A0/g, ' ').trim())
-          )
-          .filter((row) => row.length > 0)
-        if (rows.length) {
-          blocks.push({ type: 'table', rows })
-          continue
-        }
-      }
-
-      appendParagraphFromText(el.innerText)
-    }
-
-    return blocks
-  }
-
-  const exportBrdWord = async () => {
-    const pages = getBrdExportPages()
-    const { Document, Packer, Paragraph, TextRun, PageBreak, Table, TableRow, TableCell, WidthType } = await import('docx')
-
-    const children: unknown[] = []
-    pages.forEach(({ header, body }, idx) => {
-      if (header) {
-        children.push(
-          new Paragraph({
-            children: [new TextRun({ text: header, bold: true })],
-            spacing: { after: 180 },
-          })
-        )
-      }
-
-      const blocks = getBrdExportBlocks(body)
-      blocks.forEach((block) => {
-        if (block.type === 'paragraph') {
-          block.lines.forEach((line) => {
-            children.push(new Paragraph({ text: line || '' }))
-          })
-          children.push(new Paragraph({ text: '' }))
-          return
-        }
-
-        const columnCount = Math.max(...block.rows.map((row) => row.length), 1)
-        children.push(
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: block.rows.map(
-              (row) =>
-                new TableRow({
-                  children: Array.from({ length: columnCount }).map((_, cellIndex) =>
-                    new TableCell({
-                      width: { size: Math.floor(100 / columnCount), type: WidthType.PERCENTAGE },
-                      children: [new Paragraph({ text: row[cellIndex] ?? '' })],
-                    })
-                  ),
-                })
-            ),
-          })
-        )
-        children.push(new Paragraph({ text: '' }))
-      })
-
-      if (idx < pages.length - 1) children.push(new Paragraph({ children: [new PageBreak()] }))
-    })
-
-    const doc = new Document({
-      sections: [{ properties: {}, children: children as any }],
-    })
-
-    const blob = await Packer.toBlob(doc)
-    downloadBlob(
-      blob,
-      'BRD.docx'
-    )
-  }
-
-  const exportBrdPdf = async () => {
-    const pages = getBrdExportPages()
-    const { jsPDF } = await import('jspdf')
-    const pdf = new jsPDF({ unit: 'pt', format: 'a4' })
-
-    const marginX = 56
-    const marginTop = 64
-    const pageWidth = pdf.internal.pageSize.getWidth()
-    const pageHeight = pdf.internal.pageSize.getHeight()
-    const usableWidth = pageWidth - marginX * 2
-    const lineGap = 16
-    const bottomMargin = 64
-
-    const addTextBlock = (text: string, startY: number, maxWidth = usableWidth) => {
-      const lines = pdf.splitTextToSize(text, usableWidth)
-      let y = startY
-      for (const line of lines) {
-        if (y > pageHeight - bottomMargin) {
-          pdf.addPage()
-          y = marginTop
-        }
-        pdf.text(line, marginX, y, { maxWidth })
-        y += lineGap
-      }
-      return y
-    }
-
-    const addTableBlock = (rows: string[][], startY: number) => {
-      let y = startY
-      const columnCount = Math.max(...rows.map((row) => row.length), 1)
-      const cellWidth = usableWidth / columnCount
-
-      for (const row of rows) {
-        const cellLines = Array.from({ length: columnCount }).map((_, cellIndex) =>
-          pdf.splitTextToSize(row[cellIndex] ?? '', Math.max(24, cellWidth - 10)) as string[]
-        )
-        const lineCount = Math.max(...cellLines.map((lines) => Math.max(lines.length, 1)), 1)
-        const rowHeight = Math.max(22, lineCount * 12 + 10)
-
-        if (y + rowHeight > pageHeight - bottomMargin) {
-          pdf.addPage()
-          y = marginTop
-        }
-
-        let x = marginX
-        cellLines.forEach((lines, cellIndex) => {
-          pdf.rect(x, y - 12, cellWidth, rowHeight)
-          const textYStart = y + 2
-          lines.forEach((line, lineIndex) => {
-            pdf.text(line, x + 4, textYStart + lineIndex * 12, { maxWidth: cellWidth - 8 })
-          })
-          x += cellWidth
-        })
-
-        y += rowHeight
-      }
-
-      return y + 8
-    }
-
-    pdf.setFont('helvetica', 'normal')
-    pdf.setFontSize(12)
-
-    let first = true
-    pages.forEach(({ header, body }) => {
-      if (!first) pdf.addPage()
-      first = false
-
-      let y = marginTop
-      if (header) {
-        pdf.setFont('helvetica', 'bold')
-        y = addTextBlock(header, y)
-        y += 8
-        pdf.setFont('helvetica', 'normal')
-      }
-
-      const blocks = getBrdExportBlocks(body)
-      blocks.forEach((block) => {
-        if (block.type === 'paragraph') {
-          const text = block.lines.join('\n')
-          if (text.trim()) {
-            y = addTextBlock(text, y)
-            y += 6
-          }
-          return
-        }
-
-        y = addTableBlock(block.rows, y)
-      })
-    })
-
-    const blob = pdf.output('blob')
-    downloadBlob(blob, 'BRD.pdf')
-  }
-
-  const BrdFooter = () => {
-    const [wordCount, setWordCount] = useState(0)
-
-    useEffect(() => {
-      brdWordCountUpdateFnRef.current = setWordCount
-      // Ensure badge is correct after mount.
-      scheduleWordCountUpdate()
-      return () => {
-        brdWordCountUpdateFnRef.current = () => {}
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    useEffect(() => {
-      // Ensure badge is correct after pagination changes.
-      scheduleWordCountUpdate()
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [brdPages.length])
-
-    return (
-      <div className="sticky bottom-3 z-10 w-full px-3">
-        <div className="flex w-full items-center justify-between">
-          <div className="w-fit rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-[12px] text-slate-700 shadow-sm">
-            Page {Math.min(brdActivePageIndex + 1, brdPages.length)} of {brdPages.length} &nbsp;&nbsp; {wordCount} words
-          </div>
-
-          <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-[12px] text-slate-700 shadow-sm">
-            <button
-              type="button"
-              className="h-6 w-6 rounded-full border border-slate-200 bg-white text-slate-700 leading-none"
-              onClick={() => setBrdZoom((z) => Math.max(BRD_ZOOM_MIN, Number((z - BRD_ZOOM_STEP).toFixed(2))))}
-              aria-label="Zoom out"
-            >
-              âˆ’
-            </button>
-            <input
-              type="range"
-              min={BRD_ZOOM_MIN}
-              max={brdMaxZoomFit}
-              step={BRD_ZOOM_STEP}
-              value={brdZoom}
-              onChange={(e) => setBrdZoom(Number(e.target.value))}
-              className={cn(
-                'w-28 h-1 appearance-none rounded-full bg-slate-200',
-                '[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-slate-700',
-                '[&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(15,23,42,0.25)]',
-                '[&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-slate-700',
-                '[&::-moz-range-track]:h-1 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-slate-200'
-              )}
-            />
-            <div className="w-12 text-right tabular-nums">{Math.round(brdZoom * 100)}%</div>
-            <button
-              type="button"
-              className="h-6 w-6 rounded-full border border-slate-200 bg-white text-slate-700 leading-none"
-              onClick={() => setBrdZoom((z) => Math.min(brdMaxZoomFit, Number((z + BRD_ZOOM_STEP).toFixed(2))))}
-              aria-label="Zoom in"
-            >
-              +
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   useEffect(() => {
-    if (activePanel !== 'brd') return
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
     const sections = brdPageSectionRefs.current.filter(Boolean) as HTMLElement[]
     if (!sections.length) return
 
@@ -11964,24 +10439,6 @@ export function IdeaDetailPage() {
     focusActiveBrdPage()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(document as any).execCommand?.(command, false, value)
-  }
-
-  const clearBrdFormatting = () => {
-    if (isBrdGenerating) return
-    focusActiveBrdPage()
-    execBrdCommand('removeFormat')
-    execBrdCommand('unlink')
-    // Ensure highlight/background is cleared across browsers.
-    execBrdCommand('hiliteColor', 'transparent')
-    execBrdCommand('backColor', 'transparent')
-  }
-
-  const commitHeaderToState = (index: number) => {
-    setBrdHeaders((prev) => {
-      const next = [...prev]
-      next[index] = brdHeadersRef.current[index] ?? ''
-      return next
-    })
   }
 
   const findLargestFittingPrefix = (text: string, maxHeight: number) => {
@@ -12102,7 +10559,7 @@ export function IdeaDetailPage() {
     }
 
     const carriedHeaderHtml = decodeCarriedHeaderHtml(table.getAttribute('data-brd-header-html'))
-    let headerRows: HTMLTableRowElement[] = thead
+    const headerRows: HTMLTableRowElement[] = thead
       ? Array.from(thead.querySelectorAll('tr')) as HTMLTableRowElement[]
       : []
     let dataRows: HTMLTableRowElement[] = tbody
@@ -12306,11 +10763,8 @@ export function IdeaDetailPage() {
     return next
   }
 
-  useEffect(() => {
-    if (activePanel !== 'brd') return
-    // Gate both by ref (immediate) and state (for safety)
-    if (isBrdGenerating || isBrdRenderLockedRef.current) return
-
+  // Capture the callbacks when scheduling, not when the frame runs.
+  const scheduleBrdAutoPagination = useEffectEvent(() => {
     const raf = window.requestAnimationFrame(() => {
       if (brdAutoPaginatingRef.current) return
 
@@ -12332,6 +10786,13 @@ export function IdeaDetailPage() {
     })
 
     return () => window.cancelAnimationFrame(raf)
+  })
+
+  useEffect(() => {
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
+    if (isBrdGenerating || isBrdRenderLockedRef.current) return
+
+    return scheduleBrdAutoPagination()
   }, [
     activePanel,
     brdFontFamily,
@@ -12342,287 +10803,6 @@ export function IdeaDetailPage() {
     isBrdGenerating,
     isBrdRenderLocked,
   ])
-
-  const BrdPage = ({ index }: { index: number }) => {
-    const ref = useRef<HTMLDivElement | null>(null)
-    const headerRef = useRef<HTMLDivElement | null>(null)
-    const value = brdPages[index] ?? ''
-    const headerValue = brdHeaders[index] ?? ''
-    const isEditingHeader = editingHeaderIndex === index
-
-    useEffect(() => {
-      if (!ref.current) return
-      brdPageEditableRefs.current[index] = ref.current
-      if (document.activeElement === ref.current) return
-      const el = ref.current
-      if (brdBodyHasHtmlMarkup(value)) {
-        if (el.innerHTML !== value) el.innerHTML = value
-      } else if (el.innerText !== value) {
-        el.innerText = value
-      }
-    }, [value, index])
-
-    useEffect(() => {
-      if (!headerRef.current) return
-      if (isEditingHeader && document.activeElement === headerRef.current) return
-      if (headerRef.current.innerText !== headerValue) headerRef.current.innerText = headerValue
-    }, [headerValue, isEditingHeader])
-
-    useEffect(() => {
-      const el = headerRef.current
-      if (!el) return
-      const update = () => {
-        const h = Math.max(18, Math.min(120, el.scrollHeight))
-        setBrdHeaderHeights((prev) => {
-          if ((prev[index] ?? 18) === h) return prev
-          const copy = [...prev]
-          copy[index] = h
-          brdHeaderHeightsRef.current = copy
-          return copy
-        })
-      }
-
-      update()
-      if (!isEditingHeader) return
-      const ro = new ResizeObserver(() => update())
-      ro.observe(el)
-      return () => ro.disconnect()
-    }, [headerValue, index, isEditingHeader])
-
-    return (
-      <section
-        ref={(node) => {
-          brdPageSectionRefs.current[index] = node
-        }}
-        data-page-index={index}
-        className="relative h-[1123px] w-[794px] border border-slate-300 bg-white px-16 py-14 shadow-[0_28px_58px_-38px_rgba(15,23,42,0.45)] overflow-hidden"
-      >
-        {/* Header (non-editable unless double-clicked) */}
-        <div className="absolute left-16 right-16" style={{ top: BRD_HEADER_TOP_PX }}>
-          {isEditingHeader && (
-            <>
-              <div
-                className="pointer-events-none absolute -left-14 rounded-sm border border-slate-300 bg-slate-100 px-2 py-1 text-[12px] leading-4 text-slate-700 shadow-sm"
-                style={{ top: (brdHeaderHeights[index] ?? 18) + 8 }}
-              >
-                Header
-              </div>
-              <div
-                className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-slate-400"
-                style={{ top: (brdHeaderHeights[index] ?? 18) + 10 }}
-                aria-hidden="true"
-              />
-            </>
-          )}
-          <div
-            ref={headerRef}
-            contentEditable={!isBrdGenerating && isEditingHeader}
-            suppressContentEditableWarning
-            spellCheck={false}
-            className={cn(
-              "min-h-6 whitespace-pre-wrap font-['Aptos','Arial',sans-serif] text-[12px] leading-5 outline-none",
-              isEditingHeader ? 'text-slate-700' : 'text-slate-400',
-              !isEditingHeader && 'pointer-events-none select-none'
-            )}
-            onInput={(e) => {
-              const nextHeader = e.currentTarget.innerText
-              brdHeadersRef.current[index] = nextHeader
-            }}
-            onBlur={() => {
-              // Avoid exiting edit mode on transient focus loss (e.g. reflow/resize observer updates).
-              window.requestAnimationFrame(() => {
-                if (editingHeaderIndex !== index) return
-                const active = document.activeElement
-                const bodyEl = brdPageEditableRefs.current[index]
-                // Exit header edit only when focus clearly moved to the page body.
-                if (bodyEl && active === bodyEl) {
-                  commitHeaderToState(index)
-                  setEditingHeaderIndex(null)
-                }
-              })
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                commitHeaderToState(index)
-                setEditingHeaderIndex(null)
-                // Return focus to body.
-                window.requestAnimationFrame(() => {
-                  brdPageEditableRefs.current[index]?.focus()
-                })
-              }
-            }}
-          />
-
-          {!isEditingHeader && !isBrdGenerating && (
-            <div
-              className="absolute -inset-x-2 -inset-y-2 cursor-text"
-              onDoubleClick={() => {
-                setEditingHeaderIndex(index)
-                window.requestAnimationFrame(() => {
-                  headerRef.current?.focus()
-                })
-              }}
-              title="Double-click to edit header"
-              aria-label="Double-click to edit header"
-            />
-          )}
-        </div>
-
-        <div
-          ref={ref}
-          contentEditable={!isBrdGenerating && !isEditingHeader}
-          suppressContentEditableWarning
-          spellCheck={false}
-          className={cn(
-            "min-h-[995px] whitespace-pre-wrap text-slate-900 outline-none [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_em]:italic [&_u]:underline",
-            '[&_h2]:mb-4 [&_h2]:mt-7 [&_h2]:border-b [&_h2]:border-slate-300 [&_h2]:pb-2 [&_h2]:text-[19px] [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-[0.08em] [&_h2]:text-slate-800 [&_h2:first-child]:mt-0',
-            '[&_h3]:mb-3 [&_h3]:mt-5 [&_h3]:text-[16px] [&_h3]:font-semibold [&_h3]:text-sky-900 [&_h3:first-child]:mt-0',
-            '[&_h4]:mb-2 [&_h4]:mt-4 [&_h4]:text-[14px] [&_h4]:font-semibold [&_h4]:text-slate-800 [&_h4:first-child]:mt-0',
-            '[&_p]:mb-3 [&_p]:mt-0 [&_p]:text-justify',
-            '[&_ul]:mb-4 [&_ul]:mt-2 [&_ul]:list-disc [&_ul]:pl-8',
-            '[&_ol]:mb-4 [&_ol]:mt-2 [&_ol]:pl-8',
-            '[&_li]:mb-1.5 [&_li]:pl-1',
-            '[&_ul>li::marker]:text-sky-700 [&_ol>li::marker]:font-semibold [&_ol>li::marker]:text-slate-700',
-            isEditingHeader && 'select-none text-slate-400'
-          )}
-          style={{
-            fontFamily: brdFontFamily === 'Aptos' ? "Aptos, Arial, sans-serif" : `${brdFontFamily}, Arial, sans-serif`,
-            fontSize: `${brdFontSize}px`,
-            lineHeight: String(brdLineHeight),
-            // Keep header layout unchanged; only control the body gap here.
-            paddingTop: (brdHeaderHeights[index] ?? 18) + BRD_HEADER_BODY_GAP_PX,
-            minHeight: getBodyMaxHeightPx(index),
-            maxHeight: getBodyMaxHeightPx(index),
-            overflow: 'hidden',
-          }}
-          onDoubleClick={() => {
-            if (!isEditingHeader) return
-            commitHeaderToState(index)
-            setEditingHeaderIndex(null)
-            window.requestAnimationFrame(() => {
-              brdPageEditableRefs.current[index]?.focus()
-            })
-          }}
-          onFocus={() => {
-            brdLastFocusedPage.current = index
-          }}
-          onKeyDown={(e) => {
-            const isSelectAll =
-              (e.ctrlKey || e.metaKey) &&
-              (e.key === 'a' || e.key === 'A') &&
-              !e.shiftKey &&
-              !e.altKey
-            if (!isSelectAll) return
-            e.preventDefault()
-
-            const first = brdPageEditableRefs.current.find((node) => node != null) ?? null
-            const last = [...brdPageEditableRefs.current].reverse().find((node) => node != null) ?? null
-            if (!first || !last) return
-
-            const selection = window.getSelection()
-            if (!selection) return
-            selection.removeAllRanges()
-
-            const range = document.createRange()
-            range.setStart(first, 0)
-            range.setEnd(last, last.childNodes.length)
-            selection.addRange(range)
-          }}
-          onInput={(e) => {
-            const host = e.currentTarget
-            const next = host.innerHTML
-            brdPagesRef.current[index] = next
-            scheduleWordCountUpdate()
-
-            // Paginate if content exceeds max height (with safety margin)
-            const maxHeight = getBodyMaxHeightPx(index)
-            const contentHeight = measureBrdBodyHeight(next)
-            
-            // Use slightly stricter threshold (95%) to catch overflow early
-            if (contentHeight <= maxHeight * 0.95) {
-              // Always persist typing to state so re-renders don't reset the DOM
-              setBrdPages((prev) => {
-                if (prev[index] === next) return prev
-                const copy = [...prev]
-                copy[index] = next
-                return copy
-              })
-              return
-            }
-
-            const rebalanced = rebalancePagesFrom(brdPagesRef.current, index)
-            brdPagesRef.current = rebalanced
-            setBrdPages(rebalanced)
-          }}
-          onKeyDownCapture={(e) => {
-            if (e.key !== 'Backspace' && e.key !== 'Delete') return
-            const selection = window.getSelection()
-            if (!selection || selection.isCollapsed) return
-
-            const findPageIndexForNode = (node: globalThis.Node | null) => {
-              if (!node) return -1
-              const anyNode = node as unknown as { nodeType?: number; parentElement?: HTMLElement | null }
-              const element =
-                anyNode.nodeType === globalThis.Node.ELEMENT_NODE
-                  ? (node as unknown as HTMLElement)
-                  : (anyNode.parentElement ?? null)
-              if (!element) return -1
-              for (let i = 0; i < brdPageEditableRefs.current.length; i += 1) {
-                const pageEl = brdPageEditableRefs.current[i]
-                if (pageEl && pageEl.contains(element)) return i
-              }
-              return -1
-            }
-
-            const startIdx = findPageIndexForNode(selection.anchorNode as unknown as globalThis.Node | null)
-            const endIdx = findPageIndexForNode(selection.focusNode as unknown as globalThis.Node | null)
-
-            // If selection spans multiple pages, delete everything.
-            if (startIdx !== -1 && endIdx !== -1 && startIdx !== endIdx) {
-              e.preventDefault()
-              brdPagesRef.current = ['']
-              setBrdPages([''])
-
-              window.requestAnimationFrame(() => {
-                const first = brdPageEditableRefs.current[0]
-                if (!first) return
-                first.focus()
-                const sel = window.getSelection()
-                if (!sel) return
-                sel.removeAllRanges()
-                const range = document.createRange()
-                range.setStart(first, 0)
-                range.collapse(true)
-                sel.addRange(range)
-              })
-            }
-          }}
-          onKeyUp={(e) => {
-            if (e.key !== 'Backspace' && e.key !== 'Delete') return
-            const current = brdPagesRef.current[index] ?? ''
-            const following = brdPagesRef.current[index + 1] ?? ''
-            if (!following) return
-            if (brdBodyHasTableMarkup(current) || brdBodyHasTableMarkup(following)) return
-            if (measureBrdBodyHeight(current) >= getBodyMaxHeightPx(index)) return
-            const rebalanced = rebalancePagesFrom(brdPagesRef.current, index)
-            if (rebalanced.length !== brdPagesRef.current.length || rebalanced[index + 1] !== brdPagesRef.current[index + 1]) {
-              brdPagesRef.current = rebalanced
-              setBrdPages(rebalanced)
-            }
-          }}
-        />
-      </section>
-    )
-  }
-
-  const hasBrdBodyContent = brdPages.some((page) => page.trim())
-  const showBrdCoverPage = !isBrdGenerating && !isBrdRenderLocked && hasBrdBodyContent
-  const showBrdTocPage = !isBrdGenerating && !isBrdRenderLocked && hasBrdBodyContent
-  const brdVisiblePageCount = brdPages.length + (showBrdCoverPage ? 1 : 0) + (showBrdTocPage ? 1 : 0)
-  const brdCanvasHeightPx =
-    Math.max(1, brdVisiblePageCount) * BRD_PAGE_HEIGHT_PX +
-    Math.max(0, brdVisiblePageCount - 1) * BRD_PAGE_GAP_PX
 
   const getSectionReviewContent = (sectionKey: PanelKey): string => {
     if (sectionKey === 'summary') {
@@ -12787,13 +10967,6 @@ export function IdeaDetailPage() {
       ? bpmnHighAnalysis.architectureReview
       : diagramStudioC4Review
   const diagramStudioC4ReviewMeta = c4ReviewStatusMeta(diagramStudioReview?.status)
-  const diagramStudioReviewLabel = diagramStudioReviewTarget === 'integration'
-    ? 'ArchiMate Integration'
-    : diagramStudioReviewTarget === 'bpmn-high'
-      ? 'BPMN High-Level'
-      : diagramStudioC4Level
-        ? `C4 ${diagramStudioC4Level}`
-        : 'Diagram'
 
   return (
     <div className="idea-detail-page min-w-0" style={{ '--idea-detail-top': `${detailViewport.top}px` } as CSSProperties}>
@@ -14288,7 +12461,7 @@ export function IdeaDetailPage() {
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {showTechnicalDiagrams ? (() => {
                     const retained = readSelectedSourceReferences(idea.description || '')
-                    if (!retained.ok) return <p role="status" className="p-3 text-sm">{retained.reason}</p>
+                    if (retained.ok === false) return <p role="status" className="p-3 text-sm">{retained.reason}</p>
                     if (!retained.sources.length) return null
                     return <section aria-label="Retained diagram source references" className="mb-4 space-y-2 rounded border p-3">
                       <p className="text-sm font-semibold">Diagram source references</p>

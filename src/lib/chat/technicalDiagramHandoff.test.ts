@@ -8,7 +8,7 @@ const source = (topic: string) => `@startuml\r\n' tectona-dimension: ${topic}\r\
 
 function parsed(text: string) {
   const result = prepareSelectedDescription(text)
-  if (!result.ok) throw new Error(result.reason)
+  if (result.ok === false) throw new Error(result.reason)
   return result
 }
 

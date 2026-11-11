@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
   ProjectArchivedWorkItemApiModel,
   ProjectInboxRouteApiModel,
@@ -22,7 +22,6 @@ export type ProjectWorkItemOverlays = {
   archivedWorkItemKeys: Set<string>
   usesDatabase: boolean
   loading: boolean
-  reload: () => Promise<void>
 }
 
 function localInboxRoutes(projectId: string): ProjectInboxRouteApiModel[] {
@@ -41,7 +40,7 @@ function localInboxRoutes(projectId: string): ProjectInboxRouteApiModel[] {
         status: record.status,
       } satisfies ProjectInboxRouteApiModel
     })
-    .filter((row): row is ProjectInboxRouteApiModel => row != null)
+    .filter((row) => row !== null)
 }
 
 function localArchivedWorkItems(projectId: string): ProjectArchivedWorkItemApiModel[] {
@@ -59,46 +58,48 @@ export function useProjectWorkItemOverlays(
   usesApiItems: boolean,
   revision = 0,
 ): ProjectWorkItemOverlays {
-  const [inboxRoutes, setInboxRoutes] = useState<ProjectInboxRouteApiModel[]>([])
-  const [archivedWorkItems, setArchivedWorkItems] = useState<ProjectArchivedWorkItemApiModel[]>([])
-  const [loading, setLoading] = useState(true)
-  const [usesDatabase, setUsesDatabase] = useState(false)
-
-  const reload = useCallback(async () => {
-    if (!projectId) {
-      setInboxRoutes([])
-      setArchivedWorkItems([])
-      setUsesDatabase(false)
-      setLoading(false)
-      return
-    }
-
-    setLoading(true)
-    if (usesApiItems) {
-      try {
-        const [inboxResponse, archivedResponse] = await Promise.all([
-          listProjectInboxRoutes(projectId),
-          listProjectArchivedWorkItems(projectId),
-        ])
-        setInboxRoutes(inboxResponse.items)
-        setArchivedWorkItems(archivedResponse.items)
-        setUsesDatabase(true)
-        setLoading(false)
-        return
-      } catch {
-        // Fall through to localStorage when work service is unreachable.
-      }
-    }
-
-    setInboxRoutes(localInboxRoutes(projectId))
-    setArchivedWorkItems(localArchivedWorkItems(projectId))
-    setUsesDatabase(false)
-    setLoading(false)
-  }, [projectId, usesApiItems])
+  const request = useMemo(() => ({ projectId, usesApiItems, revision }), [projectId, usesApiItems, revision])
+  const [snapshot, setSnapshot] = useState<{
+    request: typeof request
+    inboxRoutes: ProjectInboxRouteApiModel[]
+    archivedWorkItems: ProjectArchivedWorkItemApiModel[]
+    usesDatabase: boolean
+  } | null>(null)
 
   useEffect(() => {
-    void reload()
-  }, [reload, revision])
+    const { projectId, usesApiItems } = request
+    if (!projectId) return
+    let current = true
+    const load = async () => {
+      if (usesApiItems) {
+        try {
+          const [inbox, archived] = await Promise.all([
+            listProjectInboxRoutes(projectId),
+            listProjectArchivedWorkItems(projectId),
+          ])
+          return { inboxRoutes: inbox.items, archivedWorkItems: archived.items, usesDatabase: true }
+        } catch {
+          // Fall through to localStorage when work service is unreachable.
+        }
+      }
+      return {
+        inboxRoutes: localInboxRoutes(projectId),
+        archivedWorkItems: localArchivedWorkItems(projectId),
+        usesDatabase: false,
+      }
+    }
+    void load().then((result) => {
+      if (current) setSnapshot({ request, ...result })
+    })
+    return () => { current = false }
+  }, [request])
+
+  // Keep the last snapshot for a same-project refresh, never for a different scope.
+  const active = snapshot?.request.projectId === projectId && snapshot?.request.usesApiItems === usesApiItems
+    ? snapshot
+    : null
+  const inboxRoutes = active?.inboxRoutes ?? []
+  const archivedWorkItems = active?.archivedWorkItems ?? []
 
   const pendingInboxKeys = new Set(inboxRoutes.map((route) => route.businessKey))
   const archivedWorkItemKeys = new Set(archivedWorkItems.map((record) => record.businessKey))
@@ -108,8 +109,7 @@ export function useProjectWorkItemOverlays(
     archivedWorkItems,
     pendingInboxKeys,
     archivedWorkItemKeys,
-    usesDatabase,
-    loading,
-    reload,
+    usesDatabase: active?.usesDatabase ?? false,
+    loading: Boolean(projectId && active?.request !== request),
   }
 }

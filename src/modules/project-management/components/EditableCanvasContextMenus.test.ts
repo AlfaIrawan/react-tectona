@@ -16,7 +16,11 @@ vi.mock('@/lib/workspaceOrgDirectoryCache', () => ({ fetchAllWorkspaceOrgWorkspa
 vi.mock('@/lib/kb/applicationCatalogRealtime', () => ({ subscribeToApplicationCatalogChanges: () => () => {} }))
 vi.mock('@/lib/api/ideaBacklogApi', () => ({ createDiagramAiDraftAudit: vi.fn(), listDiagramAiDraftAudit: vi.fn(async () => []) }))
 vi.mock('@/stores/chat-navigation-store', () => ({ requestOpenIdeaDiscussChat: (...args: any[]) => probe.chat(...args) }))
-vi.mock('../lib/canvasDocumentSnapshot', () => ({ canvasDocumentSnapshot: (x: any) => x, renderDiagramViewportImage: probe.image, renderDiagramViewportSvg: vi.fn() }))
+vi.mock('../lib/canvasDocumentSnapshot', () => ({
+ canvasDocumentSnapshot: vi.fn(async () => { throw new Error('CANVAS_SNAPSHOT_UNAVAILABLE') }),
+ renderDiagramViewportImage: probe.image,
+ renderDiagramViewportSvg: vi.fn(),
+}))
 vi.mock('../lib/diagramCanvasExport', () => ({ copyDiagramImage: (...args: any[]) => probe.copyImage(...args), runDiagramExportAction: vi.fn(), downloadDiagramImage: vi.fn(), downloadDiagramPdf: vi.fn(), downloadDiagramSvgDataUrl: vi.fn(), printDiagram: vi.fn() }))
 vi.mock('./PlantUmlSourceEditor', () => ({ PlantUmlSourceEditor: () => null }))
 

@@ -10,6 +10,7 @@ import {
   bootstrapSsoSession,
   OidcTokenExchangeError,
   type OidcLoginOptions,
+  type OidcTokenResponse,
 } from '@/lib/api/identityApi'
 import { enrollPasskey, authenticateWithPasskey } from '@/lib/api/webauthnApi'
 import {
@@ -171,7 +172,7 @@ function applyTokenResponse(session: Session, tokenResponse: {
 function buildSessionFromUserinfo(
   userinfo: { sub: string; email?: string; display_name?: string | null; roles?: string[]; job_title?: string | null; organizational_unit?: string | null; account_status?: string | null; created_at?: string | null },
   normalizedEmail: string,
-  tokenResponse: { access_token?: string; expires_in: number; refresh_token?: string; session_id?: string },
+  tokenResponse: Pick<OidcTokenResponse, 'access_token' | 'expires_in' | 'refresh_token' | 'session_id'>,
 ): Session {
   const resolvedEmail = userinfo.email ?? normalizedEmail
   const uiRole =
@@ -378,11 +379,7 @@ function resolveLoginSessionPolicy(
 
 /** Retry with session_policy=replace when the server session is stale on this browser. */
 async function exchangeLoginTokens(
-  fetchTokens: (opts?: OidcLoginOptions) => Promise<{
-    access_token: string
-    expires_in: number
-    refresh_token?: string
-  }>,
+  fetchTokens: (opts?: OidcLoginOptions) => Promise<OidcTokenResponse>,
   opts?: OidcLoginOptions,
 ) {
   try {

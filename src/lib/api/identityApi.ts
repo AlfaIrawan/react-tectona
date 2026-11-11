@@ -279,7 +279,7 @@ function extractErrorPayload(body: string): {
       }
     }
     if (typeof parsed.error === 'string') {
-      return parsed
+      return { ...parsed, error: parsed.error }
     }
     if (parsed.detail && typeof parsed.detail === 'object') {
       return parsed.detail
@@ -287,7 +287,7 @@ function extractErrorPayload(body: string): {
     if (typeof parsed.detail === 'string') {
       return { error: parsed.detail }
     }
-    return parsed
+    return { error_description: parsed.error_description, active_session: parsed.active_session }
   } catch {
     return null
   }
@@ -567,7 +567,7 @@ export async function verifyEmailToken(token: string): Promise<VerifyEmailRespon
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     const payload = extractErrorPayload(text)
-    const code = typeof payload?.error === 'string' ? payload.error : typeof payload?.detail === 'string' ? payload.detail : ''
+    const code = payload?.error ?? ''
     if (res.status === 400 || /invalid_or_expired_token/i.test(code) || /invalid_or_expired_token/i.test(text)) {
       throw new Error(
         'This confirmation link is invalid or has already been used. Request a new verification email from onboarding, then use the latest message.',
@@ -591,7 +591,7 @@ export async function verifySecondaryEmailToken(token: string): Promise<VerifySe
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     const payload = extractErrorPayload(text)
-    const code = typeof payload?.error === 'string' ? payload.error : typeof payload?.detail === 'string' ? payload.detail : ''
+    const code = payload?.error ?? ''
     if (res.status === 400 || /invalid_or_expired_token|secondary_email_no_longer_current/i.test(code)) {
       throw new Error('This secondary email link is invalid, expired, or no longer current. Save the address again to request a new link.')
     }

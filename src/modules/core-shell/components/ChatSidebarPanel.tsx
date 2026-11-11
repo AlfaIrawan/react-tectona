@@ -1,4 +1,4 @@
-import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
+import { Fragment, useState, useRef, useEffect, useEffectEvent, useLayoutEffect, useMemo, useCallback } from 'react'
 import type { CSSProperties, RefObject } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
@@ -53,9 +53,6 @@ import {
   Check,
   Plus,
   Smile,
-  FileText,
-  Images,
-  Headphones,
   User,
   UserPlus,
   BarChart2,
@@ -170,7 +167,6 @@ import {
   sendTectonaAgentRuntimeMessage,
   uploadChatAttachment,
   type ContextUsageReport,
-  type GenAiChatSessionSummary,
   type RuntimeChatEvidence,
   type RuntimeChatProgress,
   proposeIdeaSummaryFromReply,
@@ -191,7 +187,6 @@ import {
   mergeChatContactLists,
   mergeRealtimePresenceStore,
   syncWorkspacePresenceStore,
-  TECTONA_ASSISTANT_CONTACT,
   AGENT_RUNTIME_CONTACTS,
   fetchExplainerAssistantContacts,
   genAiAssistantDisplayName,
@@ -649,10 +644,6 @@ interface Conversation {
   isBrainstormHistory?: boolean
 }
 
-function formatMessageTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-}
-
 function formatListTime(ts: number): string {
   const d = new Date(ts)
   const now = new Date()
@@ -664,11 +655,6 @@ function formatListTime(ts: number): string {
     return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
   }
   return d.toLocaleDateString('en-US', { day: 'numeric', month: 'short' })
-}
-
-function parseSessionUpdatedAt(value: string): number {
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? parsed : Date.now()
 }
 
 function parseCollaborationTimestamp(value: string | null | undefined): number {
@@ -1018,30 +1004,6 @@ function buildIdeaSectionRevisionChatActions(
   ]
 }
 
-function genAiSessionToConversation(
-  session: GenAiChatSessionSummary,
-  folderLabels: Record<string, string>,
-): Conversation {
-  const rawTitle = (session.title ?? '').trim()
-  const rawPreview = (session.preview ?? '').trim()
-  const safeTitle = isInternalOpeningGreetingMarker(rawTitle)
-    ? 'New conversation'
-    : rawTitle || 'New conversation'
-  const safePreview = isInternalOpeningGreetingMarker(rawPreview)
-    ? 'No messages yet'
-    : rawPreview || 'No messages yet'
-
-  return {
-    id: session.session_id,
-    mode: 'genai',
-    title: safeTitle,
-    aiFolderName: folderLabels[session.session_id],
-    preview: safePreview,
-    updatedAt: parseSessionUpdatedAt(session.updated_at),
-    unreadCount: 0,
-  }
-}
-
 function isInternalOpeningGreetingMarker(text: string | null | undefined): boolean {
   const normalized = (text ?? '').trim()
   if (!normalized) return false
@@ -1049,11 +1011,6 @@ function isInternalOpeningGreetingMarker(text: string | null | undefined): boole
     normalized === BACKEND_OPENING_GREETING_TOKEN ||
     normalized === '(auto) contextual opening greeting requested by sidebar'
   )
-}
-
-function genAiThreadNeedsOpeningGreeting(messages: Array<{ role: string; text?: string }>): boolean {
-  if (messages.length === 0) return true
-  return !messages.some((m) => m.role === 'assistant' && Boolean(m.text?.trim()))
 }
 
 function genAiGreetLoadingMessageId(convId: string): string {
@@ -2039,7 +1996,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   const syncChannelReceiptsAndMessageSequences = useCallback(
     async (conversationId: string, channelId: string, options?: { markAsViewed?: boolean }) => {
-      let maxSeq = 0
       try {
         const ch = await fetchCollaborationChannel(channelId)
         setConversations((prev) =>
@@ -2070,7 +2026,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       let mapped: ChatMessage[] = []
       try {
         const msgs = await listChannelMessages(channelId, { limit: 100 })
-        maxSeq = msgs.reduce((max, m) => Math.max(max, m.sequence_no), 0)
         const actorId = getCurrentChatActorId()
         mapped = applyDisappearingExpiryFilter(
           applyClearHistoryFilter(
@@ -2397,8 +2352,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
   // REST fallback when WebSocket is down (initial sync + periodic safety net).
   useEffect(() => {
-    let cancelled = false
-
     const syncPresence = async () => {
       if (chatContactsRef.current.length <= 1) return
       try {
@@ -2415,7 +2368,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     window.addEventListener('focus', onFocus)
 
     return () => {
-      cancelled = true
       window.clearInterval(intervalId)
       window.removeEventListener('focus', onFocus)
     }
@@ -2487,7 +2439,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
               unreadCount: 0,
               assistantId: row.assistantId ?? existing?.assistantId,
               assistantName: existing?.assistantName,
-              explainerCharacter: existing?.explainerCharacter ?? row.explainerCharacter,
+              explainerCharacter: existing?.explainerCharacter,
             }
           })
           return [...localOnlyGenai, ...genai, ...team].sort((a, b) => b.updatedAt - a.updatedAt)
@@ -2887,8 +2839,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     if (!nextLabel) {
       setAiFolderLabelByKey((prev) => {
         if (prev[key] == null) return prev
-        const { [key]: _, ...rest } = prev
-        return rest
+        const next = { ...prev }
+        delete next[key]
+        return next
       })
       return
     }
@@ -3287,14 +3240,14 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     notifyChatDeletion({ deleted: ids.size, messagesOnly: true })
   }, [activeConversationId, conversations, selectedMessageIds, exitMessageSelection])
 
-  const goHome = () => {
+  const goHome = useCallback(() => {
     setScreen('home')
     setActiveConversationId(null)
     setDraft('')
     setMessageSearchConversationId(null)
     setMessageSearchQuery('')
     exitMessageSelection()
-  }
+  }, [exitMessageSelection])
 
   const goBackFromHeader = () => {
     if (messageSelectionActive) {
@@ -3338,7 +3291,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         goHome()
       }
     },
-    [activeConversationId]
+    [activeConversationId, goHome]
   )
 
   const unarchiveConversation = useCallback((id: string) => {
@@ -3384,7 +3337,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         deletingConversationsRef.current.delete(id)
       }
     },
-    [activeConversationId, conversations]
+    [goHome]
   )
 
   const markAsUnread = useCallback((id: string) => {
@@ -3475,7 +3428,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
             if (activeConversationId === id) goHome()
           } catch (err) {
             pushGlobalToast({
-              variant: 'destructive',
+              variant: 'error',
               title: 'Lock chat',
               description: err instanceof Error ? err.message : 'Failed to enable the lock.',
             })
@@ -3579,7 +3532,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         setChatLockLoading(false)
       }
     },
-    [chatLockPanel, conversations, activeConversationId, proceedOpenConversation, closeChatLockPanel],
+    [chatLockPanel, conversations, activeConversationId, proceedOpenConversation, closeChatLockPanel, goHome],
   )
 
   const toggleBlur = useCallback((id: string) => {
@@ -3601,7 +3554,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
         goHome()
       }
     },
-    [activeConversationId]
+    [activeConversationId, goHome]
   )
 
   const clearChat = useCallback((id: string) => {
@@ -3649,7 +3602,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       }
       clearSelection()
     },
-    [activeConversationId, clearSelection]
+    [activeConversationId, clearSelection, goHome]
   )
 
   const handleChatDragStart = useCallback((event: DragStartEvent) => {
@@ -3734,7 +3687,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       if (shouldCloseHome) queueMicrotask(() => goHome())
       clearSelection()
     },
-    [activeConversationId, clearSelection]
+    [activeConversationId, clearSelection, goHome]
   )
 
   const bulkLock = useCallback(
@@ -3978,7 +3931,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       setDraft('')
       clearSelection()
     },
-    [conversations, clearSelection, bindGroupChannelToConversation, chatContacts],
+    [conversations, clearSelection, bindGroupChannelToConversation],
   )
 
   const createGroupFromContactIds = useCallback(
@@ -4426,10 +4379,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
     }
   }, [pendingChatOpen, fulfillPendingChatOpen, clearPendingChatOpen, chatContacts.length])
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-  }
-
   const removePendingAttachment = useCallback((id: string) => {
     setPendingAttachments((prev) => {
       const found = prev.find((a) => a.id === id)
@@ -4565,7 +4514,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       chatContacts.filter(
         (c) => canPickContactForGroupChat(c, getCurrentChatActorId())
       ),
-    []
+    [chatContacts]
   )
 
   const filteredShareableContactsForAttach = useMemo(() => {
@@ -4974,7 +4923,6 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
 
     if (convMode === 'genai') {
       const manualAttachmentCount = attachSnapshot.length
-      const attCount = manualAttachmentCount + (autoEvidenceAttachment ? 1 : 0)
       const loadingMsgId = `a-loading-${Date.now()}`
       setMessagesById((prev) => ({
         ...prev,
@@ -5543,7 +5491,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       .filter((c): c is Conversation => !!c && c.mode === 'team')
       .map((c) => c.contactName ?? c.title)
       .join(', ')
-  }, [groupDialogPendingContactIds, groupDialogPendingIds, conversations])
+  }, [groupDialogPendingContactIds, groupDialogPendingIds, conversations, chatContacts])
 
   const folderDialogSessionPreview = useMemo(() => {
     return folderDialogPendingIds
@@ -5747,7 +5695,7 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
       if (items.length >= 12) break
     }
     return items
-  }, [contactInfoConversationId, messagesById])
+  }, [contactInfoConversationId, contactInfoConversation?.channelId, messagesById, conversations])
 
   return (
     <div className="chat-sidebar-panel flex h-full min-h-0 flex-col bg-transparent pl-3">
@@ -6441,7 +6389,9 @@ export function ChatSidebarPanel({ documentContext = null }: ChatSidebarPanelPro
                   setDraft={setDraft}
                   pendingAttachments={pendingAttachments}
                   removePendingAttachment={removePendingAttachment}
-                  onPreviewImage={setPendingImagePreview}
+                  onPreviewImage={(attachment) => {
+                    if (attachment.kind === 'image') setPendingImagePreview({ ...attachment, kind: 'image' })
+                  }}
                   isRecordingVoice={isRecordingVoice}
                   onSend={send}
                   onToggleVoiceRecording={toggleVoiceRecording}
@@ -8224,12 +8174,15 @@ function ConversationRowAvatar({
   size?: 'sm' | 'md'
 }) {
   const [logoFailed, setLogoFailed] = useState(false)
-  const [teamImgFailed, setTeamImgFailed] = useState(false)
+  const [failedTeamImage, setFailedTeamImage] = useState<{
+    conversationId: string
+    src: Conversation['contactAvatarSrc']
+  } | null>(null)
   const sm = size === 'sm'
 
-  useEffect(() => {
-    setTeamImgFailed(false)
-  }, [c.contactAvatarSrc, c.id])
+  if (failedTeamImage && (failedTeamImage.conversationId !== c.id || failedTeamImage.src !== c.contactAvatarSrc)) {
+    setFailedTeamImage(null)
+  }
 
   if (c.mode === 'group') {
     return (
@@ -8306,7 +8259,7 @@ function ConversationRowAvatar({
     ? 'h-8 w-8 min-h-8 min-w-8'
     : 'h-11 w-11 min-h-11 min-w-11'
 
-  if (c.contactAvatarSrc && !teamImgFailed) {
+  if (c.contactAvatarSrc && !failedTeamImage) {
     return (
       <div
         className={cn(
@@ -8322,7 +8275,7 @@ function ConversationRowAvatar({
           src={c.contactAvatarSrc}
           alt=""
           className="h-full w-full object-cover"
-          onError={() => setTeamImgFailed(true)}
+          onError={() => setFailedTeamImage({ conversationId: c.id, src: c.contactAvatarSrc })}
         />
         {disappearingBadge}
       </div>
@@ -8456,7 +8409,6 @@ function formatChatThreadDateSeparator(ts: number): string {
     if (msgDay === todayStart - dayMs) return 'Yesterday'
 
     const msgDate = new Date(ts)
-    const now = new Date()
     if (msgDay >= todayStart - 7 * dayMs) {
       return msgDate.toLocaleDateString(undefined, { weekday: 'long' })
     }
@@ -8552,6 +8504,12 @@ function useChatThreadFloatingDate({
   const [label, setLabel] = useState<string | null>(null)
   const [visible, setVisible] = useState(false)
   const hideTimerRef = useRef<number | null>(null)
+  const canScheduleDate = Boolean(conversationKey && messages.length)
+  const [previousDateEligibility, setPreviousDateEligibility] = useState(canScheduleDate)
+  if (previousDateEligibility !== canScheduleDate) {
+    setPreviousDateEligibility(canScheduleDate)
+    if (!canScheduleDate) setVisible(false)
+  }
 
   const resolveLabelFromScroll = useCallback(() => {
     const root = scrollRef.current
@@ -8575,10 +8533,7 @@ function useChatThreadFloatingDate({
   }, [onThreadScroll, revealFloatingDate, resolveLabelFromScroll])
 
   useEffect(() => {
-    if (!conversationKey || messages.length === 0) {
-      setVisible(false)
-      return
-    }
+    if (!canScheduleDate) return
 
     let timeoutId = 0
     const frameId = window.requestAnimationFrame(() => {
@@ -8591,7 +8546,7 @@ function useChatThreadFloatingDate({
       window.cancelAnimationFrame(frameId)
       if (timeoutId) window.clearTimeout(timeoutId)
     }
-  }, [conversationKey, messages.length, revealFloatingDate, resolveLabelFromScroll])
+  }, [canScheduleDate, conversationKey, messages.length, revealFloatingDate, resolveLabelFromScroll])
 
   useEffect(
     () => () => {
@@ -8736,25 +8691,35 @@ function AssistantTypewriterText({
   choiceUiState?: AssistantChoiceUiState | null
   onChoiceSubmit?: (labels: string[], mode: 'single' | 'multiple') => void
 }) {
-  const [visibleText, setVisibleText] = useState('')
-  const [revealedLineCount, setRevealedLineCount] = useState(0)
+  const [animatedText, setAnimatedText] = useState('')
+  const [lineProgress, setLineProgress] = useState({ callback: onTypingProgress, count: 0 })
+  const [animationInput, setAnimationInput] = useState({ messageId, text, speed })
   const completionNotifiedRef = useRef(false)
+
+  // Do not let a new message complete using the previous message's text or lines.
+  if (animationInput.messageId !== messageId || animationInput.text !== text || animationInput.speed !== speed) {
+    setAnimationInput({ messageId, text, speed })
+    setAnimatedText('')
+    setLineProgress({ callback: onTypingProgress, count: 0 })
+  } else if (lineProgress.callback !== onTypingProgress) {
+    setLineProgress({ callback: onTypingProgress, count: 0 })
+  }
+  const visibleText = speed === 'instant' ? text ?? '' : animatedText
+  const revealedLineCount = speed === 'instant' ? visibleText.split('\n').length : lineProgress.count
 
   useEffect(() => {
     completionNotifiedRef.current = false
   }, [messageId, text, speed])
 
+  const captureTypingCallbacks = useEffectEvent(() => ({ onTypingProgress, onTypingComplete }))
+
   useEffect(() => {
     const content = text ?? ''
-    if (!content) {
-      setVisibleText('')
-      setRevealedLineCount(0)
-      return
-    }
+    if (!content) return
 
+    // Keep the callbacks from the render that starts this animation.
+    const { onTypingProgress, onTypingComplete } = captureTypingCallbacks()
     if (speed === 'instant') {
-      setVisibleText(content)
-      setRevealedLineCount(content.split('\n').length)
       if (!completionNotifiedRef.current) {
         completionNotifiedRef.current = true
         onTypingComplete?.(messageId)
@@ -8771,11 +8736,9 @@ function AssistantTypewriterText({
     const tickMs = Math.max(14, Math.floor(maxDurationMs / Math.max(totalTicks, 1)))
 
     let current = 0
-    setVisibleText('')
-    setRevealedLineCount(0)
     const timer = window.setInterval(() => {
       current = Math.min(totalChars, current + charsPerTick)
-      setVisibleText(content.slice(0, current))
+      setAnimatedText(content.slice(0, current))
       onTypingProgress?.()
       if (current >= totalChars) window.clearInterval(timer)
     }, tickMs)
@@ -8786,21 +8749,13 @@ function AssistantTypewriterText({
   useEffect(() => {
     if (!visibleText || visibleText !== text) return
     const lines = visibleText.split('\n').length
-    if (lines <= 1) {
-      setRevealedLineCount(lines)
-      return
-    }
-    if (speed === 'instant') {
-      setRevealedLineCount(lines)
-      return
-    }
+    if (lines <= 1 || speed === 'instant') return
 
-    setRevealedLineCount(0)
     let idx = 0
     const stepMs = speed === 'fast' ? 55 : 85
     const lineTimer = window.setInterval(() => {
       idx += 1
-      setRevealedLineCount(idx)
+      setLineProgress({ callback: onTypingProgress, count: idx })
       onTypingProgress?.()
       if (idx >= lines) window.clearInterval(lineTimer)
     }, stepMs)
@@ -8939,13 +8894,14 @@ function WhatsAppChatBubble({
     !usesAssistantTypewriter || typewriterInstant,
   )
 
-  useEffect(() => {
-    if (!usesAssistantTypewriter || typewriterInstant) {
-      setAssistantTextRevealComplete(true)
-      return
-    }
-    setAssistantTextRevealComplete(false)
-  }, [m.id, m.text, usesAssistantTypewriter, typewriterInstant])
+  const [revealInput, setRevealInput] = useState({
+    messageId: m.id, text: m.text, usesAssistantTypewriter, typewriterInstant,
+  })
+  if (revealInput.messageId !== m.id || revealInput.text !== m.text
+    || revealInput.usesAssistantTypewriter !== usesAssistantTypewriter || revealInput.typewriterInstant !== typewriterInstant) {
+    setRevealInput({ messageId: m.id, text: m.text, usesAssistantTypewriter, typewriterInstant })
+    setAssistantTextRevealComplete(!usesAssistantTypewriter || typewriterInstant)
+  }
 
   const useBubbleShell = isPeople || isUser
 

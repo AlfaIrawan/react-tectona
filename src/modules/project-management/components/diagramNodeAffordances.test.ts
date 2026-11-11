@@ -7,7 +7,7 @@ import type { ArchimateElementNodeData } from '../lib/integrationArchitectureTyp
 import { DiagramInteractionContext } from '../lib/diagramInteractionContext'
 import { connectionHandlePercentsForLength } from '../lib/parsePlantUmlToIntegrationGraph'
 
-const state = vi.hoisted(() => ({ zoom: 1, nodesConnectable: true }))
+const state = vi.hoisted(() => ({ zoom: 1, nodesConnectable: true, measured: true }))
 vi.mock('reactflow', async importOriginal => {
   const original = await importOriginal<typeof import('reactflow')>()
   return {
@@ -17,7 +17,7 @@ vi.mock('reactflow', async importOriginal => {
     useReactFlow: () => ({ setNodes: () => {} }),
     useStore: (selector: (store: unknown) => unknown) => selector({
       transform: [0, 0, state.zoom], nodesConnectable: state.nodesConnectable,
-      edges: [], nodeInternals: new Map(),
+      edges: [], nodeInternals: new Map(state.measured ? [['node-1', { width: 180, height: 96 }]] : []),
     }),
     Handle: ({ id, type, style, children }: { id: string; type: string; style: CSSProperties; children: ReactNode }) =>
       createElement('div', { 'data-testid': type, 'data-id': id, style }, children),
@@ -41,7 +41,7 @@ function render(selected = true, arrows = true, bpmn = false) {
   return container
 }
 
-beforeEach(() => { state.zoom = 1; state.nodesConnectable = true })
+beforeEach(() => { state.zoom = 1; state.nodesConnectable = true; state.measured = true })
 describe('diagram node affordances', () => {
   it('provides many evenly spaced attachment points on a normal-size node', () => {
     expect(connectionHandlePercentsForLength(120)).toEqual([12, 31, 50, 69, 88])
@@ -64,6 +64,11 @@ describe('diagram node affordances', () => {
       expect(arrow.classList.contains('react-flow__handle')).toBe(false)
     }
     expect(node.querySelectorAll('[data-testid="source"]').length).toBeGreaterThan(12)
+  })
+  it('keeps just the four cardinal source handles until the node has a measurement', () => {
+    state.measured = false
+    const ids = [...render().querySelectorAll('[data-testid="source"]')].map((handle) => handle.getAttribute('data-id'))
+    expect(ids).toEqual(['source-top', 'source-right', 'source-bottom', 'source-left'])
   })
   it('keeps controls screen-sized without moving perimeter centers across zoom levels', () => {
     state.zoom = 2

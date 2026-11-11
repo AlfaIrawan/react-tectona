@@ -28,6 +28,14 @@ function gitShortHash(): string {
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        // Keep the Recharts barrel and its internally referenced exports together.
+        manualChunks: { 'vendor-recharts': ['recharts'] },
+      },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version as string),
     __APP_BUILD_HASH__: JSON.stringify(gitShortHash()),

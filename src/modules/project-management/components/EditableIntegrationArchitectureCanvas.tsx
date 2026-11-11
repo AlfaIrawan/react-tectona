@@ -552,8 +552,8 @@ function EditableIntegrationArchitectureCanvasInner({
         const node = nodeById.get(nodeId)
         if (!node) return null
         const position = absolutePosition(node)
-        const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? 0)
-        const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? 0)
+        const width = Number(node.width ?? node.style?.width ?? 0)
+        const height = Number(node.height ?? node.style?.height ?? 0)
         if (!width || !height) return null
         return { x: position.x, y: position.y, width, height }
       }
@@ -580,7 +580,8 @@ function EditableIntegrationArchitectureCanvasInner({
         if (!selected) return current
 
         const nextSelected = { ...selected, data: { ...selected.data, ...patch } as ArchimateNodeData }
-        const containable = patch.arrange?.containable
+        const arrange = patch.arrange
+        const containable = arrange && typeof arrange === 'object' && 'containable' in arrange ? arrange.containable : undefined
         if (typeof containable !== 'boolean') {
           return current.map((node) => (node.id === selectedNodeId ? nextSelected : node))
         }
@@ -650,7 +651,7 @@ function EditableIntegrationArchitectureCanvasInner({
     markCustomized()
     setNodes((current) =>
       current.map((node) => {
-        if (node.id !== selectedNodeId) return node
+        if (node.id !== selectedNodeId || node.data.kind === 'legend') return node
         const currentAngle = node.data.textStyle?.angle ?? 0
         const nextAngle = (currentAngle + 90) % 360
         return {
@@ -907,8 +908,8 @@ function EditableIntegrationArchitectureCanvasInner({
           return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
         }
         const dimensions = (node: Node<ArchimateNodeData>) => ({
-          width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 0),
-          height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 0),
+          width: Number(node.width ?? node.style?.width ?? 0),
+          height: Number(node.height ?? node.style?.height ?? 0),
         })
         const isDescendant = (candidateId: string, ancestorId: string) => {
           let candidate = nodeById.get(candidateId)
@@ -999,8 +1000,8 @@ function EditableIntegrationArchitectureCanvasInner({
           const node = nodeById.get(nodeId)
           if (!node) return null
           const position = absolutePosition(node)
-          const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? 0)
-          const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? 0)
+          const width = Number(node.width ?? node.style?.width ?? 0)
+          const height = Number(node.height ?? node.style?.height ?? 0)
           if (!width || !height) return null
           return { x: position.x, y: position.y, width, height }
         }
@@ -1145,8 +1146,8 @@ function EditableIntegrationArchitectureCanvasInner({
           return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
         }
         const dimensions = (node: Node<ArchimateNodeData>) => ({
-          width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 200),
-          height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 90),
+          width: Number(node.width ?? node.style?.width ?? 200),
+          height: Number(node.height ?? node.style?.height ?? 90),
         })
         const newSize = dimensions(newNode)
         const center = {
@@ -1997,22 +1998,22 @@ function EditableIntegrationArchitectureCanvasInner({
         </button>
         {canvasMenu.submenu === 'options' ? (
           <DiagramEditorSubmenu className="w-64 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
-            {[
+            {([
               ['Grid', showGrid, setShowGrid, Grid3X3],
               ['Snap to grid', snapToGrid, setSnapToGrid, Magnet],
               ['Guides', showGuides, setShowGuides, MousePointer2],
               ['Ruler', showRuler, setShowRuler, Ruler],
               ['Connection arrows', showConnectionArrows, setShowConnectionArrows, ArrowRight],
               ['Connection points', showConnectionPoints, setShowConnectionPoints, Crosshair],
-            ].map(([label, enabled, setter, Icon]) => (
+            ] as const).map(([label, enabled, setter, Icon]) => (
               <button
                 type="button"
-                key={label as string}
+                key={label}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
-                onClick={() => (setter as (value: boolean) => void)(!(enabled as boolean))}
+                onClick={() => setter(!enabled)}
               >
                 <span className="w-4 text-sky-500">{enabled ? <Check className="h-4 w-4" /> : null}</span>
-                {Icon ? <Icon className="h-4 w-4 text-slate-500" /> : null}{label as string}
+                <Icon className="h-4 w-4 text-slate-500" />{label}
               </button>
             ))}
           </DiagramEditorSubmenu>

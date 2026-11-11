@@ -44,7 +44,8 @@ function isKnowledgeBaseChange(message: unknown): message is Record<string, unkn
 function workspaceIdFromMessage(message: Record<string, unknown>): string | null | undefined {
   const payload = (message.payload ?? message.data ?? message.detail) as Record<string, unknown> | undefined
   const workspaceId = payload?.workspace_id ?? payload?.workspaceId ?? message.workspace_id ?? message.workspaceId
-  return typeof workspaceId === 'string' || workspaceId === null ? workspaceId : undefined
+  if (typeof workspaceId === 'string') return workspaceId
+  return workspaceId === null ? null : undefined
 }
 
 class ApplicationCatalogRealtimeController {

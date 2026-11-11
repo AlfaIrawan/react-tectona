@@ -2,7 +2,7 @@ import { useDiagramInteractions } from '../lib/diagramInteractionContext'
 import './diagramNodeAffordances.css'
 import { InlineDiagramNodeTitle } from './InlineDiagramNodeTitle'
 import { connectionAnchor, retainConnectionHandlePercents } from '@/modules/project-management/lib/diagramConnections'
-import { Handle, NodeResizer, NodeResizeControl, useNodeId, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
+import { Handle, NodeResizer, NodeResizeControl, useNodeId, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Library, Link2 } from 'lucide-react'
 import {
@@ -210,7 +210,7 @@ function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }:
   )
 }
 
-export function ArchimateElementNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+export function ArchimateElementNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const resolvedVisual = data.visual
   const layerFill = getArchimateLayerFillBackground(
     data.layer,
@@ -229,7 +229,7 @@ export function ArchimateElementNode({ id, data, selected, width, height }: Node
   return (
     <div className="group relative h-full w-full">
       <SelectionResizer selected={selected} minWidth={100} minHeight={56} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={`${width ?? 0}x${height ?? 0}`} />
+      <ConnectionHandles nodeId={id} selected={selected} />
 
       <div className="relative h-full w-full overflow-hidden border" style={boxStyle}>
         {notationImageUrl ? (
@@ -259,7 +259,7 @@ export function ArchimateElementNode({ id, data, selected, width, height }: Node
   )
 }
 
-export function ArchimateBoundaryNode({ id, data, selected, width, height }: NodeProps<ArchimateBoundaryNodeData>) {
+export function ArchimateBoundaryNode({ id, data, selected }: NodeProps<ArchimateBoundaryNodeData>) {
   const boxStyle = buildIntegrationNodeBoxStyle({
     ...data.visual,
     lineStyle: data.visual?.lineStyle ?? 'dashed',
@@ -271,7 +271,7 @@ export function ArchimateBoundaryNode({ id, data, selected, width, height }: Nod
   return (
     <div className="group relative h-full w-full">
       <SelectionResizer selected={selected} minWidth={180} minHeight={120} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={`${width ?? 0}x${height ?? 0}`} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       <div className="flex h-full w-full flex-col border-2 px-4 py-3" style={{ ...boxStyle, justifyContent: data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle).justifyContent : undefined }}>
         <p style={buildIntegrationNodeTextStyle(data.textStyle)} className="boundary-chrome pointer-events-auto text-xs font-semibold text-slate-600">{data.title}</p>
       </div>
@@ -279,7 +279,7 @@ export function ArchimateBoundaryNode({ id, data, selected, width, height }: Nod
   )
 }
 
-export function ArchimateNoteNode({ id, data, selected, width, height }: NodeProps<ArchimateNoteNodeData>) {
+export function ArchimateNoteNode({ id, data, selected }: NodeProps<ArchimateNoteNodeData>) {
   const boxStyle = buildIntegrationNodeBoxStyle({
     ...data.visual,
     fillEnabled: data.visual?.fillEnabled ?? true,
@@ -291,7 +291,7 @@ export function ArchimateNoteNode({ id, data, selected, width, height }: NodePro
   return (
     <div className="group relative h-full w-full">
       <SelectionResizer selected={selected} minWidth={160} minHeight={60} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={`${width ?? 0}x${height ?? 0}`} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       <div className="flex h-full w-full flex-col border px-4 py-3" style={{ ...boxStyle, justifyContent: data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle).justifyContent : undefined }}>
         <p style={buildIntegrationNodeTextStyle(data.textStyle)} className="text-xs font-semibold text-slate-900">{data.title}</p>
         {data.lines.map((line, index) => (
@@ -318,7 +318,7 @@ const C4_INTERNAL_LINE = '#3C7FC0'
 const C4_EXTERNAL_FILL = '#999999'
 const C4_EXTERNAL_LINE = '#8A8A8A'
 
-export function C4ElementNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+export function C4ElementNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const { setNodes } = useReactFlow()
   const [editingField, setEditingField] = useState<'title' | 'description' | null>(null)
   const [draft, setDraft] = useState('')
@@ -328,7 +328,6 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
   const line = data.visual?.lineColor || (external ? C4_EXTERNAL_LINE : C4_INTERNAL_LINE)
   const isPerson = data.stereotype.toLowerCase().includes('person')
   const isDatabase = data.notationId?.endsWith('Db') === true
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
 
   useEffect(() => {
     if (!editingField) return
@@ -378,7 +377,7 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
   return (
     <div className="group relative h-full w-full overflow-visible">
       <SelectionResizer selected={selected} minWidth={140} minHeight={72} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       {data.applicationCatalogName ? (
         <span
           title={`Application Catalog: ${data.applicationCatalogName}`}
@@ -414,7 +413,7 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
         <p className="text-[10px] italic leading-none opacity-90">{`<<${data.stereotype}>>`}</p>
         {editingField === 'title' ? (
           <input
-            ref={editorRef}
+            ref={(element) => { editorRef.current = element }}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => finishEditing(true)}
@@ -438,7 +437,7 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
         )}
         {editingField === 'description' ? (
           <textarea
-            ref={editorRef}
+            ref={(element) => { editorRef.current = element }}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => finishEditing(true)}
@@ -670,10 +669,9 @@ function ExternalNodeLabel({
   )
 }
 
-export function BpmnElementNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+export function BpmnElementNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const type = data.notationId
   const kind = classifyBpmnType(type)
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
   const stroke = bpmnResolvedLineColor(type, data.visual?.lineColor)
   const fill = data.visual?.fillColor || '#ffffff'
   const bpmnBoxStyle = buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: stroke, lineWidth: kind.eventPhase === 'end' ? 4 : kind.taskMarker === 'call' ? 3 : 2, lineStyle: kind.eventSubprocess ? 'dashed' : 'solid', ...data.visual })
@@ -691,7 +689,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         minHeight={lockSquare ? minSize : isAnnotation ? 40 : kind.family === 'pool' || kind.family === 'lane' ? 64 : 56}
         keepAspectRatio={lockSquare || Boolean(data.arrange?.constrainProportions)}
       />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} shape={isEvent ? 'ellipse' : isGateway ? 'diamond' : 'rectangle'} />
+      <ConnectionHandles nodeId={id} selected={selected} shape={isEvent ? 'ellipse' : isGateway ? 'diamond' : 'rectangle'} />
       {isEvent ? (
         <div className="flex h-full w-full items-center justify-center">
           <div
@@ -835,8 +833,7 @@ function memberTypography(textStyle: ArchimateElementNodeData['textStyle']): CSS
   }
 }
 
-export function UmlClassNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
+export function UmlClassNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const members = data.description.map(raw => classMember(raw, data.umlStereotype !== 'field_sketch')).filter((member) => member.label)
   const attributes = members.filter((member) => !member.isMethod)
   const methods = members.filter((member) => member.isMethod)
@@ -845,7 +842,7 @@ export function UmlClassNode({ id, data, selected, width, height }: NodeProps<Ar
   return (
     <div className="group relative h-full w-full overflow-visible">
       <SelectionResizer selected={selected} minWidth={140} minHeight={34} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       <div
         className="flex h-full w-full flex-col overflow-hidden text-slate-900"
         style={{ ...buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: border, rounded: true, ...data.visual }), fontFamily: 'Segoe UI, Arial, sans-serif' }}
@@ -897,15 +894,14 @@ function erdColumn(raw: string, inferForeignKey = true): { name: string; label: 
   return { name, label: typeName ? `${name} : ${typeName}` : name, pk, fk }
 }
 
-export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
+export function ErdEntityNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const fill = data.visual?.fillColor || '#FFF4CC'
   const stroke = data.visual?.lineColor || '#C4A35A'
   const columns = data.description.map(raw => erdColumn(raw, data.umlStereotype !== 'field_sketch')).filter((column) => column.name)
   return (
     <div className="group relative h-full w-full overflow-visible">
       <SelectionResizer selected={selected} minWidth={150} minHeight={64} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       <div
         className="flex h-full w-full min-h-0 flex-col overflow-hidden text-left text-slate-800"
         style={{ ...buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: stroke, lineWidth: 1.5, rounded: false, ...data.visual }), fontFamily: 'Arial, Helvetica, sans-serif' }}
@@ -942,17 +938,4 @@ export function UmlUseCaseNode({ id, data, selected, width, height }: NodeProps<
       <span style={data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle) : undefined}><InlineDiagramNodeTitle nodeId={id} value={data.title} /></span>
     </div>
   </div>
-}
-
-export const integrationArchimateNodeTypes: NodeTypes = {
-  archimateElement: ArchimateElementNode,
-  archimateBoundary: ArchimateBoundaryNode,
-  archimateNote: ArchimateNoteNode,
-  archimateImage: ArchimateImageNode,
-  archimateLegend: ArchimateLegendNode,
-  c4Element: C4ElementNode,
-  umlClass: UmlClassNode,
-  umlUseCase: UmlUseCaseNode,
-  erdEntity: ErdEntityNode,
-  bpmnElement: BpmnElementNode,
 }

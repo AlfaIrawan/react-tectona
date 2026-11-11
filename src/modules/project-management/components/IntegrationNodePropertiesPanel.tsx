@@ -167,23 +167,24 @@ export function IntegrationNodePropertiesPanel({
   c4Mode = false,
 }: IntegrationNodePropertiesPanelProps) {
   const [tab, setTab] = useState<PropertiesTab>('style')
+  const styleData = selectedNode.data.kind === 'legend' ? null : selectedNode.data
   const elementData = isArchimateElementData(selectedNode.data) ? selectedNode.data : null
   const layer = elementData?.layer
   const visual = resolveNodeVisual({
     ...(selectedNode.data.kind === 'boundary' ? { fillEnabled: false, fillColor: '#ffffff', lineColor: '#64748b', lineStyle: 'dashed' as const } : {}),
     ...(selectedNode.data.kind === 'note' ? { fillColor: '#ffffff', lineColor: '#e2e8f0' } : {}),
-    ...selectedNode.data.visual,
+    ...styleData?.visual,
   }, layer)
-  const textStyle = resolveNodeTextStyle(selectedNode.data.textStyle)
-  const arrange = selectedNode.data.arrange ?? {}
+  const textStyle = resolveNodeTextStyle(styleData?.textStyle)
+  const arrange = styleData?.arrange ?? {}
   const size = useMemo(() => readIntegrationNodeSize(selectedNode), [selectedNode])
 
   const patchVisual = (patch: Partial<IntegrationNodeVisualStyle>) => {
-    onUpdateData({ visual: { ...selectedNode.data.visual, ...patch } })
+    onUpdateData({ visual: { ...styleData?.visual, ...patch } })
   }
 
   const patchTextStyle = (patch: Partial<IntegrationNodeTextStyle>) => {
-    onUpdateData({ textStyle: { ...selectedNode.data.textStyle, ...patch } })
+    onUpdateData({ textStyle: { ...styleData?.textStyle, ...patch } })
   }
 
   const patchArrange = (patch: Partial<IntegrationNodeArrangeOptions>) => {
@@ -202,7 +203,7 @@ export function IntegrationNodePropertiesPanel({
       stereotype: c4Stereotype(kind),
       notationId: kind,
       visual: {
-        ...selectedNode.data.visual,
+        ...elementData.visual,
         fillEnabled: true,
         fillColor: item.fill,
         lineEnabled: true,

@@ -35,7 +35,7 @@ function formatUnknownValue(value: unknown): string {
 }
 
 function section(title: string, lines: Array<string | false | null | undefined>) {
-  const content = lines.filter((line): line is string => Boolean(line?.trim()))
+  const content = lines.filter((line) => typeof line === 'string' && line.trim())
   return content.length ? [title, ...content].join('\n') : ''
 }
 

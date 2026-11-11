@@ -22,8 +22,10 @@ import {
   type Edge,
   type EdgeTypes,
   type Node,
+  type NodeTypes,
   type OnEdgesChange,
   type OnNodesChange,
+  type OnMove,
   type OnSelectionChangeFunc,
   type ReactFlowInstance,
   type Viewport,
@@ -31,7 +33,18 @@ import {
 import { CanvasViewportGrid, CanvasViewportRulers } from '@/modules/project-management/components/CanvasViewportRulers'
 import { AnchoredSmoothStepEdge } from '@/modules/project-management/components/AnchoredSmoothStepEdge'
 import { ErdCrowfootEdge } from '@/modules/project-management/components/ErdCrowfootEdge'
-import { integrationArchimateNodeTypes } from '@/modules/project-management/components/integrationArchimateNodeTypes'
+import {
+  ArchimateBoundaryNode,
+  ArchimateElementNode,
+  ArchimateImageNode,
+  ArchimateLegendNode,
+  ArchimateNoteNode,
+  BpmnElementNode,
+  C4ElementNode,
+  ErdEntityNode,
+  UmlClassNode,
+  UmlUseCaseNode,
+} from '@/modules/project-management/components/integrationArchimateNodeTypes'
 import { isArchimateElementData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
 const INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS = { type: 'smoothstep' as const }
@@ -39,7 +52,18 @@ const INTEGRATION_FLOW_FIT_VIEW_OPTIONS = { padding: 0.08, minZoom: 0.1, maxZoom
 const INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS = { padding: 0.22, minZoom: 0.000001, maxZoom: 1 }
 const INTEGRATION_FLOW_PRO_OPTIONS = { hideAttribution: true as const }
 const INTEGRATION_EDGE_TYPES: EdgeTypes = { smoothstep: AnchoredSmoothStepEdge, erd: ErdCrowfootEdge }
-const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
+const INTEGRATION_NODE_TYPES: NodeTypes = {
+  archimateElement: ArchimateElementNode,
+  archimateBoundary: ArchimateBoundaryNode,
+  archimateNote: ArchimateNoteNode,
+  archimateImage: ArchimateImageNode,
+  archimateLegend: ArchimateLegendNode,
+  c4Element: C4ElementNode,
+  umlClass: UmlClassNode,
+  umlUseCase: UmlUseCaseNode,
+  erdEntity: ErdEntityNode,
+  bpmnElement: BpmnElementNode,
+}
 const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
 
 
@@ -106,7 +130,7 @@ type IntegrationArchitectureFlowProps = {
   canRedo?: boolean
   onAddText?: () => void
   onInsertImage?: () => void
-  onMoveEnd?: (event: MouseEvent | TouchEvent, viewport: Viewport) => void
+  onMoveEnd?: OnMove
 }
 
 function IntegrationArchitectureFlowInner({

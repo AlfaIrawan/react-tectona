@@ -31,6 +31,21 @@ type MessageSentPayload = ChatMessageRealtimePayload & {
   app_id?: string
 }
 
+function readVoiceRecordPayload(payload: unknown): VoiceRecordRequestRealtimePayload | null {
+  if (!payload || typeof payload !== 'object') return null
+  if (!('from_user_id' in payload) || typeof payload.from_user_id !== 'string') return null
+  if (!('target_user_id' in payload) || typeof payload.target_user_id !== 'string') return null
+  return {
+    from_user_id: payload.from_user_id,
+    target_user_id: payload.target_user_id,
+    app_id: 'app_id' in payload && typeof payload.app_id === 'string' ? payload.app_id : undefined,
+    workspace_id: 'workspace_id' in payload && typeof payload.workspace_id === 'string' ? payload.workspace_id : undefined,
+    note_hint: 'note_hint' in payload && typeof payload.note_hint === 'string' ? payload.note_hint : null,
+    requested_at: 'requested_at' in payload && typeof payload.requested_at === 'string' ? payload.requested_at : undefined,
+    accepted_at: 'accepted_at' in payload && typeof payload.accepted_at === 'string' ? payload.accepted_at : undefined,
+  }
+}
+
 /** Poll inbox for new messages (fallback when WebSocket is down). */
 const INBOX_POLL_MS = 5_000
 
@@ -109,7 +124,6 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
     let reconnectTimer: number | null = null
     let inboxPollTimer: number | null = null
     let reconnectAttempt = 0
-    let stopSessionActive: (() => void) | undefined
     let inboxPollInFlight = false
 
     const clearReconnect = () => {
@@ -318,7 +332,8 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
             return
           }
           if (parsed.type === 'voice.record_request' && parsed.payload) {
-            const p = parsed.payload as VoiceRecordRequestRealtimePayload
+            const p = readVoiceRecordPayload(parsed.payload)
+            if (!p) return
             const sessionUserId = getSession()?.user?.id
             if (
               sessionUserId
@@ -331,7 +346,8 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
             return
           }
           if (parsed.type === 'voice.record_accepted' && parsed.payload) {
-            const p = parsed.payload as VoiceRecordRequestRealtimePayload
+            const p = readVoiceRecordPayload(parsed.payload)
+            if (!p) return
             const sessionUserId = getSession()?.user?.id
             if (sessionUserId) {
               useVoiceRecordRequestStore.getState().applyAcceptedFromRealtime(p, sessionUserId)
@@ -388,7 +404,7 @@ export function useCollaborationPresenceRealtime(onPresenceUpdated: PresenceReal
     }
 
     connect()
-    stopSessionActive = onSessionActive(connect)
+    const stopSessionActive = onSessionActive(connect)
     void pollInboxForNewMessages()
     inboxPollTimer = window.setInterval(() => void pollInboxForNewMessages(), INBOX_POLL_MS)
     document.addEventListener('visibilitychange', onVisibilityOrFocus)

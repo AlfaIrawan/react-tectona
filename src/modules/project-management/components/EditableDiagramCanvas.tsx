@@ -1,6 +1,6 @@
+import { type DiagramFormat, c4RelationEdgeStyle, BPMN_LAYOUT_MARK, withFacingHandles, graphFromUml, parseSource } from '../lib/editableDiagramGraph'
 import { remapErdForeignKey } from '../lib/erdForeignKeyMapping'
-import { erdEntityDefaultSize } from '../lib/erdEntityLayout'
-import { createUseCaseNode, parseUseCaseDiagram, serializeUseCaseDiagram, getUseCaseConnectionStyle } from '../lib/useCasePlantUml'
+import { createUseCaseNode, serializeUseCaseDiagram, getUseCaseConnectionStyle } from '../lib/useCasePlantUml'
 import { ErdDdlImportDialog } from './ErdDdlImportDialog'
 import type { ErdDdlImportResult } from '../lib/erdDdlImport'
 import { ErdDdlDialog } from './ErdDdlDialog'
@@ -14,8 +14,8 @@ import { c4GraphFromCanvas, mapC4Relations } from '@/modules/project-management/
 import { mergeDiagramSourceNodes, mergeDiagramSourceEdges } from '@/modules/project-management/lib/diagramSourceMerge'
 import { isStoredDiagramGraph } from '@/modules/project-management/lib/diagramGraphPersistence'
 import { useDiagramHistory } from '@/modules/project-management/lib/useDiagramHistory'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { AppWindow, ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, ExternalLink, Grid3X3, GripVertical, History, ImageDown, Layers, LayoutTemplate, Link2, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, RotateCcw, Ruler, Scissors, Settings2, Sparkles, Trash2, Unlink, Waypoints } from 'lucide-react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { AppWindow, ArrowDown, ArrowRight, ArrowRightLeft, Check, ChevronRight, ChevronsDown, ChevronsLeft, ChevronsRight, ChevronsUp, Circle, Copy, Crosshair, ExternalLink, Grid3X3, GripVertical, History, ImageDown, Layers, LayoutTemplate, Link2, ListChecks, Magnet, MousePointer2, Paintbrush, PencilLine, RefreshCw, RotateCcw, Ruler, Scissors, Settings2, Sparkles, Trash2, Unlink, Waypoints } from 'lucide-react'
 import {
   ReactFlowProvider,
   addEdge,
@@ -30,7 +30,7 @@ import {
   type OnSelectionChangeFunc,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { reconnectDiagramEdge, hasManualConnectionHandles } from '@/modules/project-management/lib/diagramConnections'
+import { reconnectDiagramEdge } from '@/modules/project-management/lib/diagramConnections'
 import { canvasDocumentSnapshot, renderDiagramViewportImage, renderDiagramViewportSvg } from '@/modules/project-management/lib/canvasDocumentSnapshot'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -47,13 +47,11 @@ import { BPMN_PALETTE_MIME, createBpmnNodeFromPaletteItem, type BpmnPaletteItem 
 import { C4_APPLICATION_CATALOG_MIME, C4_PALETTE_MIME, C4_PALETTE_ITEMS, createC4NodeFromApplicationCatalog, createC4NodeFromPaletteItem, findC4ApplicationCatalogMatch, type C4ApplicationCatalogItem, type C4PaletteItem } from '@/modules/project-management/lib/c4NotationPalette'
 import { type DiagramChatDraft } from '@/modules/project-management/lib/diagramChatDraft'
 import { isArchimateElementData, type ArchimateElementNodeData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
-import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, parseC4Graph, serializeC4Graph, type C4ElementKind, type C4ParsedGraph } from '@/modules/project-management/lib/c4PlantUml'
-import { parseUmlDiagram, serializeUmlDiagram, umlRelationDefaults, umlLinkToCanvasData, umlLinkFromCanvasEdge, erdRelationDefaults, type UmlBox, type UmlDiagram, type UmlRelation, type UmlView } from '@/modules/project-management/lib/classErdPlantUml'
+import { c4LevelFromDiagramKey, c4Stereotype, isC4External, normalizeC4PlantUml, serializeC4Graph } from '@/modules/project-management/lib/c4PlantUml'
+import { serializeUmlDiagram, umlRelationDefaults, umlLinkToCanvasData, umlLinkFromCanvasEdge, erdRelationDefaults, type UmlBox, type UmlRelation } from '@/modules/project-management/lib/classErdPlantUml'
 import { isCanvasViewport, type CanvasViewport } from '@/modules/project-management/lib/integrationGraphStorage'
-import { defaultIntegrationNodeTextStyle, defaultIntegrationNodeVisual } from '@/modules/project-management/lib/integrationNodeAppearance'
-import { pickCenteredAnchoredHandles, type NodeGeometry } from '@/modules/project-management/lib/parsePlantUmlToIntegrationGraph'
-import { parseBpmnSource, serializeBpmnCanvasToPlantUml, toBpmnEditorSource } from '@/modules/project-management/lib/bpmnPlantUml'
-import { bpmnDefaultLineColor, bpmnNodeSizeForType, isBpmnSquareShape } from '@/modules/project-management/lib/bpmnNotationSpec'
+import { serializeBpmnCanvasToPlantUml, toBpmnEditorSource } from '@/modules/project-management/lib/bpmnPlantUml'
+import { isBpmnSquareShape } from '@/modules/project-management/lib/bpmnNotationSpec'
 import { useTenantContextOptional } from '@/auth/TenantContext'
 import { listAllKbEntries } from '@/lib/api/tectonaKbApi'
 import { subscribeToApplicationCatalogChanges } from '@/lib/kb/applicationCatalogRealtime'
@@ -71,11 +69,7 @@ import {
   printDiagram,
 } from '@/modules/project-management/lib/diagramCanvasExport'
 
-type DiagramFormat = 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd' | 'use-case'
-type ParsedKind = 'activity' | 'decision' | 'start' | 'end'
-type ParsedNode = { id: string; label: string; kind: ParsedKind; bpmnType?: string; lane?: string }
-type ParsedGraph = { nodes: ParsedNode[]; edges: Array<{ id: string; source: string; target: string; label?: string; bpmnFlowType?: string }> }
-type DiagramStore = Record<string, { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source?: string; viewport?: CanvasViewport; snapToGrid?: boolean }>
+type DiagramStore = Record<string, { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source?: string; viewport?: CanvasViewport; snapToGrid?: boolean; draftBeforeSavedGraph?: boolean }>
 
 const STORAGE_KEY = 'tectona-idea-editable-diagrams-v2'
 const STUDIO_PANEL_MARGIN_PX = 8
@@ -89,26 +83,6 @@ const STUDIO_PANEL_COLLAPSED_WIDTH_PX = 140
 const STUDIO_PANEL_COLLAPSED_HEIGHT_PX = 44
 type StudioPanelResizeEdge = 'e' | 's' | 'se'
 type PropertiesPanelResizeEdge = 'e' | 's' | 'se' | 'w' | 'sw'
-const NODE_WIDTH = 210
-const NODE_HEIGHT = 78
-
-function bpmnStereotype(type: string): string {
-  if (type === 'startEvent') return 'Start Event'
-  if (type === 'endEvent') return 'End Event'
-  if (type === 'userTask') return 'User Task'
-  if (type === 'serviceTask') return 'Service Task'
-  if (type === 'scriptTask') return 'Script Task'
-  if (type === 'exclusiveGateway') return 'Exclusive Gateway'
-  if (type === 'parallelGateway') return 'Parallel Gateway'
-  if (type === 'inclusiveGateway') return 'Inclusive Gateway'
-  if (type === 'textAnnotation') return 'Text Annotation'
-  return 'Task'
-}
-
-function bpmnNodeSize(type: string): { width: number; height: number } {
-  return bpmnNodeSizeForType(type)
-}
-
 function isBpmnSquareLocked(node: Node<ArchimateNodeData>): boolean {
   if (node.type !== 'bpmnElement' || node.data.kind !== 'element') return false
   return isBpmnSquareShape(node.data.notationId)
@@ -181,29 +155,6 @@ function createUmlPaletteNode(item: UmlPaletteItem, position: { x: number; y: nu
   }
 }
 
-function c4RelationEdgeStyle(macro?: string): Pick<Edge, 'style' | 'markerEnd' | 'markerStart' | 'data'> {
-  return {
-    markerStart: macro === 'BiRel' ? { type: MarkerType.ArrowClosed, color: '#64748b', width: 9, height: 9 } : undefined,
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#64748b', width: 9, height: 9 },
-    style: { stroke: '#64748b', strokeWidth: 1.5, strokeDasharray: '4 4' },
-    data: {
-      visual: {
-        lineEnabled: true,
-        lineColor: '#64748b',
-        lineWidth: 1.5,
-        lineStyle: 'dashed',
-        startArrow: macro === 'BiRel' ? 'classic' : 'none',
-        endArrow: 'classic',
-        startFill: false,
-        endFill: true,
-        startSize: 6,
-        endSize: 6,
-        waypoints: 'rounded',
-      },
-    },
-  }
-}
-
 function normalizeC4RelationEdges(edges: Edge[]): Edge[] {
   return mapC4Relations(edges, (edge) => {
     return {
@@ -222,349 +173,7 @@ function squareSize(width: number, height: number): number {
   return Math.max(width, height)
 }
 
-const BPMN_LANE_BAND = 36
-const BPMN_LANE_HEIGHT = 188
-const BPMN_COLUMN_PITCH = 248
-const BPMN_LANE_PAD_TOP = 32
-const BPMN_LANE_PAD_BOTTOM = 56
-const BPMN_STACK_GAP = 20
-const BPMN_LAYOUT_MARK = 'swimlane-layout-2'
-
-function layoutBpmnPositions(nodes: ParsedNode[], edges: ParsedGraph['edges']): Map<string, { x: number; y: number }> {
-  const lanes = swimlaneOrder(nodes)
-  if (lanes.length >= 2) return layoutBpmnSwimlanes(nodes, edges, lanes)
-  const outgoing = new Map<string, string[]>()
-  const indegree = new Map(nodes.map((node) => [node.id, 0]))
-  for (const edge of edges) {
-    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target])
-    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
-  }
-  const level = new Map<string, number>()
-  const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id)
-  if (!queue.length && nodes[0]) queue.push(nodes[0].id)
-  const seen = new Set<string>()
-  while (queue.length) {
-    const id = queue.shift()
-    if (!id || seen.has(id)) continue
-    seen.add(id)
-    const current = level.get(id) ?? 0
-    for (const target of outgoing.get(id) ?? []) {
-      level.set(target, Math.max(level.get(target) ?? 0, current + 1))
-      queue.push(target)
-    }
-    if (!level.has(id)) level.set(id, current)
-  }
-  const buckets = new Map<number, string[]>()
-  for (const node of nodes) {
-    const depth = level.get(node.id) ?? 0
-    buckets.set(depth, [...(buckets.get(depth) ?? []), node.id])
-  }
-  const positions = new Map<string, { x: number; y: number }>()
-  const levelPitch = 148
-  const branchGap = 36
-  const centerX = 480
-  for (const [depth, ids] of buckets) {
-    const totalWidth = ids.reduce((width, id) => width + bpmnNodeSize(nodes.find((node) => node.id === id)?.bpmnType ?? 'task').width, 0)
-      + Math.max(0, ids.length - 1) * branchGap
-    let nextX = centerX - totalWidth / 2
-    ids.forEach((id) => {
-      const size = bpmnNodeSize(nodes.find((node) => node.id === id)?.bpmnType ?? 'task')
-      positions.set(id, {
-        x: nextX,
-        y: 48 + depth * levelPitch,
-      })
-      nextX += size.width + branchGap
-    })
-  }
-  return positions
-}
-
-function swimlaneOrder(nodes: ParsedNode[]): string[] {
-  const order: string[] = []
-  for (const node of nodes) {
-    if (node.lane && !order.includes(node.lane)) order.push(node.lane)
-  }
-  return order
-}
-
-function bpmnColumnRank(nodes: ParsedNode[], edges: ParsedGraph['edges']): Map<string, number> {
-  const outgoing = new Map<string, string[]>()
-  const indegree = new Map(nodes.map((node) => [node.id, 0]))
-  for (const edge of edges) {
-    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target])
-    indegree.set(edge.target, (indegree.get(edge.target) ?? 0) + 1)
-  }
-  const rank = new Map<string, number>()
-  const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0).map((node) => node.id)
-  if (!queue.length && nodes[0]) queue.push(nodes[0].id)
-  const seen = new Set<string>()
-  while (queue.length) {
-    const id = queue.shift()
-    if (!id || seen.has(id)) continue
-    seen.add(id)
-    const current = rank.get(id) ?? 0
-    for (const target of outgoing.get(id) ?? []) {
-      rank.set(target, Math.max(rank.get(target) ?? 0, current + 1))
-      queue.push(target)
-    }
-    if (!rank.has(id)) rank.set(id, current)
-  }
-  return rank
-}
-
-function swimlaneFrames(nodes: ParsedNode[], edges: ParsedGraph['edges'], lanes: string[]) {
-  const rank = bpmnColumnRank(nodes, edges)
-  const slot = new Map<string, number>()
-  const used = new Map<string, number>()
-  for (const node of nodes) {
-    const key = `${node.lane ?? lanes[0]}:${rank.get(node.id) ?? 0}`
-    slot.set(node.id, used.get(key) ?? 0)
-    used.set(key, (used.get(key) ?? 0) + 1)
-  }
-  const heights = lanes.map((lane) => {
-    const members = nodes.filter((node) => (node.lane ?? lanes[0]) === lane)
-    const rows = Math.max(1, ...members.map((node) => (slot.get(node.id) ?? 0) + 1))
-    const tallest = Math.max(BPMN_LANE_HEIGHT - BPMN_LANE_PAD_TOP - BPMN_LANE_PAD_BOTTOM, ...members.map((node) => bpmnNodeSize(node.bpmnType ?? 'task').height))
-    return Math.max(BPMN_LANE_HEIGHT, BPMN_LANE_PAD_TOP + rows * tallest + Math.max(0, rows - 1) * BPMN_STACK_GAP + BPMN_LANE_PAD_BOTTOM)
-  })
-  const tops: number[] = []
-  let cursor = 0
-  for (const height of heights) {
-    tops.push(cursor)
-    cursor += height
-  }
-  return { rank, slot, heights, tops }
-}
-
-function layoutBpmnSwimlanes(
-  nodes: ParsedNode[],
-  edges: ParsedGraph['edges'],
-  lanes: string[],
-): Map<string, { x: number; y: number }> {
-  const { rank, slot, tops } = swimlaneFrames(nodes, edges, lanes)
-  const positions = new Map<string, { x: number; y: number }>()
-  for (const node of nodes) {
-    const size = bpmnNodeSize(node.bpmnType ?? 'task')
-    const column = rank.get(node.id) ?? 0
-    const laneIndex = Math.max(0, lanes.indexOf(node.lane ?? lanes[0]))
-    const stack = slot.get(node.id) ?? 0
-    positions.set(node.id, {
-      x: BPMN_LANE_BAND + 16 + column * BPMN_COLUMN_PITCH + (BPMN_COLUMN_PITCH - size.width) / 2,
-      y: (tops[laneIndex] ?? 0) + BPMN_LANE_PAD_TOP + stack * (size.height + BPMN_STACK_GAP),
-    })
-  }
-  return positions
-}
-
-function bpmnSwimlaneNodes(nodes: ParsedNode[], edges: ParsedGraph['edges']): Node<ArchimateNodeData>[] {
-  const lanes = swimlaneOrder(nodes)
-  if (lanes.length < 2) return []
-  const { rank, heights, tops } = swimlaneFrames(nodes, edges, lanes)
-  const columns = Math.max(1, ...nodes.map((node) => (rank.get(node.id) ?? 0) + 1))
-  const width = BPMN_LANE_BAND + 16 + columns * BPMN_COLUMN_PITCH
-  return lanes.map((lane, index) => ({
-    id: `bpmn-lane-${index}`,
-    type: 'bpmnElement',
-    position: { x: 0, y: tops[index] ?? 0 },
-    zIndex: 0,
-    draggable: false,
-    selectable: false,
-    connectable: false,
-    focusable: false,
-    style: { width, height: heights[index] ?? BPMN_LANE_HEIGHT, zIndex: 0 },
-    data: {
-      kind: 'element',
-      layer: 'business',
-      stereotype: 'Lane',
-      title: lane,
-      description: [BPMN_LAYOUT_MARK],
-      notationId: 'lane',
-      visual: {
-        fillEnabled: true,
-        fillColor: index % 2 === 0 ? '#f8fafc' : '#ffffff',
-        lineEnabled: true,
-        lineColor: '#0284c7',
-        lineWidth: 2,
-        lineStyle: 'solid',
-        rounded: false,
-      },
-    },
-  }))
-}
-
-function toBpmnNode(item: ParsedNode, position: { x: number; y: number }): Node<ArchimateNodeData> {
-  const bpmnType = item.bpmnType ?? 'task'
-  const size = bpmnNodeSize(bpmnType)
-  return {
-    id: item.id,
-    type: 'bpmnElement',
-    position,
-    zIndex: 2,
-    style: { width: size.width, height: size.height, zIndex: 2 },
-    data: {
-      kind: 'element',
-      layer: 'business',
-      stereotype: bpmnStereotype(bpmnType),
-      title: item.label || bpmnStereotype(bpmnType),
-      description: [],
-      notationId: bpmnType,
-      bpmnLane: item.lane ?? null,
-      visual: {
-        fillEnabled: true,
-        fillColor: '#ffffff',
-        lineEnabled: true,
-        lineColor: bpmnDefaultLineColor(bpmnType),
-        lineWidth: 2,
-        lineStyle: 'solid',
-        rounded: true,
-      },
-      textStyle: {
-        ...defaultIntegrationNodeTextStyle(),
-        wordWrap: true,
-      },
-    },
-  }
-}
-
-function processKindToElement(kind: ParsedKind): Pick<ArchimateElementNodeData, 'layer' | 'stereotype' | 'notationId'> {
-  if (kind === 'start' || kind === 'end') {
-    return { layer: 'business', stereotype: 'Business Event', notationId: 'business-layer-event' }
-  }
-  if (kind === 'decision') {
-    return { layer: 'business', stereotype: 'Business Function', notationId: 'business-layer-function' }
-  }
-  return { layer: 'business', stereotype: 'Business Process', notationId: 'business-layer-business-process' }
-}
-
-function toArchimateNode(item: ParsedNode, index: number): Node<ArchimateNodeData> {
-  const meta = processKindToElement(item.kind)
-  return {
-    id: item.id,
-    type: 'archimateElement',
-    position: { x: (index % 3) * 260, y: Math.floor(index / 3) * 130 },
-    style: { width: NODE_WIDTH, height: NODE_HEIGHT },
-    data: {
-      kind: 'element',
-      layer: meta.layer,
-      stereotype: meta.stereotype,
-      title: item.label || meta.stereotype,
-      description: [],
-      notationId: meta.notationId,
-      visual: defaultIntegrationNodeVisual(meta.layer),
-    },
-  }
-}
-
-function toArchimateEdges(parsed: ParsedGraph): Edge[] {
-  return parsed.edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    label: edge.label,
-    type: 'smoothstep',
-    markerEnd: { type: MarkerType.ArrowClosed, color: '#334155', width: 10, height: 10 },
-    style: { stroke: '#334155', strokeWidth: 1.5 },
-  }))
-}
-
-function c4Visual(kind: C4ElementKind) {
-  const external = isC4External(kind)
-  const fillColor = kind.includes('Person')
-    ? (external ? '#6C6C6C' : '#08427B')
-    : kind === 'Component'
-      ? '#85BBF0'
-      : kind.startsWith('System')
-        ? (external ? '#999999' : '#1168BD')
-        : (external ? '#999999' : '#438DD5')
-  return {
-    fillEnabled: true,
-    fillColor,
-    lineEnabled: true,
-    lineColor: external ? '#8A8A8A' : '#3C7FC0',
-    lineWidth: 1.5,
-    lineStyle: 'solid' as const,
-    rounded: true,
-    shadow: true,
-  }
-}
-
-function toC4ElementNode(
-  element: C4ParsedGraph['elements'][number],
-  position: { x: number; y: number },
-): Node<ArchimateNodeData> {
-  const description = [
-    element.technology ? `[${element.technology}]` : '',
-    element.description,
-  ].filter(Boolean)
-  return {
-    id: element.id,
-    type: 'c4Element',
-    position,
-    parentNode: element.parentId,
-    extent: element.parentId ? 'parent' : undefined,
-    style: { width: 240, height: element.kind.includes('Person') ? 128 : 120 },
-    data: {
-      kind: 'element',
-      layer: 'application',
-      stereotype: c4Stereotype(element.kind),
-      title: element.title,
-      description,
-      notationId: element.kind,
-      visual: c4Visual(element.kind),
-    },
-  }
-}
-
-function graphFromC4(source: string): { nodes: Node<ArchimateNodeData>[]; edges: Edge[] } {
-  const parsed = parseC4Graph(source)
-  const nodes: Node<ArchimateNodeData>[] = []
-  const sizes = new Map<string, { width: number; height: number }>()
-  const measure = (id: string): { width: number; height: number } => {
-    const existing = sizes.get(id)
-    if (existing) return existing
-    const nested = parsed.boundaries.filter(item => item.parentId === id).map(item => measure(item.id))
-    const size = { width: Math.max(300, ...nested.map(item => item.width + 56)), height: Math.max(220, 56 + parsed.elements.filter(item => item.parentId === id).length * 148 + nested.reduce((sum, item) => sum + item.height + 32, 0)) }
-    sizes.set(id, size)
-    return size
-  }
-  const appendBoundary = (parent: C4ParsedGraph['boundaries'][number], position: { x: number; y: number }) => {
-    nodes.push({ id: parent.id, type: 'archimateBoundary', position, parentNode: parent.parentId,
-      extent: parent.parentId ? 'parent' : undefined, style: measure(parent.id), zIndex: 0,
-      data: { kind: 'boundary', title: parent.title, visual: { fillEnabled: false, lineEnabled: true, lineColor: '#64748b', lineStyle: 'dashed', rounded: true } } })
-    const children = parsed.elements.filter(item => item.parentId === parent.id)
-    children.forEach((item, index) => nodes.push({ ...toC4ElementNode(item, { x: 28, y: 40 + index * 148 }), zIndex: 1 }))
-    let y = 40 + children.length * 148
-    parsed.boundaries.filter(item => item.parentId === parent.id).forEach(item => { appendBoundary(item, { x: 28, y }); y += measure(item.id).height + 32 })
-  }
-  let boundaryX = 280
-  parsed.boundaries.filter(item => !item.parentId).forEach(parent => { appendBoundary(parent, { x: boundaryX, y: 32 }); boundaryX += measure(parent.id).width + 64 })
-  parsed.elements.filter(item => !item.parentId).forEach((item, index) => {
-    nodes.push(toC4ElementNode(item, { x: item.kind.startsWith('Person') ? 24 : boundaryX, y: 72 + index * 150 }))
-  })
-
-  const edges: Edge[] = withFacingHandles(
-    nodes,
-    parsed.relations
-      .filter((relation) => nodes.some((node) => node.id === relation.source) && nodes.some((node) => node.id === relation.target))
-      .map((relation) => ({
-        id: relation.id,
-        source: relation.source,
-        target: relation.target,
-        label: relation.technology ? `${relation.label} [${relation.technology}]` : relation.label,
-        type: 'smoothstep',
-        ...c4RelationEdgeStyle(relation.macro),
-        data: { ...c4RelationEdgeStyle(relation.macro).data, c4Relation: relation },
-      })),
-  )
-
-  return { nodes, edges }
-}
-
 const flowToC4Graph = c4GraphFromCanvas
-
-const ELEMENT_KIND_SET = new Set([
-  'Person', 'Person_Ext', 'System', 'System_Ext', 'SystemDb', 'Container', 'Container_Ext', 'ContainerDb', 'Component', 'Component_Ext', 'ComponentDb',
-])
 
 function isStoredUmlGraph(nodes: Node<ArchimateNodeData>[]): boolean {
   return nodes.some((node) => node.type === 'umlClass')
@@ -591,40 +200,6 @@ function graphHasFittedSwimlanes(nodes: Node<ArchimateNodeData>[]): boolean {
   ))
 }
 
-function nodeStyleSize(node: Node): { width: number; height: number } {
-  const width = Number(node.measured?.width ?? node.width ?? node.style?.width ?? NODE_WIDTH)
-  const height = Number(node.measured?.height ?? node.height ?? node.style?.height ?? NODE_HEIGHT)
-  return { width: width || NODE_WIDTH, height: height || NODE_HEIGHT }
-}
-
-function absoluteNodePosition(nodes: Node<ArchimateNodeData>[], node: Node<ArchimateNodeData>): { x: number; y: number } {
-  if (!node.parentNode) return node.position
-  const parent = nodes.find((item) => item.id === node.parentNode)
-  if (!parent) return node.position
-  const origin = absoluteNodePosition(nodes, parent)
-  return { x: origin.x + node.position.x, y: origin.y + node.position.y }
-}
-
-function readNodeGeometry(nodes: Node<ArchimateNodeData>[], nodeId: string): NodeGeometry | null {
-  const node = nodes.find((item) => item.id === nodeId)
-  if (!node) return null
-  const position = absoluteNodePosition(nodes, node)
-  const size = nodeStyleSize(node)
-  return { x: position.x, y: position.y, width: size.width, height: size.height }
-}
-
-function withFacingHandles(nodes: Node<ArchimateNodeData>[], edges: Edge[]): Edge[] {
-  return edges.map((edge) => {
-    if (hasManualConnectionHandles(edge)) return edge
-    const from = readNodeGeometry(nodes, edge.source)
-    const to = readNodeGeometry(nodes, edge.target)
-    if (!from || !to) return edge
-    const handles = pickCenteredAnchoredHandles(from, to)
-    if (edge.sourceHandle === handles.sourceHandle && edge.targetHandle === handles.targetHandle) return edge
-    return { ...edge, sourceHandle: handles.sourceHandle, targetHandle: handles.targetHandle }
-  })
-}
-
 function mergeCanvasLayout(
   previous: Node<ArchimateNodeData>[],
   next: Node<ArchimateNodeData>[],
@@ -634,222 +209,24 @@ function mergeCanvasLayout(
   return mergeDiagramSourceNodes(previous, [...next, ...decorations])
 }
 
-function graphFromPlantUml(source: string): ParsedGraph {
-  const nodes: ParsedNode[] = []
-  const aliases = new Set<string>()
-  const add = (id: string, label: string, kind: ParsedKind) => {
-    if (aliases.has(id)) return
-    aliases.add(id)
-    nodes.push({ id, label, kind })
-  }
-
-  if (/^\s*flowchart\b/im.test(source)) {
-    const declaration = /\b([A-Za-z][\w-]*)\s*(?:\["?([^\]"]+)|\{"?([^}"]+)|\(\("?([^)"]+))/g
-    let mermaid: RegExpExecArray | null
-    while ((mermaid = declaration.exec(source))) {
-      add(mermaid[1], (mermaid[2] || mermaid[3] || mermaid[4] || mermaid[1]).trim(), mermaid[3] ? 'decision' : 'activity')
-    }
-    const edges: ParsedGraph['edges'] = []
-    const relation = /\b([A-Za-z][\w-]*)\s*--?>\|?[^\n|]*\|?\s*([A-Za-z][\w-]*)/g
-    while ((mermaid = relation.exec(source))) {
-      if (aliases.has(mermaid[1]) && aliases.has(mermaid[2])) {
-        edges.push({ id: `edge-${edges.length}`, source: mermaid[1], target: mermaid[2] })
-      }
-    }
-    return { nodes, edges }
-  }
-
-  const startAlias = /^\s*\(\*\)\s+as\s+([\w.-]+)/gim
-  let match: RegExpExecArray | null
-  while ((match = startAlias.exec(source))) {
-    add(match[1], match[1].toLowerCase().includes('end') ? 'End' : 'Start', match[1].toLowerCase().includes('end') ? 'end' : 'start')
-  }
-
-  const declaration = /^\s*(rectangle|component|database|actor|cloud|node|hexagon|usecase|interface)\s+"([^"]+)"\s+as\s+([\w.-]+)/gim
-  while ((match = declaration.exec(source))) {
-    add(match[3], match[2], match[1] === 'hexagon' ? 'decision' : 'activity')
-  }
-
-  const activities = Array.from(source.matchAll(/^\s*:\s*([^;\n]+);/gm), (item) => item[1].trim())
-  for (const label of activities) {
-    add(`activity-${nodes.length + 1}`, label, 'activity')
-  }
-
-  if (!nodes.length) {
-    const lines = source
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith('@') && !line.startsWith('skinparam') && !line.startsWith('!'))
-    for (const label of lines.slice(0, 12)) {
-      add(`step-${nodes.length + 1}`, label.replace(/^[:]/, '').replace(/;$/, ''), 'activity')
-    }
-  }
-
-  const edges: ParsedGraph['edges'] = []
-  const relation = /^\s*([\w.-]+)\s*--?>\s*([\w.-]+)(?:\s*:\s*(.+))?/gm
-  while ((match = relation.exec(source))) {
-    if (aliases.has(match[1]) && aliases.has(match[2])) {
-      edges.push({ id: `edge-${match[1]}-${match[2]}-${edges.length}`, source: match[1], target: match[2], label: match[3]?.trim() })
-    }
-  }
-  if (!edges.length) {
-    nodes.slice(1).forEach((current, index) => {
-      edges.push({ id: `edge-${index}`, source: nodes[index].id, target: current.id })
-    })
-  }
-  return { nodes, edges }
-}
-
-const ERD_FILLS = ['#EDE4F7', '#E5F4E0', '#FFF4CC', '#F4F4F4', '#FDE8D8', '#DCEBFA']
-const ERD_LINES = ['#8E6BB0', '#6B9B63', '#C4A35A', '#8A8A8A', '#C4895A', '#6A94C4']
-
-function erdMemberName(raw: string): string {
-  return raw.replace(/^\*\s*/, '').replace(/<<[^>]+>>/g, '').replace(/\s*:\s*.+$/, '').trim().toLowerCase()
-}
-
-function entityReferences(fromMembers: string[], toId: string, toTitle: string): boolean {
-  const keys = new Set([toId, toTitle, `${toId}_id`, `${toTitle}_id`].map((value) => value.toLowerCase()))
-  return fromMembers.some((member) => keys.has(erdMemberName(member)))
-}
-
-function graphFromUml(source: string, view: UmlView, diagram?: UmlDiagram): { nodes: Node<ArchimateNodeData>[]; edges: Edge[] } {
-  const parsed = diagram ?? parseUmlDiagram(source, view)
-  const erd = view === 'erd'
-  const stroke = erd ? '#C4A35A' : '#4B5563'
-  const placed: Node<ArchimateNodeData>[] = []
-  let x = 48
-  let y = 48
-  let column = 0
-  let rowHeight = 0
-  const columns = 3
-  for (const box of parsed.boxes) {
-    const attributes = box.members.filter((line) => !line.includes('('))
-    const methods = box.members.filter((line) => line.includes('('))
-    const boxKind = erd ? 'entity' : box.kind === 'interface' || box.kind === 'enumeration' ? box.kind : 'class'
-    const stereotypeExtra = (boxKind === 'interface' || boxKind === 'enumeration' ? 14 : 0) + (box.stereotype ? 14 : 0)
-    const longest = Math.max(box.title.length + 2, ...box.members.map((line) => erdMemberName(line).length + (erd ? 0 : 10)))
-    const erdSize = erdEntityDefaultSize(box.title, box.members)
-    const width = erd ? erdSize.width : Math.min(280, Math.max(148, longest * 6.6 + 40))
-    const memberLines = (members: string[]) => members.reduce((total, line) => total + Math.max(1, Math.ceil(line.length * 6.6 / (width - 48))), 0)
-    const height = erd
-      ? erdSize.height + (box.stereotype ? 14 : 0)
-      : 32 + stereotypeExtra + (attributes.length ? memberLines(attributes) * 16 + 8 : 0) + (methods.length ? memberLines(methods) * 16 + 8 : 0)
-    if (column === columns) {
-      column = 0
-      x = 48
-      y += rowHeight + 72
-      rowHeight = 0
-    }
-    const fill = ERD_FILLS[placed.length % ERD_FILLS.length]
-    const line = ERD_LINES[placed.length % ERD_LINES.length]
-    placed.push({
-      id: box.id,
-      type: erd ? 'erdEntity' : 'umlClass',
-      position: { x, y },
-      style: { width, height },
-      data: {
-        kind: 'element',
-        layer: 'application',
-        stereotype: boxKind,
-        umlStereotype: box.stereotype,
-        title: box.title,
-        description: box.members,
-        notationId: boxKind,
-        visual: {
-          fillEnabled: true,
-          fillColor: erd ? fill : '#ffffff',
-          lineEnabled: true,
-          lineColor: erd ? line : stroke,
-          lineWidth: erd ? 1.5 : 1,
-          lineStyle: 'solid',
-          rounded: false,
-          shadow: false,
-        },
-      },
-    })
-    rowHeight = Math.max(rowHeight, height)
-    x += width + 80
-    column += 1
-  }
-  const boxesById = new Map(parsed.boxes.map((box) => [box.id, box]))
-  const edges = withFacingHandles(placed, parsed.links.map((link, index) => {
-    const from = boxesById.get(link.source)
-    const to = boxesById.get(link.target)
-    const sourceFk = from && to ? entityReferences(from.members, to.id, to.title) : false
-    const targetFk = from && to ? entityReferences(to.members, from.id, from.title) : false
-    const sourceEnd = link.sourceEnd ?? (sourceFk && !targetFk ? { many: true, optional: false } : { many: false, optional: false })
-    const targetEnd = link.targetEnd ?? (targetFk && !sourceFk ? { many: true, optional: false } : sourceFk ? { many: false, optional: false } : { many: true, optional: false })
-    if (erd) {
-      return {
-        id: `uml-${link.source}-${link.target}-${index}`,
-        source: link.source,
-        target: link.target,
-        label: link.label || undefined,
-        type: 'erd' as const,
-        data: {
-          ...umlLinkToCanvasData(link),
-          ...(link.erdForeignKey ? { erdForeignKey: link.erdForeignKey } : {}),
-          sourceMany: sourceEnd.many,
-          sourceOptional: sourceEnd.optional,
-          targetMany: targetEnd.many,
-          targetOptional: targetEnd.optional,
-        },
-      }
-    }
-    return {
-      id: `uml-${link.source}-${link.target}-${index}`,
-      source: link.source,
-      target: link.target,
-      label: link.label || undefined,
-      type: 'smoothstep' as const,
-      data: umlLinkToCanvasData(link),
-      style: { stroke, strokeWidth: 1.75, strokeDasharray: link.lineStyle === 'dashed' ? '5 4' : undefined },
-    }
-  }))
-  return { nodes: placed, edges }
-}
-
-function parseSource(source: string, format: DiagramFormat) {
-  if (format === 'use-case') { const graph = parseUseCaseDiagram(source); return { ...graph, edges: withFacingHandles(graph.nodes, graph.edges) } }
-  if (format === 'class' || format === 'erd') return graphFromUml(source, format)
-  if (format === 'c4') return graphFromC4(source)
-  if (format === 'bpmn') {
-    const parsed = parseBpmnSource(source)
-    const positions = layoutBpmnPositions(parsed.nodes, parsed.edges)
-    const nodes = [
-      ...bpmnSwimlaneNodes(parsed.nodes, parsed.edges),
-      ...parsed.nodes.map((item) => toBpmnNode(item, positions.get(item.id) ?? { x: 48, y: 48 })),
-    ]
-    return { nodes, edges: withFacingHandles(nodes, toArchimateEdges(parsed)) }
-  }
-  const parsed = graphFromPlantUml(source)
-  const nodes = parsed.nodes.map((item, index) => toArchimateNode(item, index))
-  const edges = withFacingHandles(nodes, toArchimateEdges(parsed))
-  return { nodes, edges }
-}
-
-/** Build canonical preview data without mounting editor effects or accessing storage. */
-export function buildReadOnlyDiagramCanvasGraph(source: string, format: DiagramFormat) {
-  return parseSource(source, format)
-}
-
-function loadGraph(key: string, fallback: { nodes: Node<ArchimateNodeData>[]; edges: Edge[] }) {
+function readCachedGraph(key: string): DiagramStore[string] | undefined {
   try {
     const store = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as DiagramStore
-    if (!isStoredDiagramGraph(store[key])) return { ...fallback, viewport: undefined as CanvasViewport | undefined, snapToGrid: undefined as boolean | undefined }
+    if (!isStoredDiagramGraph(store[key])) return undefined
     return {
       nodes: store[key].nodes,
       edges: store[key].edges,
       source: store[key].source,
       viewport: isCanvasViewport(store[key].viewport) ? store[key].viewport : undefined,
       snapToGrid: typeof store[key].snapToGrid === 'boolean' ? store[key].snapToGrid : undefined,
+      draftBeforeSavedGraph: store[key].draftBeforeSavedGraph === true,
     }
   } catch {
-    return { ...fallback, viewport: undefined as CanvasViewport | undefined, snapToGrid: undefined as boolean | undefined }
+    return undefined
   }
 }
 
-function saveGraph(key: string, graph: { nodes: Node<ArchimateNodeData>[]; edges: Edge[]; source: string; viewport?: CanvasViewport; snapToGrid?: boolean }) {
+function saveGraph(key: string, graph: DiagramStore[string]) {
   try {
     const store = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') as DiagramStore
     store[key] = graph
@@ -920,7 +297,14 @@ function EditableDiagramCanvasInner({
   const { screenToFlowPosition } = useReactFlow()
   const tenant = useTenantContextOptional()
   const reactFlowWrapperRef = useRef<HTMLDivElement | null>(null)
-  const storageKey = `${ideaId}:${diagramKey}`
+  const legacyStorageKey = `${ideaId}:${diagramKey}`
+  const storageKey = tenant?.workspaceId ? JSON.stringify([tenant.workspaceId, ideaId, diagramKey]) : legacyStorageKey
+  // A known draft, unlike a legacy cache entry, may not be replaced on mount.
+  const [cachedDraft] = useState(() => {
+    if (!editable) return undefined
+    const cached = readCachedGraph(storageKey)
+    return cached?.draftBeforeSavedGraph ? cached : undefined
+  })
   const c4Source = useMemo(
     () => (format === 'c4' ? normalizeC4PlantUml(source, c4LevelFromDiagramKey(diagramKey)) : source),
     [diagramKey, format, source],
@@ -933,7 +317,7 @@ function EditableDiagramCanvasInner({
   const shouldMigrateStoredBpmnGraph = format === 'bpmn' && (
     (graphHasSwimlanes(imported.nodes) && Boolean(savedGraph?.nodes?.length) && !graphHasFittedSwimlanes(savedGraph.nodes))
   )
-  const initial = useMemo(() => {
+  const initial = useMemo<DiagramStore[string]>(() => {
     if (isStoredDiagramGraph(savedGraph)) {
       if (format === 'bpmn' && savedGraph.nodes.length > 0 && (!isStoredBpmnGraph(savedGraph.nodes) || shouldMigrateStoredBpmnGraph)) {
         return {
@@ -947,7 +331,7 @@ function EditableDiagramCanvasInner({
       return { ...savedGraph, edges: withFacingHandles(savedGraph.nodes, savedEdges) }
     }
     if (!editable) return imported
-    const stored = loadGraph(storageKey, imported)
+    const stored: DiagramStore[string] = readCachedGraph(storageKey) ?? readCachedGraph(legacyStorageKey) ?? imported
     if (format === 'c4' && stored.nodes.length > 0 && !isStoredC4Graph(stored.nodes)) {
       return {
         ...imported,
@@ -982,22 +366,45 @@ function EditableDiagramCanvasInner({
     }
     const storedEdges = format === 'c4' ? normalizeC4RelationEdges(stored.edges) : stored.edges
     return { ...stored, edges: withFacingHandles(stored.nodes, storedEdges) }
-  }, [editable, format, imported, savedGraph, shouldMigrateStoredBpmnGraph, storageKey])
-  const [nodes, setNodes, onNodesChange] = useNodesState<ArchimateNodeData>(initial.nodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
+  }, [editable, format, imported, legacyStorageKey, savedGraph, shouldMigrateStoredBpmnGraph, storageKey])
+  const bootstrap = cachedDraft ?? initial
+  const [nodes, setCanvasNodes, onNodesChange] = useNodesState<ArchimateNodeData>(bootstrap.nodes)
+  const [edges, setCanvasEdges, onEdgesChange] = useEdgesState(bootstrap.edges)
+  const appliedSavedGraphRef = useRef(false)
+  const editedBeforeSavedGraphRef = useRef(Boolean(cachedDraft))
+  const [editedBeforeSavedGraph, setEditedBeforeSavedGraph] = useState(Boolean(cachedDraft))
+  const [confirmSavedGraph, setConfirmSavedGraph] = useState<typeof savedGraph>()
+  if (confirmSavedGraph && (confirmSavedGraph !== savedGraph || !editable)) {
+    setConfirmSavedGraph(undefined)
+  }
+  const markLocalEdit = useCallback(() => {
+    if (!editable || appliedSavedGraphRef.current || editedBeforeSavedGraphRef.current) return
+    editedBeforeSavedGraphRef.current = true
+    setEditedBeforeSavedGraph(true)
+  }, [editable])
+  // User mutations use these setters. Bootstrap, layout maintenance and selection use the raw setters.
+  const setNodes = useCallback<typeof setCanvasNodes>((next) => {
+    markLocalEdit()
+    setCanvasNodes(next)
+  }, [markLocalEdit, setCanvasNodes])
+  const setEdges = useCallback<typeof setCanvasEdges>((next) => {
+    markLocalEdit()
+    setCanvasEdges(next)
+  }, [markLocalEdit, setCanvasEdges])
+  const savedGraphConflict = editedBeforeSavedGraph && isStoredDiagramGraph(savedGraph)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [sidebarPanel, setSidebarPanel] = useState<StudioSidebarPanel>(
     format === 'c4' || format === 'class' || format === 'erd' || format === 'use-case' ? 'diagram' : 'source',
   )
-  const [sourceDraft, setSourceDraft] = useState(() => 'source' in initial && typeof initial.source === 'string' ? initial.source : bpmnEditorSource)
+  const [sourceDraft, setSourceDraft] = useState(() => typeof bootstrap.source === 'string' ? bootstrap.source : bpmnEditorSource)
   const c4Level = c4LevelFromDiagramKey(diagramKey)
   const applicationCatalogScope = useMemo(() => tenant ? buildWorkspaceScopeFromTenant(tenant) : null, [tenant])
   const [applicationCatalog, setApplicationCatalog] = useState<C4ApplicationCatalogItem[]>([])
   const [applicationCatalogLoading, setApplicationCatalogLoading] = useState(false)
   const [applicationCatalogLoaded, setApplicationCatalogLoaded] = useState(false)
-  const viewportRef = useRef<CanvasViewport | undefined>(initial.viewport)
-  const [savedViewport, setSavedViewport] = useState<CanvasViewport | undefined>(initial.viewport)
+  const viewportRef = useRef<CanvasViewport | undefined>(bootstrap.viewport)
+  const [savedViewport, setSavedViewport] = useState<CanvasViewport | undefined>(bootstrap.viewport)
   const [isStudioPanelCollapsed, setIsStudioPanelCollapsed] = useState(false)
   const [studioPanelPosition, setStudioPanelPosition] = useState(STUDIO_PANEL_DEFAULT_POSITION)
   const [studioPanelSize, setStudioPanelSize] = useState({ width: STUDIO_PANEL_DEFAULT_WIDTH_PX, height: 0 })
@@ -1033,11 +440,12 @@ function EditableDiagramCanvasInner({
   const [showRuler, setShowRuler] = useState(true)
   const [showConnectionArrows, setShowConnectionArrows] = useState(true)
   const [showConnectionPoints, setShowConnectionPoints] = useState(true)
+  const [historyVersion, setHistoryVersion] = useState(0)
   const history = useDiagramHistory({ nodes, edges, source: sourceDraft }, (snapshot) => {
     setNodes(snapshot.nodes)
     setEdges(snapshot.edges)
     setSourceDraft(snapshot.source)
-  }, storageKey, reactFlowWrapperRef, editable)
+  }, `${storageKey}:${historyVersion}`, reactFlowWrapperRef, editable)
 
   const applyErdDdlImport = (result: ErdDdlImportResult) => {
     if (!editable || format !== 'erd' || result.errors.length || !result.diagram.boxes.length) return
@@ -1094,7 +502,6 @@ function EditableDiagramCanvasInner({
   onPersistGraphRef.current = onPersistGraph
   const appliedStorageKeyRef = useRef<string | null>(null)
   const nodeClipboardRef = useRef<DiagramClipboard<ArchimateNodeData> | null>(null)
-  const appliedSavedGraphRef = useRef(false)
   const applicationCatalogRequestRef = useRef(0)
 
   const loadApplicationCatalog = useCallback(async () => {
@@ -1108,7 +515,7 @@ function EditableDiagramCanvasInner({
         fetchAllWorkspaceOrgWorkspacesCached().catch(() => []),
       ])
       const workspaceIdByKey = new Map(
-        workspaces.map((workspace) => [workspace.workspace_key.trim().toLowerCase(), workspace.id]),
+        workspaces.map((workspace) => [workspace.workspace_key.trim().toLowerCase(), workspace.id] as const),
       )
       const seen = new Set<string>()
       const applications: C4ApplicationCatalogItem[] = []
@@ -1161,7 +568,7 @@ function EditableDiagramCanvasInner({
 
   useEffect(() => {
     if (format !== 'c4' || c4Level !== 'L1' || applicationCatalogLoading || !applicationCatalogLoaded) return
-    setNodes((current) => {
+    setCanvasNodes((current) => {
       let changed = false
       const next = current.map((node) => {
         if (node.type !== 'c4Element' || node.data.kind !== 'element') return node
@@ -1177,7 +584,7 @@ function EditableDiagramCanvasInner({
       })
       return changed ? next : current
     })
-  }, [applicationCatalog, applicationCatalogLoaded, applicationCatalogLoading, c4Level, format, nodes, setNodes])
+  }, [applicationCatalog, applicationCatalogLoaded, applicationCatalogLoading, c4Level, format, nodes, setCanvasNodes])
 
   const applyDefaultElementStyle = useCallback((node: Node<ArchimateNodeData>): Node<ArchimateNodeData> => {
     if (!defaultElementStyle || node.data.kind !== 'element') return node
@@ -1191,23 +598,38 @@ function EditableDiagramCanvasInner({
     }
   }, [defaultElementStyle])
 
-  useEffect(() => {
-    if (appliedStorageKeyRef.current !== storageKey) appliedSavedGraphRef.current = false
-  const shouldApplySaved = isStoredDiagramGraph(savedGraph) && !appliedSavedGraphRef.current
-    if (appliedStorageKeyRef.current === storageKey && !shouldApplySaved) return
+  const applyInitialGraph = useCallback(() => {
     skipPersistRef.current = true
     appliedStorageKeyRef.current = storageKey
     appliedSavedGraphRef.current = isStoredDiagramGraph(savedGraph)
-    setNodes(initial.nodes)
-    setEdges(initial.edges)
+    setCanvasNodes(initial.nodes)
+    setCanvasEdges(initial.edges)
     viewportRef.current = initial.viewport
     setSavedViewport(initial.viewport)
     setSnapToGrid(false)
-    setSourceDraft('source' in initial && typeof initial.source === 'string' ? initial.source : bpmnEditorSource)
-  }, [bpmnEditorSource, initial.edges, initial.nodes, initial.snapToGrid, initial.viewport, savedGraph, setEdges, setNodes, storageKey])
+    setSourceDraft(typeof initial.source === 'string' ? initial.source : bpmnEditorSource)
+  }, [bpmnEditorSource, initial, savedGraph, setCanvasEdges, setCanvasNodes, storageKey])
+
+  useEffect(() => {
+    if (editedBeforeSavedGraphRef.current) return
+    if (appliedStorageKeyRef.current === storageKey && (!isStoredDiagramGraph(savedGraph) || appliedSavedGraphRef.current)) return
+    applyInitialGraph()
+  }, [applyInitialGraph, savedGraph, storageKey])
+
+  const replaceWithSavedGraph = () => {
+    if (!editable || !savedGraphConflict || confirmSavedGraph !== savedGraph) return
+    applyInitialGraph()
+    editedBeforeSavedGraphRef.current = false
+    setEditedBeforeSavedGraph(false)
+    setConfirmSavedGraph(undefined)
+    setSelectedNodeId(null)
+    setSelectedEdgeId(null)
+    setLastAppliedChatDraft(null)
+    setHistoryVersion((version) => version + 1)
+  }
   useEffect(() => {
     if (format !== 'class') return
-    setNodes((current) => {
+    setCanvasNodes((current) => {
       let changed = false
       const next = current.map((node) => {
         if (node.type !== 'umlClass' || node.data.kind !== 'element') return node
@@ -1224,7 +646,7 @@ function EditableDiagramCanvasInner({
       })
       return changed ? next : current
     })
-  }, [format, nodes, setNodes])
+  }, [format, nodes, setCanvasNodes])
   useEffect(() => {
     if (!canvasMenu && !c4NodeMenu && !edgeContextMenu) return
     return listenForDiagramMenuDismissal(() => {
@@ -1236,12 +658,13 @@ function EditableDiagramCanvasInner({
   useEffect(() => {
     if (format !== 'c4' || c4Level !== 'L1' || c4DrilldownTargets.length === 0) return
     const normalizeTitle = (value: string) => value.trim().toLocaleLowerCase()
-    setNodes((current) => {
+    setCanvasNodes((current) => {
       let changed = false
       const next = current.map((node) => {
         if (node.type !== 'c4Element' || node.data.kind !== 'element' || node.data.diagramLink || node.data.diagramLinkCleared) return node
+        const nodeTitle = node.data.title
         const target = c4DrilldownTargets.find((item) => (
-          item.matchNodeTitle && normalizeTitle(item.matchNodeTitle) === normalizeTitle(node.data.title)
+          item.matchNodeTitle && normalizeTitle(item.matchNodeTitle) === normalizeTitle(nodeTitle)
         ))
         if (!target) return node
         changed = true
@@ -1252,17 +675,19 @@ function EditableDiagramCanvasInner({
       })
       return changed ? next : current
     })
-  }, [c4DrilldownTargets, c4Level, format, setNodes])
+  }, [c4DrilldownTargets, c4Level, format, setCanvasNodes])
+  const captureDiagramPendingScope = useEffectEvent(() => ({ ideaId, diagramKey }))
+
   useEffect(() => {
-    if (editable) saveGraph(storageKey, { nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid })
-    if (!editable || !onPersistGraphRef.current) return
+    if (editable) saveGraph(storageKey, { nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid, draftBeforeSavedGraph: editedBeforeSavedGraph })
+    if (!editable || savedGraphConflict || !onPersistGraphRef.current) return
     if (skipPersistRef.current) {
       skipPersistRef.current = false
       return
     }
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current)
     let cancelled = false
-    window.dispatchEvent(new CustomEvent('tectona-diagram-content-pending', { detail: { ideaId, diagramKey } }))
+    window.dispatchEvent(new CustomEvent('tectona-diagram-content-pending', { detail: captureDiagramPendingScope() }))
     persistTimerRef.current = window.setTimeout(async () => {
       const graph = { nodes, edges, source: sourceDraft, viewport: viewportRef.current, snapToGrid }
       try {
@@ -1276,7 +701,7 @@ function EditableDiagramCanvasInner({
       cancelled = true
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current)
     }
-  }, [editable, edges, nodes, snapToGrid, sourceDraft, storageKey])
+  }, [editable, editedBeforeSavedGraph, edges, nodes, savedGraphConflict, snapToGrid, sourceDraft, storageKey])
   useEffect(() => {
     if (format !== 'c4') return
     setSourceDraft((current) => {
@@ -1327,13 +752,20 @@ function EditableDiagramCanvasInner({
       setNodes(current => removeDiagramNodes(current, removed))
       setEdges(current => current.filter(edge => !removed.has(edge.source) && !removed.has(edge.target)))
     }
+    if (nextChanges.some(change =>
+      change.type === 'add' || change.type === 'reset'
+      || (change.type === 'position' && change.position && nodesRef.current.some(node =>
+        node.id === change.id && (node.position.x !== change.position?.x || node.position.y !== change.position?.y)
+      ))
+      || (change.type === 'dimensions' && change.dimensions && (change.resizing || change.updateStyle))
+    )) markLocalEdit()
     onNodesChange(nextChanges.filter(change => change.type !== 'remove'))
-  }, [edges, onNodesChange, setEdges, setNodes])
+  }, [edges, markLocalEdit, onNodesChange, setEdges, setNodes])
   const nodeLayoutKey = nodes
     .map((node) => `${node.id}:${Math.round(node.position.x)}:${Math.round(node.position.y)}:${Math.round(Number(node.width ?? 0))}:${Math.round(Number(node.height ?? 0))}:${node.parentNode ?? ''}`)
     .join('|')
   useEffect(() => {
-    setNodes((current) => {
+    setCanvasNodes((current) => {
       let changed = false
       const next = current.map((node) => {
         if (!isBpmnSquareLocked(node)) return node
@@ -1346,16 +778,16 @@ function EditableDiagramCanvasInner({
       })
       return changed ? next : current
     })
-  }, [nodeLayoutKey, setNodes])
+  }, [nodeLayoutKey, setCanvasNodes])
   useEffect(() => {
-    setEdges((current) => {
+    setCanvasEdges((current) => {
       const next = withFacingHandles(nodesRef.current, current)
       const changed = next.some((edge, index) => (
         edge.sourceHandle !== current[index]?.sourceHandle || edge.targetHandle !== current[index]?.targetHandle
       ))
       return changed ? next : current
     })
-  }, [nodeLayoutKey, setEdges])
+  }, [nodeLayoutKey, setCanvasEdges])
 
   const onConnect = useCallback(
     (connection: Connection) => setEdges((current) => withFacingHandles(nodes, addEdge({
@@ -1395,17 +827,17 @@ function EditableDiagramCanvasInner({
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
     setIsPropertiesPanelOpen(false)
-    setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
-    setEdges((current) => current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)))
-  }, [setEdges, setNodes])
+    setCanvasNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)))
+    setCanvasEdges((current) => current.map((edge) => (edge.selected ? { ...edge, selected: false } : edge)))
+  }, [setCanvasEdges, setCanvasNodes])
 
-  const handleEdgeClick = useCallback((_event: MouseEvent, edge: Edge) => {
+  const handleEdgeClick = useCallback((_event: ReactMouseEvent, edge: Edge) => {
     setSelectedEdgeId(edge.id)
     setSelectedNodeId(null)
     setIsPropertiesPanelOpen(false)
-    setNodes((current) => current.map((node) => ({ ...node, selected: false })))
-    setEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
-  }, [setEdges, setNodes])
+    setCanvasNodes((current) => current.map((node) => ({ ...node, selected: false })))
+    setCanvasEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
+  }, [setCanvasEdges, setCanvasNodes])
 
   const handleEdgeContextMenu = useCallback((event: ReactMouseEvent | MouseEvent, edge: Edge) => {
     event.preventDefault()
@@ -1422,8 +854,8 @@ function EditableDiagramCanvasInner({
       return
     }
     setC4NodeMenu(null)
-    setNodes((current) => current.map((node) => ({ ...node, selected: false })))
-    setEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
+    setCanvasNodes((current) => current.map((node) => ({ ...node, selected: false })))
+    setCanvasEdges((current) => current.map((item) => ({ ...item, selected: item.id === edge.id })))
     setSelectedNodeId(null)
     setSelectedEdgeId(edge.id)
     setEdgeContextMenu({
@@ -1431,7 +863,7 @@ function EditableDiagramCanvasInner({
       x: event.clientX - bounds.left,
       y: event.clientY - bounds.top,
     })
-  }, [format, nodes, setEdges, setNodes])
+  }, [format, nodes, setCanvasEdges, setCanvasNodes])
 
   const handlePaletteDragStart = useCallback((event: DragEvent<HTMLButtonElement>, item: C4PaletteItem) => {
     event.dataTransfer.setData(C4_PALETTE_MIME, JSON.stringify(item))
@@ -1506,10 +938,10 @@ function EditableDiagramCanvasInner({
   const focusApplicationCatalogNode = useCallback((application: C4ApplicationCatalogItem) => {
     const node = nodes.find((item) => item.data.kind === 'element' && item.data.title.trim().toLowerCase() === application.name.trim().toLowerCase())
     if (!node) return
-    setNodes((current) => current.map((item) => ({ ...item, selected: item.id === node.id })))
+    setCanvasNodes((current) => current.map((item) => ({ ...item, selected: item.id === node.id })))
     setSelectedNodeId(node.id)
     setSelectedEdgeId(null)
-  }, [nodes, setNodes])
+  }, [nodes, setCanvasNodes])
 
   const handleBpmnPaletteDragStart = useCallback((event: DragEvent<HTMLButtonElement>, item: BpmnPaletteItem) => {
     event.dataTransfer.setData(BPMN_PALETTE_MIME, JSON.stringify(item))
@@ -1611,8 +1043,8 @@ function EditableDiagramCanvasInner({
           return { x: parentPosition.x + node.position.x, y: parentPosition.y + node.position.y }
         }
         const dimensions = (node: Node<ArchimateNodeData>) => ({
-          width: Number(node.measured?.width ?? node.width ?? node.style?.width ?? 240),
-          height: Number(node.measured?.height ?? node.height ?? node.style?.height ?? 120),
+          width: Number(node.width ?? node.style?.width ?? 240),
+          height: Number(node.height ?? node.style?.height ?? 120),
         })
         const size = dimensions(newNode)
         const center = { x: position.x + size.width / 2, y: position.y + size.height / 2 }
@@ -1716,13 +1148,13 @@ function EditableDiagramCanvasInner({
         : next
     const graph = parseSource(normalized, format)
     setSourceDraft(normalized)
-    setNodes((current) => {
+    setCanvasNodes((current) => {
       const merged = mergeCanvasLayout(current, graph.nodes)
-      setEdges(current => withFacingHandles(merged, mergeDiagramSourceEdges(current, graph.edges)))
+      setCanvasEdges(current => withFacingHandles(merged, mergeDiagramSourceEdges(current, graph.edges)))
       return merged
     })
     setSelectedNodeId(null)
-  }, [diagramKey, format, setEdges, setNodes])
+  }, [diagramKey, format, setCanvasEdges, setCanvasNodes])
 
   const updateSelectedNodeData = useCallback((patch: Record<string, unknown>) => {
     if (!selectedNodeId) return
@@ -1876,8 +1308,8 @@ function EditableDiagramCanvasInner({
     const bounds = wrapper.getBoundingClientRect()
     setCanvasMenu(null)
     setEdgeContextMenu(null)
-    setNodes((current) => node.selected ? current : current.map((item) => ({ ...item, selected: item.id === node.id })))
-    setEdges((current) => node.selected ? current : current.map((edge) => ({ ...edge, selected: false })))
+    setCanvasNodes((current) => node.selected ? current : current.map((item) => ({ ...item, selected: item.id === node.id })))
+    setCanvasEdges((current) => node.selected ? current : current.map((edge) => ({ ...edge, selected: false })))
     setSelectedNodeId(node.id)
     setSelectedEdgeId(null)
     setC4NodeMenu({
@@ -1885,7 +1317,7 @@ function EditableDiagramCanvasInner({
       x: event.clientX - bounds.left,
       y: event.clientY - bounds.top,
     })
-  }, [setEdges, setNodes])
+  }, [setCanvasEdges, setCanvasNodes])
 
   const handleNodeDoubleClick = useCallback((event: ReactMouseEvent | MouseEvent, node: Node<ArchimateNodeData>) => {
     event.preventDefault()
@@ -1899,11 +1331,11 @@ function EditableDiagramCanvasInner({
   }, [format, onOpenC4Drilldown])
 
   const openNodeProperties = useCallback(() => {
-    setNodes(current => current.map(node => ({ ...node, selected: node.id === selectedNodeId })))
-    setEdges(current => current.map(edge => ({ ...edge, selected: false })))
+    setCanvasNodes(current => current.map(node => ({ ...node, selected: node.id === selectedNodeId })))
+    setCanvasEdges(current => current.map(edge => ({ ...edge, selected: false })))
     setIsPropertiesPanelOpen(true)
     setC4NodeMenu(null)
-  }, [selectedNodeId, setEdges, setNodes])
+  }, [selectedNodeId, setCanvasEdges, setCanvasNodes])
 
   const openDiagramChat = useCallback((node?: Node<ArchimateNodeData>) => {
     const selected = node ?? nodes.find((item) => item.selected && item.data.kind === 'element')
@@ -1964,6 +1396,7 @@ function EditableDiagramCanvasInner({
         const item = C4_PALETTE_ITEMS.find((candidate) => candidate.kind === action.notation)
         if (!item) return
         const node = applyDefaultElementStyle(createC4NodeFromPaletteItem(item, actionPosition(index), usedNodeIds))
+        if (!('title' in node.data)) return
         nextNodes.push({ ...node, id: action.id, data: { ...node.data, title: action.title, ...(action.description ? { description: [action.description] } : {}) } })
         usedNodeIds.add(action.id)
       } else if (action.type === 'update_node') {
@@ -1976,7 +1409,7 @@ function EditableDiagramCanvasInner({
               ...node.data,
               ...(action.title ? { title: action.title } : {}),
               ...(action.description ? { description: [action.description] } : {}),
-              ...(item ? { notationId: item.kind, stereotype: c4Stereotype(item.kind), visual: { ...node.data.visual, fillColor: item.fill, lineColor: isC4External(item.kind) ? '#8A8A8A' : '#3C7FC0' } } : {}),
+              ...(item && item.kind !== 'boundary' ? { notationId: item.kind, stereotype: c4Stereotype(item.kind), visual: { ...node.data.visual, fillColor: item.fill, lineColor: isC4External(item.kind) ? '#8A8A8A' : '#3C7FC0' } } : {}),
             },
           }
         })
@@ -2038,6 +1471,7 @@ function EditableDiagramCanvasInner({
         const item = C4_PALETTE_ITEMS.find((candidate) => candidate.kind === action.notation)
         if (!item) return
         const node = createC4NodeFromPaletteItem(item, { x: start.x + (index % 2) * 270, y: start.y + Math.floor(index / 2) * 150 }, existing)
+        if (!('title' in node.data)) return
         next.push({ ...node, id: action.id, className: 'ai-draft-preview-add', style: { ...node.style, outline: '2px solid #16a34a', boxShadow: '0 0 0 4px rgba(22,163,74,.15)' }, data: { ...node.data, title: action.title, ...(action.description ? { description: [action.description] } : {}) } })
         existing.add(action.id)
       } else if (action.type === 'update_node' || action.type === 'delete_node') {
@@ -2114,12 +1548,12 @@ function EditableDiagramCanvasInner({
   const selectCanvasElements = useCallback((kind: 'nodes' | 'edges' | 'all') => {
     const selectNodes = kind === 'nodes' || kind === 'all'
     const selectEdges = kind === 'edges' || kind === 'all'
-    setNodes((current) => current.map((node) => ({ ...node, selected: selectNodes })))
-    setEdges((current) => current.map((edge) => ({ ...edge, selected: selectEdges })))
+    setCanvasNodes((current) => current.map((node) => ({ ...node, selected: selectNodes })))
+    setCanvasEdges((current) => current.map((edge) => ({ ...edge, selected: selectEdges })))
     setSelectedNodeId(selectNodes ? nodes[0]?.id ?? null : null)
     setSelectedEdgeId(selectEdges ? edges[0]?.id ?? null : null)
     setCanvasMenu(null)
-  }, [edges, nodes, setEdges, setNodes])
+  }, [edges, nodes, setCanvasEdges, setCanvasNodes])
 
   const clearDefaultStyle = useCallback(() => {
     setDefaultElementStyle(null)
@@ -2507,7 +1941,11 @@ function EditableDiagramCanvasInner({
       nodes={previewNodes}
       edges={previewEdges.map(edge => ({ ...edge, deletable: canDiagramEdgeAction(edge, 'delete') }))}
       onNodesChange={editable ? handleNodesChange : () => undefined}
-      onEdgesChange={editable ? (changes) => onEdgesChange(changes.filter(change => change.type !== 'remove' || canDiagramEdgeAction(edges.find(edge => edge.id === change.id), 'delete'))) : () => undefined}
+      onEdgesChange={editable ? (changes) => {
+        const allowed = changes.filter(change => change.type !== 'remove' || canDiagramEdgeAction(edges.find(edge => edge.id === change.id), 'delete'))
+        if (allowed.some(change => change.type !== 'select')) markLocalEdit()
+        onEdgesChange(allowed)
+      } : () => undefined}
       onConnect={editable ? onConnect : () => undefined}
       onUndo={history.undo}
       onRedo={history.redo}
@@ -2540,16 +1978,42 @@ function EditableDiagramCanvasInner({
         const next = { x: viewport.x, y: viewport.y, zoom: viewport.zoom }
         viewportRef.current = next
         setSavedViewport(next)
-        saveGraph(storageKey, { nodes, edges, source: sourceDraft, viewport: next, snapToGrid })
+        saveGraph(storageKey, { nodes, edges, source: sourceDraft, viewport: next, snapToGrid, draftBeforeSavedGraph: editedBeforeSavedGraph })
         // Panning is view state only; it must not replace a synchronized content snapshot.
       } : undefined}
     />
   )
 
+  const savedGraphRecovery = editable && savedGraphConflict ? (
+    <>
+      <div role="status" className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+        <span>Saved diagram available. Local edits are kept; sync is paused.</span>
+        <Button type="button" size="sm" variant="outline" onClick={() => setConfirmSavedGraph(savedGraph)}>
+          <RefreshCw className="h-4 w-4" /> Reload saved diagram
+        </Button>
+      </div>
+      <Dialog open={Boolean(confirmSavedGraph && confirmSavedGraph === savedGraph)} onOpenChange={open => {
+        if (!open) setConfirmSavedGraph(undefined)
+      }}>
+        <DialogContent role="dialog" aria-modal="true" aria-labelledby="diagram-reload-title">
+          <DialogHeader>
+            <DialogTitle id="diagram-reload-title">Replace local edits?</DialogTitle>
+            <DialogDescription>Reloading the saved diagram discards the local edits in this canvas.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" autoFocus onClick={() => setConfirmSavedGraph(undefined)}>Keep editing</Button>
+            <Button type="button" variant="destructive" onClick={replaceWithSavedGraph}>Discard edits and reload</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  ) : null
+
   if (!studioMode) {
     return (
-      <div className={cn('relative h-full min-h-0 overflow-hidden rounded-lg bg-white/75', className)}>
-        {flowCanvas}
+      <div className={cn('relative flex h-full min-h-0 flex-col overflow-hidden rounded-lg bg-white/75', className)}>
+        {savedGraphRecovery}
+        <div className="relative min-h-0 flex-1">{flowCanvas}</div>
               {clipboardError ? (
                 <div role="alert" className="absolute bottom-4 left-4 z-50 flex max-w-sm items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 shadow-sm">
                   <span>{clipboardError}</span>
@@ -2611,6 +2075,7 @@ function EditableDiagramCanvasInner({
 
   return (
     <div className={cn('relative flex h-full min-h-0 flex-col overflow-hidden border border-border/40', className)}>
+      {savedGraphRecovery}
       {editable && erdDdlSelection ? <ErdDdlDialog selection={erdDdlSelection} onClose={() => setErdDdlSelection(null)} /> : null}
       {editable && format === 'erd' && erdDdlImportOpen ? <ErdDdlImportDialog key={storageKey} onClose={() => setErdDdlImportOpen(false)} onApply={applyErdDdlImport} /> : null}
       <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageInputChange} />
@@ -2677,22 +2142,22 @@ function EditableDiagramCanvasInner({
                 </button>
                 {canvasMenu.submenu === 'options' ? (
                   <DiagramEditorSubmenu className="w-64 rounded-md border border-slate-200 bg-white py-1 shadow-xl">
-                    {[
+                    {([
                       ['Grid', showGrid, setShowGrid, Grid3X3],
                       ['Snap to grid', snapToGrid, setSnapToGrid, Magnet],
                       ['Guides', showGuides, setShowGuides, MousePointer2],
                       ['Ruler', showRuler, setShowRuler, Ruler],
                       ['Connection arrows', showConnectionArrows, setShowConnectionArrows, ArrowRight],
                       ['Connection points', showConnectionPoints, setShowConnectionPoints, Crosshair],
-                    ].map(([label, enabled, setter, Icon]) => (
+                    ] as const).map(([label, enabled, setter, Icon]) => (
                       <button
                         type="button"
-                        key={label as string}
+                        key={label}
                         className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-100"
-                        onClick={() => (setter as (value: boolean) => void)(!(enabled as boolean))}
+                        onClick={() => setter(!enabled)}
                       >
                         <span className="w-4 text-sky-500">{enabled ? <Check className="h-4 w-4" /> : null}</span>
-                        {Icon ? <Icon className="h-4 w-4 text-slate-500" /> : null}{label as string}
+                        <Icon className="h-4 w-4 text-slate-500" />{label}
                       </button>
                     ))}
                   </DiagramEditorSubmenu>
@@ -2945,7 +2410,10 @@ function EditableDiagramCanvasInner({
                 {sidebarPanel === 'source' ? (
                   <PlantUmlSourceEditor
                     value={sourceDraft}
-                    onChange={setSourceDraft}
+                    onChange={next => {
+                      if (next !== sourceDraft) markLocalEdit()
+                      setSourceDraft(next)
+                    }}
                     onBlur={applySource}
                     languageLabel={
                       format === 'bpmn' ? 'BPMN PlantUML'
@@ -2959,7 +2427,7 @@ function EditableDiagramCanvasInner({
                   <C4ApplicationCatalogPalette
                     applications={applicationCatalog}
                     loading={applicationCatalogLoading}
-                    existingNames={new Set(nodes.filter((node) => node.data.kind === 'element').map((node) => node.data.title.trim().toLowerCase()))}
+                    existingNames={new Set(nodes.flatMap(({ data }) => data.kind === 'element' ? [data.title.trim().toLowerCase()] : []))}
                     onAdd={addApplicationCatalogNode}
                     onFocusExisting={focusApplicationCatalogNode}
                   />
@@ -3241,8 +2709,10 @@ function EditableDiagramCanvasInner({
 }
 
 export function EditableDiagramCanvas(props: EditableDiagramCanvasProps) {
+  const tenant = useTenantContextOptional()
+  const scope = JSON.stringify([tenant?.workspaceId ?? null, props.ideaId, props.diagramKey])
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={scope}>
       <EditableDiagramCanvasInner {...props} />
     </ReactFlowProvider>
   )

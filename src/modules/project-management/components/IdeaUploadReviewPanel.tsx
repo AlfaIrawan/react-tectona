@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import { workspaceScopedPath, stripWorkspaceRoutePrefix } from '@/lib/workspaceRouting'
@@ -128,6 +128,7 @@ function friendlyExtractionError(rawMessage: string): string {
   if (rawMessage.includes('PDF_OCR_INCOMPLETE')) return 'Image OCR could not read this PDF. Try again or provide a text-readable version.'
   if (rawMessage.includes('PDF_IMAGE_TEXT_REQUIRES_OCR')) return 'This PDF has no readable native text. Image OCR has not been run; provide an OCR-text version before analysis.'
   if (rawMessage.includes('PDF_ENCRYPTED')) return 'This PDF is password-protected. Upload an unlocked copy.'
+  if (rawMessage.includes('PDF_PARSE_FAILED')) return 'The PDF could not be parsed. Open it locally to check that it is readable, then upload a new copy.'
   if (rawMessage.includes('DOC_TEXT_EMPTY') || rawMessage.includes('PDF_TEXT_EMPTY') || rawMessage.includes('PPTX_TEXT_EMPTY')) {
     return "Couldn't read any text from this file. It may be a scanned/image-only document — try a different file."
   }
@@ -182,31 +183,25 @@ export function IdeaUploadReviewPanel({
   const [lastRunSummary, setLastRunSummary] = useState<{ created: number; total: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const requestTokenRef = useRef(0)
+  const createInFlightRef = useRef(false)
+  const [isCreating, setIsCreating] = useState(false)
   const activeJobRef = useRef<string | null>(null)
   const readingAbortRef = useRef<AbortController | null>(null)
-  const cancelActiveJob = useCallback(() => {
+  const cancelActiveJob = useCallback((onFailure?: () => void) => {
     readingAbortRef.current?.abort()
     readingAbortRef.current = null
     const jobId = activeJobRef.current
     activeJobRef.current = null
-    if (jobId) void cancelIdeaExtractionJob(jobId).catch(() => {
-      setJobError('Could not confirm stopping the analysis. It may still be running.')
-    })
+    if (jobId) void cancelIdeaExtractionJob(jobId).catch(() => onFailure?.())
   }, [])
-  useEffect(() => {
-    if (!isOpen) { requestTokenRef.current += 1; cancelActiveJob() }
-  }, [isOpen, cancelActiveJob])
-  useEffect(() => () => {
-    readingAbortRef.current?.abort()
+  const invalidateRequests = useCallback(() => {
     requestTokenRef.current += 1
-    const jobId = activeJobRef.current
-    activeJobRef.current = null
-    if (jobId) void cancelIdeaExtractionJob(jobId).catch(() => {})
-  }, [])
+    cancelActiveJob()
+  }, [cancelActiveJob])
+  useLayoutEffect(() => invalidateRequests, [invalidateRequests])
 
   const reset = useCallback(() => {
-    cancelActiveJob()
-    requestTokenRef.current += 1
+    invalidateRequests()
     setStage('idle')
     setFileName('')
     setIncludeImageOcr(false)
@@ -218,17 +213,13 @@ export function IdeaUploadReviewPanel({
     setJobError('')
     setJobStatus(null)
     setCandidates([])
+    setIsDragOver(false)
     setLastRunSummary(null)
-  }, [cancelActiveJob])
+  }, [invalidateRequests])
 
-  const analysisScopeRef = useRef({ workspaceId, currentUserId })
-  useEffect(() => {
-    const previous = analysisScopeRef.current
-    if (previous.workspaceId !== workspaceId || previous.currentUserId !== currentUserId) {
-      analysisScopeRef.current = { workspaceId, currentUserId }
-      reset()
-    }
-  }, [workspaceId, currentUserId, reset])
+  useLayoutEffect(() => {
+    reset()
+  }, [isOpen, workspaceId, currentUserId, reset])
 
   const handleClose = useCallback(() => {
     reset()
@@ -237,6 +228,11 @@ export function IdeaUploadReviewPanel({
 
   const processFile = useCallback(
     async (file: File) => {
+      if (!isOpen) return
+      if (!workspaceId.trim()) {
+        setFileError('Choose a workspace before uploading an idea.')
+        return
+      }
       const method = detectExtractMethod(file)
       if (!method) {
         setFileError('Unsupported file type. Upload a Word (.docx), PDF, or PowerPoint (.pptx) file.')
@@ -247,8 +243,8 @@ export function IdeaUploadReviewPanel({
         return
       }
 
-      cancelActiveJob()
       const token = ++requestTokenRef.current
+      cancelActiveJob()
       setFileError('')
       setJobError('')
       setFileName(file.name)
@@ -301,16 +297,14 @@ export function IdeaUploadReviewPanel({
             extraction_warnings: extractionWarnings,
           },
           context: {
-            workspace_id: workspaceId || null,
+            workspace_id: workspaceId,
             user_id: currentUserId || null,
             session_id: null,
           },
         })
 
         if (requestTokenRef.current !== token) {
-          await cancelIdeaExtractionJob(started.job_id).catch(() => {
-            setJobError('Could not confirm stopping the analysis. It may still be running.')
-          })
+          void cancelIdeaExtractionJob(started.job_id).catch(() => {})
           return
         }
         activeJobRef.current = started.job_id
@@ -344,11 +338,15 @@ export function IdeaUploadReviewPanel({
       } catch (err) {
         if (requestTokenRef.current !== token) return
         setStage('idle')
-        cancelActiveJob()
         setJobError(friendlyExtractionError(err instanceof Error ? err.message : 'Idea extraction failed.'))
+        cancelActiveJob(() => {
+          if (requestTokenRef.current === token) {
+            setJobError(message => `${message} Could not confirm stopping the analysis. It may still be running.`)
+          }
+        })
       }
     },
-    [currentUserId, workspaceId, cancelActiveJob, includeImageOcr],
+    [currentUserId, workspaceId, cancelActiveJob, includeImageOcr, isOpen],
   )
 
   const handleFileInputChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -407,6 +405,7 @@ export function IdeaUploadReviewPanel({
   }
 
   const handleConfirmCreate = async () => {
+    if (!isOpen || createInFlightRef.current) return
     const accepted = candidates.filter((c) => c._decision === 'accepted')
     if (accepted.length === 0) return
     setJobError('')
@@ -415,46 +414,57 @@ export function IdeaUploadReviewPanel({
       return
     }
 
+    createInFlightRef.current = true
+    setIsCreating(true)
     setStage('creating')
+    const token = requestTokenRef.current
     const createdIdeas: IdeaApi[] = []
-    let createdCount = 0
 
-    for (const candidate of accepted) {
-      const localId = candidate._localId
-      if (!candidate.title.trim()) {
-        updateCandidate(localId, { _createStatus: 'error', _createError: 'Idea title is required.' })
-        continue
+    try {
+      for (const candidate of accepted) {
+        if (requestTokenRef.current !== token) return
+        const localId = candidate._localId
+        if (!candidate.title.trim()) {
+          updateCandidate(localId, { _createStatus: 'error', _createError: 'Idea title is required.' })
+          continue
+        }
+        updateCandidate(localId, { _createStatus: 'creating', _createError: undefined })
+        try {
+          const created = await apiCreateIdea({
+            title: candidate.title.trim(),
+            description:
+              candidate.description.trim() ||
+              'Jelaskan masalah bisnis, nilai yang diharapkan, dan hasil yang dituju untuk peninjauan tata kelola.',
+            category: candidate.category,
+            tags: candidate.tags.length > 0 ? candidate.tags : ['Uploaded'],
+            workspace_id: workspaceId,
+            owner_id: currentUserId || undefined,
+          })
+          // A dispatched write can still succeed, but an abandoned run must not start more writes.
+          if (requestTokenRef.current !== token) return
+          createdIdeas.push(created)
+          setCandidates((prev) => prev.filter((c) => c._localId !== localId))
+          await attachSourceDocBestEffort(created)
+        } catch (err) {
+          if (requestTokenRef.current !== token) return
+          updateCandidate(localId, {
+            _createStatus: 'error',
+            _createError: err instanceof Error ? err.message : 'Failed to create idea.',
+          })
+        }
       }
-      updateCandidate(localId, { _createStatus: 'creating', _createError: undefined })
-      try {
-        const created = await apiCreateIdea({
-          title: candidate.title.trim(),
-          description:
-            candidate.description.trim() ||
-            'Jelaskan masalah bisnis, nilai yang diharapkan, dan hasil yang dituju untuk peninjauan tata kelola.',
-          category: candidate.category,
-          tags: candidate.tags.length > 0 ? candidate.tags : ['Uploaded'],
-          workspace_id: workspaceId,
-          owner_id: currentUserId || undefined,
-        })
-        createdIdeas.push(created)
-        createdCount += 1
-        setCandidates((prev) => prev.filter((c) => c._localId !== localId))
-        await attachSourceDocBestEffort(created)
-      } catch (err) {
-        updateCandidate(localId, {
-          _createStatus: 'error',
-          _createError: err instanceof Error ? err.message : 'Failed to create idea.',
-        })
-      }
+      if (requestTokenRef.current !== token) return
+      if (createdIdeas.length > 0) onIdeasCreated(createdIdeas)
+      setLastRunSummary({ created: createdIdeas.length, total: accepted.length })
+    } finally {
+      createInFlightRef.current = false
+      setIsCreating(false)
+      if (requestTokenRef.current === token) setStage('review')
     }
-
-    if (createdIdeas.length > 0) onIdeasCreated(createdIdeas)
-    setLastRunSummary({ created: createdCount, total: accepted.length })
-    setStage('review')
   }
 
   const retryCandidateCreate = async (localId: string) => {
+    if (!isOpen || createInFlightRef.current) return
     const candidate = candidates.find((c) => c._localId === localId)
     if (!candidate) return
     if (!candidate.title.trim()) {
@@ -468,6 +478,9 @@ export function IdeaUploadReviewPanel({
       })
       return
     }
+    createInFlightRef.current = true
+    setIsCreating(true)
+    const token = requestTokenRef.current
     updateCandidate(localId, { _createStatus: 'creating', _createError: undefined })
     try {
       const created = await apiCreateIdea({
@@ -480,14 +493,20 @@ export function IdeaUploadReviewPanel({
         workspace_id: workspaceId,
         owner_id: currentUserId || undefined,
       })
+      if (requestTokenRef.current !== token) return
       onIdeasCreated([created])
-      setCandidates((prev) => prev.filter((c) => c._localId !== localId))
       await attachSourceDocBestEffort(created)
+      if (requestTokenRef.current !== token) return
+      setCandidates((prev) => prev.filter((c) => c._localId !== localId))
     } catch (err) {
+      if (requestTokenRef.current !== token) return
       updateCandidate(localId, {
         _createStatus: 'error',
         _createError: err instanceof Error ? err.message : 'Failed to create idea.',
       })
+    } finally {
+      createInFlightRef.current = false
+      setIsCreating(false)
     }
   }
 
@@ -877,6 +896,7 @@ export function IdeaUploadReviewPanel({
                           <span>{candidate._createError}</span>
                           <button
                             type="button"
+                            disabled={isCreating}
                             onClick={() => void retryCandidateCreate(candidate._localId)}
                             className="inline-flex items-center gap-1 font-medium hover:underline"
                           >
@@ -903,7 +923,7 @@ export function IdeaUploadReviewPanel({
           <div className="shrink-0 border-t border-border px-5 py-4">
             <button
               type="button"
-              disabled={acceptedCount === 0 || stage === 'creating'}
+              disabled={acceptedCount === 0 || isCreating}
               onClick={() => void handleConfirmCreate()}
               className={cn(enterpriseCyanGradientActionButtonClass(), 'w-full justify-center', acceptedCount === 0 && 'pointer-events-none opacity-50')}
             >

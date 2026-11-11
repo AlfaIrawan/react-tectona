@@ -32,7 +32,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { ProjectArchivedWorkItemApiModel, WorkItemApiModel } from '@/lib/api/workApi'
+import type { Priority, ProjectArchivedWorkItemApiModel, WorkItemApiModel } from '@/lib/api/workApi'
 import { WORK_ITEM_TYPE_OPTIONS, WorkItemTypeIcon } from '@/lib/work/workItemTypeMeta'
 import { cn } from '@/lib/utils'
 import {

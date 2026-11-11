@@ -47,7 +47,7 @@ const LEGACY_DUMMY_OWNER_ID = '00000000-0000-0000-0000-000000000001'
 export function resolveProjectOwnerDisplay(project: {
   ownerId?: string
   ownerName?: string
-  members?: { userId: string; displayName: string; roleCode: string }[]
+  members?: { userId: string; displayName: string; roleCode?: string }[]
 }): string {
   const ownerMember = project.members?.find((member) => member.roleCode === 'owner')
 

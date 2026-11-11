@@ -38,7 +38,7 @@ export const INTEGRATION_FONT_FAMILIES = [
   'Courier New',
 ] as const
 
-export function defaultIntegrationNodeVisual(layer?: ArchimateLayer): IntegrationNodeVisualStyle {
+export function defaultIntegrationNodeVisual(layer?: ArchimateLayer): Required<IntegrationNodeVisualStyle> {
   const palette = layer ? ARCHIMATE_NOTATION_LAYER_COLORS[layer] : ARCHIMATE_NOTATION_LAYER_COLORS.application
   return {
     fillEnabled: true,
@@ -55,7 +55,7 @@ export function defaultIntegrationNodeVisual(layer?: ArchimateLayer): Integratio
   }
 }
 
-export function defaultIntegrationNodeTextStyle(): IntegrationNodeTextStyle {
+export function defaultIntegrationNodeTextStyle(): Required<IntegrationNodeTextStyle> {
   return {
     fontFamily: 'Helvetica',
     fontSize: 12,

@@ -339,10 +339,6 @@ function isBrainstormThreadIndonesian(messages: Array<{ role: string; text: stri
   return /(?:\baku\b|\bkamu\b|\byang\b|\bdengan\b|\buntuk\b|\bsudah\b|\bapakah\b|\bproses\b|\blanjut\b)/i.test(sample)
 }
 
-function brainstormContinueDiscoveryMessage(messages: Array<{ role: string; text: string }>): string {
-  return isBrainstormThreadIndonesian(messages) ? 'Lanjut ditanya' : 'Continue questions'
-}
-
 const BRAINSTORM_EVIDENCE_GUARDRAIL_MARKER = '<!-- tectona-brainstorm-evidence-guardrail -->'
 
 type BrainstormAbbreviation = {
@@ -653,7 +649,7 @@ function allocatePercents(weights: number[]): number[] {
   if (total <= 0) return weights.map(() => 0)
   const raw = weights.map((weight) => (weight / total) * 100)
   const floors = raw.map((value) => Math.floor(value))
-  let remain = 100 - floors.reduce((sum, value) => sum + value, 0)
+  const remain = 100 - floors.reduce((sum, value) => sum + value, 0)
   const order = raw
     .map((value, index) => ({ index, frac: value - Math.floor(value) }))
     .sort((a, b) => b.frac - a.frac)
@@ -1330,7 +1326,6 @@ import { useTypingReveal } from '@/lib/chat/useTypingReveal'
 import {
   appendProcessDiagramsToText,
   latestRevisedProcessDiagrams,
-  stripProcessDiagramsFromText,
   type ExtractedProcessDiagram,
 } from '@/lib/chat/extractProcessDiagrams'
 import { normalizeMermaidFences, splitMermaidContent } from '@/lib/chat/normalizeMermaidFences'
@@ -1340,6 +1335,7 @@ import { IdeaUploadReviewPanel } from '@/modules/project-management/components/I
 import { IdeaBacklogFoldersSection } from '@/modules/project-management/components/IdeaBacklogFoldersSection'
 import { SlidingCardGrid } from '@/modules/project-management/components/SlidingCardGrid'
 import { useIdeaFolderStore, type IdeaBacklogFolder } from '@/modules/project-management/store/ideaFolderStore'
+import { getIdeaFolderAncestors } from '@/modules/project-management/lib/ideaFolderActions'
 import { ProjectDragLayer } from '@/modules/projects/components/ProjectDragLayer'
 import { useToast } from '@/components/ui/toast'
 import { notifyEvent } from '@/lib/api/notificationApi'
@@ -1359,6 +1355,48 @@ const DEFAULT_DRAFT_WORKSPACE_ID = 'react-tectona'
 const MAX_CREATE_IDEA_TAGS = 5
 const MAX_CREATE_IDEA_TAG_LENGTH = 24
 
+const normalizeIdeaTag = (value: string): string => value.trim().replace(/\s+/g, ' ')
+
+const dedupeIdeaTags = (tags: string[]): string[] => {
+  const used = new Set<string>()
+  const result: string[] = []
+  for (const raw of tags) {
+    const normalized = normalizeIdeaTag(raw)
+    if (!normalized) continue
+    const key = normalized.toLocaleLowerCase()
+    if (used.has(key)) continue
+    used.add(key)
+    result.push(normalized)
+  }
+  return result
+}
+
+const parseIdeaTagsFromText = (value: string): string[] =>
+  dedupeIdeaTags(
+    value
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+  )
+
+const mergeCreateIdeaTags = (baseTags: string[], inputText: string) => {
+  const parsed = parseIdeaTagsFromText(inputText)
+  const acceptedByLength: string[] = []
+  let rejectedByLength = 0
+
+  for (const tag of parsed) {
+    if (tag.length > MAX_CREATE_IDEA_TAG_LENGTH) {
+      rejectedByLength += 1
+      continue
+    }
+    acceptedByLength.push(tag)
+  }
+
+  const merged = dedupeIdeaTags([...baseTags, ...acceptedByLength])
+  const trimmed = merged.slice(0, MAX_CREATE_IDEA_TAGS)
+  const droppedByMax = Math.max(0, merged.length - trimmed.length)
+  return { tags: trimmed, rejectedByLength, droppedByMax }
+}
 
 const IDEA_TAG_QUICK_SUGGESTIONS = [
   'Platform',
@@ -2134,7 +2172,6 @@ export function IdeaBacklogManagementPage() {
     updateFolder,
     deleteFolder,
     getFolder,
-    foldersLoading,
     foldersError,
   } = useIdeaFolderStore()
   const userWorkspaceOptions = useUserWorkspaceOptions()
@@ -2191,6 +2228,7 @@ export function IdeaBacklogManagementPage() {
   const createIdeaSubmitInFlight = useRef(false)
   const draftBackupStatus = useIdeaDraftSaveStatusStore((state) => state.status)
   const [isUploadIdeaPanelOpen, setIsUploadIdeaPanelOpen] = useState(false)
+  const uploadWorkspaceId = resolveWorkspaceApiId(tenant?.workspaceId) ?? ''
   const [deleteIdeaTarget, setDeleteIdeaTarget] = useState<Idea | null>(null)
   const [moveIdeaTarget, setMoveIdeaTarget] = useState<Idea | null>(null)
   const [moveIdeaFolderId, setMoveIdeaFolderId] = useState('')
@@ -2212,7 +2250,7 @@ export function IdeaBacklogManagementPage() {
   } | null>(null)
   const [aiAssistanceLoading, setAiAssistanceLoading] = useState<IdeaAiAssistanceMode | null>(null)
   const [createIdeaDraftMode, setCreateIdeaDraftMode] = useState<'ai' | 'manual'>('ai')
-  const [aiAssistanceResult, setAiAssistanceResult] = useState<{
+  const [, setAiAssistanceResult] = useState<{
     mode: IdeaAiAssistanceMode
     result: string
   } | null>(null)
@@ -2336,7 +2374,7 @@ export function IdeaBacklogManagementPage() {
   const [createIdeaIntakeAnswers, setCreateIdeaIntakeAnswers] = useState<Record<string, string>>({})
   const [createIdeaIntakeExtra, setCreateIdeaIntakeExtra] = useState('')
   const createIdeaTagInputRef = useRef<HTMLInputElement | null>(null)
-  const [createIdeaError, setCreateIdeaError] = useState('')
+  const [, setCreateIdeaError] = useState('')
   const [ideaAnalysisProgressById, setIdeaAnalysisProgressById] = useState<Record<string, IdeaAnalysisProgress>>(
     readStoredIdeaAnalysisProgress,
   )
@@ -2405,7 +2443,7 @@ export function IdeaBacklogManagementPage() {
 
   const applySelectedIdeaDescription = (nextText: string, options: Omit<Parameters<typeof prepareDiagramHandoff>[0], 'text' | 'existing'>) => {
     const prepared = prepareDiagramHandoff({ ...options, text: nextText, existing: createIdeaSelectedSources ?? undefined })
-    if (!prepared.ok) { setAiAssistanceError(prepared.reason); return false }
+    if (prepared.ok === false) { setAiAssistanceError(prepared.reason); return false }
     const plain = prepared.prose
     const html = resolveSavedIdeaRichHtml(plain, options.html)
     if (html === null) {
@@ -2443,49 +2481,6 @@ export function IdeaBacklogManagementPage() {
     editor.focus()
     document.execCommand('formatBlock', false, block)
     syncCreateIdeaDescriptionFromHtml(editor.innerHTML)
-  }
-
-  const normalizeIdeaTag = (value: string): string => value.trim().replace(/\s+/g, ' ')
-
-  const dedupeIdeaTags = (tags: string[]): string[] => {
-    const used = new Set<string>()
-    const result: string[] = []
-    for (const raw of tags) {
-      const normalized = normalizeIdeaTag(raw)
-      if (!normalized) continue
-      const key = normalized.toLocaleLowerCase()
-      if (used.has(key)) continue
-      used.add(key)
-      result.push(normalized)
-    }
-    return result
-  }
-
-  const parseIdeaTagsFromText = (value: string): string[] =>
-    dedupeIdeaTags(
-      value
-        .split(',')
-        .map((part) => part.trim())
-        .filter(Boolean)
-    )
-
-  const mergeCreateIdeaTags = (baseTags: string[], inputText: string) => {
-    const parsed = parseIdeaTagsFromText(inputText)
-    const acceptedByLength: string[] = []
-    let rejectedByLength = 0
-
-    for (const tag of parsed) {
-      if (tag.length > MAX_CREATE_IDEA_TAG_LENGTH) {
-        rejectedByLength += 1
-        continue
-      }
-      acceptedByLength.push(tag)
-    }
-
-    const merged = dedupeIdeaTags([...baseTags, ...acceptedByLength])
-    const trimmed = merged.slice(0, MAX_CREATE_IDEA_TAGS)
-    const droppedByMax = Math.max(0, merged.length - trimmed.length)
-    return { tags: trimmed, rejectedByLength, droppedByMax }
   }
 
   const addCreateIdeaTagsFromText = (value: string) => {
@@ -2627,7 +2622,6 @@ export function IdeaBacklogManagementPage() {
     createIdeaForm.workspaceId,
     createIdeaTagFeedback,
     createIdeaWorkspaceError,
-    effectiveCreateIdeaTags.length,
     isCreateIdeaWorkspaceLoading,
   ])
 
@@ -2822,16 +2816,7 @@ export function IdeaBacklogManagementPage() {
     })
   }, [folders, currentFolderId, ideaCountByFolderId, isLoading])
 
-  const folderAncestors = useMemo(() => {
-    if (!currentFolderId) return [] as IdeaBacklogFolder[]
-    const chain: IdeaBacklogFolder[] = []
-    let cursor = getFolder(currentFolderId)
-    while (cursor) {
-      chain.unshift(cursor)
-      cursor = cursor.parentId ? getFolder(cursor.parentId) : undefined
-    }
-    return chain
-  }, [currentFolderId, folders, getFolder])
+  const folderAncestors = useMemo(() => getIdeaFolderAncestors(currentFolderId, folders), [currentFolderId, folders])
 
   const currentFolder = currentFolderId ? getFolder(currentFolderId) : undefined
 
@@ -3985,6 +3970,14 @@ export function IdeaBacklogManagementPage() {
     } finally { createPolicyInFlight.current = false }
   }
 
+  const openUploadIdeaPanel = () => {
+    if (!uploadWorkspaceId) {
+      addToast({ variant: 'warning', title: 'Select a workspace', description: 'Choose a workspace before uploading an idea.' })
+      return
+    }
+    setIsUploadIdeaPanelOpen(true)
+  }
+
   const openDeleteIdeaDialog = (idea: Idea) => {
     setDeleteIdeaTarget(idea)
     setDeleteIdeaError('')
@@ -4005,10 +3998,12 @@ export function IdeaBacklogManagementPage() {
     closeContextMenu()
   }
 
+  const moveIdeaTargetId = moveIdeaTarget?.id
+  const moveIdeaWorkspaceId = moveIdeaTarget?.workspace
   useEffect(() => {
-    if (!moveIdeaTarget) return
+    if (moveIdeaTargetId === undefined) return
     let active = true
-    const workspaceId = moveIdeaTarget.workspace
+    const workspaceId = moveIdeaWorkspaceId
     setMoveIdeaFolders([])
     setMoveFoldersLoading(true)
     setMoveFoldersError('')
@@ -4023,7 +4018,7 @@ export function IdeaBacklogManagementPage() {
       if (active) setMoveFoldersError(error instanceof Error ? error.message : 'Could not load destination folders.')
     }).finally(() => { if (active) setMoveFoldersLoading(false) })
     return () => { active = false }
-  }, [moveIdeaTarget?.id, moveIdeaTarget?.workspace, moveFoldersReloadKey])
+  }, [moveIdeaTargetId, moveIdeaWorkspaceId, moveFoldersReloadKey])
 
   const closeMoveIdeaDialog = () => {
     if (isMovingIdea) return
@@ -4207,7 +4202,7 @@ export function IdeaBacklogManagementPage() {
     setCreateIdeaTitleError('')
   }
 
-  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse, _messages: Array<{ text: string }> = brainstormMessages) => {
+  const applyCompletedIdeaDraft = (terminal: IdeaDraftJobStatusResponse) => {
     const draftText = terminal.result?.draft_text?.trim()
     if (!draftText) {
       throw new Error(terminal.error_message || 'AI draft generation failed.')
@@ -4850,15 +4845,11 @@ export function IdeaBacklogManagementPage() {
     setBrainstormOfferGenerateAnyway(true)
   }, [isBrainstormMode, brainstormReady, brainstormEvidenceProgress])
 
-  const syncBrainstormComposerHeight = () => {
+  useLayoutEffect(() => {
+    if (!isBrainstormMode) return
     const el = brainstormComposerRef.current
     if (!el) return
     resizeBrainstormComposer(el, isMobileLayout)
-  }
-
-  useLayoutEffect(() => {
-    if (!isBrainstormMode) return
-    syncBrainstormComposerHeight()
   }, [isBrainstormMode, brainstormInput, isEvidenceDialogOpen, isMobileLayout])
 
   const brainstormComposerDisabled = isBrainstormSending || isDraftContinuing || isResumingDraft
@@ -5148,7 +5139,7 @@ export function IdeaBacklogManagementPage() {
         const hasSavedDescription = typeof snapshot.form?.description === 'string' && (snapshot.form.sourceSelectionVersion === 1 || snapshot.form.description.length > 0)
         if (hasSavedDescription) {
           const check = prepareDiagramHandoff({ text: snapshot.form!.description, html: snapshot.form?.html, mode: 'resume' })
-          if (!check.ok) { setAiAssistanceError(check.reason); return }
+          if (check.ok === false) { setAiAssistanceError(check.reason); return }
           if (resolveSavedIdeaRichHtml(check.prose, snapshot.form?.html) === null) {
             setAiAssistanceError('Saved text and rich formatting differ. Your current editor and source selection were kept for recovery.')
             return
@@ -5156,7 +5147,7 @@ export function IdeaBacklogManagementPage() {
         }
         if (!hasSavedDescription && status.status === 'completed') {
           const check = prepareDiagramHandoff({ text: status.result?.draft_text || '', mode: status.brainstorm_messages.length ? 'completed' : 'manual', records: status.result?.technical_diagrams, status: status.result?.technical_diagram_status })
-          if (!check.ok) { setAiAssistanceError(check.reason); return }
+          if (check.ok === false) { setAiAssistanceError(check.reason); return }
         }
         const resumed = { ...snapshot, jobId: status.job_id, status: status.status,
           draftSessionId: status.draft_session_id ?? snapshot.draftSessionId ?? jobId }
@@ -5191,7 +5182,7 @@ export function IdeaBacklogManagementPage() {
         setAiAssistanceError('')
         setBrainstormMessages(mergeBrainstormUiMessages(snapshot.messages ?? [], status.brainstorm_messages ?? []))
         if (hasSavedDescription) applySelectedIdeaDescription(snapshot.form!.description, { mode: 'resume', html: snapshot.form?.html })
-        else if (status.status === 'completed') applyCompletedIdeaDraft(status, status.brainstorm_messages)
+        else if (status.status === 'completed') applyCompletedIdeaDraft(status)
         if (status.status === 'awaiting_input' || status.status === 'completed') {
           applyIdeaDraftBrainstormState(status)
           setIsEvidenceDialogOpen(true)
@@ -5212,11 +5203,12 @@ export function IdeaBacklogManagementPage() {
             : `Could not reopen the brainstorm session (${raw}). It is still listed in the chat panel — try again.`,
         )
       } finally {
-        if (cancelled) return
-        setIsResumingDraft(false)
-        const rest = { ...((location.state as Record<string, unknown> | null) ?? {}) }
-        delete rest.resumeBrainstormJobId
-        navigate('.', { replace: true, state: Object.keys(rest).length > 0 ? rest : null })
+        if (!cancelled) {
+          setIsResumingDraft(false)
+          const rest = { ...((location.state as Record<string, unknown> | null) ?? {}) }
+          delete rest.resumeBrainstormJobId
+          navigate('.', { replace: true, state: Object.keys(rest).length > 0 ? rest : null })
+        }
       }
     })()
     return () => {
@@ -5224,15 +5216,6 @@ export function IdeaBacklogManagementPage() {
       setIsResumingDraft(false)
     }
   }, [location.state, navigate, currentUserId, currentUserDisplayName])
-
-  const handleApplyAiResult = () => {
-    if (aiAssistanceResult?.result) {
-      const cleanedResult = aiAssistanceResult.result.trim()
-      if (!setCreateIdeaDescriptionFromPlainText(cleanedResult)) return
-      setAiAssistanceResult(null)
-      setAiAssistanceLoading(null)
-    }
-  }
 
   const statCards = [
     {
@@ -5419,7 +5402,7 @@ export function IdeaBacklogManagementPage() {
         ]}
         onCreate={openCreateIdeaDrawer}
         onCreateFolder={() => void handleCreateFolderWithDefaultName()}
-        onUpload={() => setIsUploadIdeaPanelOpen(true)}
+        onUpload={openUploadIdeaPanel}
       /> : <PageHeader
         title="Idea & Backlog"
         description="Strategic intake and prioritization hub connecting business demand to executable projects, epics, and tasks."
@@ -5949,7 +5932,7 @@ export function IdeaBacklogManagementPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsUploadIdeaPanelOpen(true)}
+                  onClick={openUploadIdeaPanel}
                   className={enterpriseSecondaryFilledButtonClass()}
                 >
                   <Upload className="h-4 w-4" strokeWidth={2.5} />
@@ -6548,7 +6531,7 @@ export function IdeaBacklogManagementPage() {
       <IdeaUploadReviewPanel
         isOpen={isUploadIdeaPanelOpen}
         onClose={() => setIsUploadIdeaPanelOpen(false)}
-        workspaceId={createIdeaForm.workspaceId || resolveWorkspaceApiId(tenant?.workspaceId) || ''}
+        workspaceId={uploadWorkspaceId}
         currentUserId={currentUserId}
         onIdeasCreated={(created) => {
           const newIdeas = created.map((api) => ({
