@@ -42,7 +42,12 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    devCookieAuth(),
+    devCookieAuth('tectona-spa', process.env.W06_LOCAL_SCOPED_AUTH === '1', {
+      identity: process.env.W06_LOCAL_IDENTITY_ORIGIN,
+      org: process.env.W06_LOCAL_ORG_ORIGIN,
+      wac: process.env.W06_LOCAL_WAC_ORIGIN,
+      idea: process.env.W06_LOCAL_IDEA_ORIGIN,
+    }),
     {
       name: 'tectona-cache-background-media-dev',
       configureServer(server) {
@@ -181,7 +186,7 @@ export default defineConfig({
   server: {
     https: localDevHttps(),
     allowedHosts: ['host.docker.internal', ...(process.env.TECTONA_DEV_HOST ? [process.env.TECTONA_DEV_HOST] : [])],
-    host: true,
+    host: process.env.W06_LOCAL_SCOPED_AUTH === '1' ? '127.0.0.1' : true,
     port: 9411,
     strictPort: true,
     proxy: {
