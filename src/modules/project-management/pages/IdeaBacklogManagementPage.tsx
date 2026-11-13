@@ -1318,6 +1318,8 @@ import {
 import { useUserWorkspaceOptions } from '@/modules/core-shell/hooks/useUserWorkspaceOptions'
 import { IdeaWorkspaceSelectionModal } from '../components/IdeaWorkspaceSelectionModal'
 import { loadIdeaReviewerPolicy, loadIdeaWorkspaceSelectionPolicy, selectableIdeaWorkspaces, startIdeaIntake, createIdeaInIntake, type IdeaWorkspaceSelectionPolicy } from '../lib/ideaWorkspaceSelection'
+import { collectIdeaTriggerInputs, inputsForWorkspace } from '../lib/ideaTriggerInputs'
+import { IdeaTriggerInputValues } from '../components/IdeaTriggerInputValues'
 import { useIdeaReviewerPolicy } from '../lib/useIdeaReviewerPolicy'
 import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextReporter'
 import { brainstormTypingCutoff, isTechnicalViewSource, splitBrainstormDisplayParts } from '@/lib/chat/brainstormDiagramDisplay'
@@ -2176,6 +2178,7 @@ export function IdeaBacklogManagementPage() {
   } = useIdeaFolderStore()
   const userWorkspaceOptions = useUserWorkspaceOptions()
   const [ideaWorkspacePolicy, setIdeaWorkspacePolicy] = useState<IdeaWorkspaceSelectionPolicy | null>(null)
+  const [ideaTriggerValues, setIdeaTriggerValues] = useState<Record<string, string>>({})
   const [workspaceSelectionOpen, setWorkspaceSelectionOpen] = useState(false)
   const createPolicyInFlight = useRef(false)
   const createSourceWorkspaceId = useRef<string | null>(null)
@@ -2185,7 +2188,7 @@ export function IdeaBacklogManagementPage() {
     source_workspace_id: createSourceWorkspaceId.current ?? resolveWorkspaceApiId(tenant?.workspaceId),
     source_workspace_name: createSourceWorkspaceName.current ?? tenant?.displayName ?? null,
   })
-  const intakeRun = useRef<{ id: string; workspaceId: string } | null>(null)
+  const intakeRun = useRef<{ id: string; workspaceId: string; inputs: string; workflowId: string } | null>(null)
   const [intakeBusy, setIntakeBusy] = useState(false)
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [projectNameById, setProjectNameById] = useState<Record<string, string>>({})
@@ -2598,6 +2601,8 @@ export function IdeaBacklogManagementPage() {
     busy: aiAssistanceLoading !== null || isIdeaDraftInProgress,
   })
 
+  const createIdeaTriggerFields = inputsForWorkspace(ideaWorkspacePolicy?.trigger_inputs, createIdeaForm.workspaceId)
+  const createIdeaTriggerError = collectIdeaTriggerInputs(createIdeaTriggerFields, ideaTriggerValues).error
   const isCreateIdeaFormValid = useMemo(() => {
     const hasTitle = createIdeaForm.title.trim().length > 0
     const hasDescription = createIdeaForm.description.trim().length > 0
@@ -2610,6 +2615,7 @@ export function IdeaBacklogManagementPage() {
       hasTitle &&
       hasDescription &&
       !createIdeaDraftValidationError &&
+      !createIdeaTriggerError &&
       hasWorkspace &&
       hasValidTags &&
       workspaceReady &&
@@ -2617,6 +2623,7 @@ export function IdeaBacklogManagementPage() {
     )
   }, [
     createIdeaDraftValidationError,
+    createIdeaTriggerError,
     createIdeaForm.description,
     createIdeaForm.title,
     createIdeaForm.workspaceId,
@@ -3924,13 +3931,18 @@ export function IdeaBacklogManagementPage() {
     setIsCreateIdeaDrawerOpen(true)
   }
 
-  const continueIdeaIntake = async (workspaceId: string, policy: IdeaWorkspaceSelectionPolicy | null) => {
+  const continueIdeaIntake = async (workspaceId: string, policy: IdeaWorkspaceSelectionPolicy | null, draft: Record<string, string> = {}) => {
     if (intakeBusy) return
     setIntakeBusy(true)
     try {
-      intakeRun.current = policy?.orchestrated
-        ? { id: await startIdeaIntake(createSourceWorkspaceId.current!, workspaceId), workspaceId }
+      const fields = inputsForWorkspace(policy?.trigger_inputs, workspaceId)
+      const { values, error } = collectIdeaTriggerInputs(fields, draft)
+      if (error) throw new Error(error)
+      intakeRun.current = policy && (policy.orchestrated || fields.length)
+        ? { id: await startIdeaIntake(createSourceWorkspaceId.current!, workspaceId, values), workspaceId,
+          inputs: JSON.stringify(values), workflowId: policy.workflow_id }
         : null
+      setIdeaTriggerValues(values)
       setWorkspaceSelectionOpen(false)
       showCreateIdeaForm(workspaceId)
     } catch (error) {
@@ -3957,13 +3969,17 @@ export function IdeaBacklogManagementPage() {
       createSourceWorkspaceId.current = sourceWorkspaceId
       createSourceWorkspaceName.current = tenant?.displayName ?? null
       setIdeaWorkspacePolicy(policy)
+      setIdeaTriggerValues({})
       if (!policy) { intakeRun.current = null; showCreateIdeaForm(); return }
       const choices = selectableIdeaWorkspaces(userWorkspaceOptions.options, policy)
       if (!choices.length) throw new Error('None of the configured workspaces are available to you. Contact the workflow administrator.')
-      if (choices.length === 1) { await continueIdeaIntake(choices[0].workspaceId, policy); return }
-      if (!policy.selection_required && choices.some((option) => option.workspaceId === policy.default_workspace_id)) {
-        await continueIdeaIntake(policy.default_workspace_id!, policy); return
+      const automatic = choices.length === 1 ? choices[0].workspaceId
+        : !policy.selection_required && choices.some((option) => option.workspaceId === policy.default_workspace_id)
+          ? policy.default_workspace_id : null
+      if (automatic && !inputsForWorkspace(policy.trigger_inputs, automatic).length) {
+        await continueIdeaIntake(automatic, policy); return
       }
+      if (automatic) setIdeaWorkspacePolicy({ ...policy, default_workspace_id: automatic })
       setWorkspaceSelectionOpen(true)
     } catch (error) {
       addToast({ variant: 'error', title: 'Cannot create idea', description: error instanceof Error ? error.message : 'Workspace selection could not be verified.' })
@@ -4141,6 +4157,10 @@ export function IdeaBacklogManagementPage() {
       const sourceWorkspaceId = createSourceWorkspaceId.current ?? resolveWorkspaceApiId(tenant?.workspaceId)
       if (!sourceWorkspaceId) throw new Error('Select a workspace before creating an idea.')
       const latestPolicy = await loadIdeaWorkspaceSelectionPolicy(sourceWorkspaceId)
+      const fields = inputsForWorkspace(latestPolicy?.trigger_inputs, createIdeaForm.workspaceId)
+      const { values, error } = collectIdeaTriggerInputs(fields, ideaTriggerValues)
+      setIdeaWorkspacePolicy(latestPolicy)
+      if (error) throw new Error(error)
       if (latestPolicy && !latestPolicy.allowed_workspace_ids.includes(createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer allowed by the workflow. Reopen Create Idea to choose another workspace.')
       if (!userWorkspaceOptions.options.some((option) => option.workspaceId === createIdeaForm.workspaceId)) throw new Error('The selected workspace is no longer available to you.')
       const reviewerManaged = await loadIdeaReviewerPolicy(createIdeaForm.workspaceId, sourceWorkspaceId)
@@ -4155,11 +4175,19 @@ export function IdeaBacklogManagementPage() {
         assignee_id: reviewerManaged ? undefined : createIdeaForm.reviewer || undefined,
         folder_id: createIdeaForm.workspaceId === sourceWorkspaceId && sourceWorkspaceId === resolveWorkspaceApiId(tenant?.workspaceId) ? currentFolderId ?? null : null,
       }
-      if (latestPolicy?.orchestrated && (!intakeRun.current || intakeRun.current.workspaceId !== createIdeaForm.workspaceId)) {
-        intakeRun.current = { id: await startIdeaIntake(sourceWorkspaceId, createIdeaForm.workspaceId), workspaceId: createIdeaForm.workspaceId }
+      const needsIntake = latestPolicy && (latestPolicy.orchestrated || fields.length)
+      if (latestPolicy && needsIntake) {
+        const inputs = JSON.stringify(values)
+        if (intakeRun.current?.workspaceId !== createIdeaForm.workspaceId
+            || intakeRun.current.inputs !== inputs || intakeRun.current.workflowId !== latestPolicy.workflow_id) {
+          intakeRun.current = { id: await startIdeaIntake(sourceWorkspaceId, createIdeaForm.workspaceId, values),
+            workspaceId: createIdeaForm.workspaceId, inputs, workflowId: latestPolicy.workflow_id }
+        }
+      } else if (intakeRun.current) {
+        throw new Error('The intake policy changed. Reopen Create Idea to continue.')
       }
-      const created = (latestPolicy?.orchestrated || intakeRun.current)
-        ? await createIdeaInIntake<IdeaApi>(intakeRun.current!.id, payload, currentUserId)
+      const created = needsIntake
+        ? await createIdeaInIntake<IdeaApi>(intakeRun.current!.id, payload, currentUserId, values)
         : await apiCreateIdea(payload)
       const newIdea = {
         ...toIdea(created),
@@ -4178,6 +4206,7 @@ export function IdeaBacklogManagementPage() {
       }
     } catch (err) {
       setCreateIdeaError(err instanceof Error ? err.message : 'Failed to create idea.')
+      addToast({ variant: 'error', title: 'Could not create idea', description: err instanceof Error ? err.message : 'Please try again.' })
       return
     } finally {
       createIdeaSubmitInFlight.current = false
@@ -4288,6 +4317,10 @@ export function IdeaBacklogManagementPage() {
   }
 
   const handleAiAssistance = async (mode: IdeaAiAssistanceMode) => {
+    if (createIdeaTriggerError) {
+      setAiAssistanceError(createIdeaTriggerError)
+      return
+    }
     const titleError = validateIdeaTitle(createIdeaForm.title)
     setCreateIdeaTitleError(titleError)
     if (titleError) {
@@ -5157,6 +5190,7 @@ export function IdeaBacklogManagementPage() {
         createSourceWorkspaceId.current = snapshot.sourceWorkspaceId || snapshot.workspaceId || null
         createSourceWorkspaceName.current = snapshot.sourceWorkspaceName ?? snapshot.workspaceName ?? null
         setIdeaWorkspacePolicy(null)
+        setIdeaTriggerValues({})
         setIsCreateIdeaDrawerOpen(true)
         setCreateIdeaDraftMode('ai')
         const pointerTitle = snapshot?.title
@@ -6549,7 +6583,7 @@ export function IdeaBacklogManagementPage() {
         policy={ideaWorkspacePolicy}
         options={selectableIdeaWorkspaces(userWorkspaceOptions.options, ideaWorkspacePolicy)}
         onClose={() => setWorkspaceSelectionOpen(false)}
-        onContinue={(workspaceId) => { void continueIdeaIntake(workspaceId, ideaWorkspacePolicy) }}
+        onContinue={(workspaceId, values) => { void continueIdeaIntake(workspaceId, ideaWorkspacePolicy, values) }}
       /> : null}
 
       {typeof document !== 'undefined' &&
@@ -7131,7 +7165,11 @@ export function IdeaBacklogManagementPage() {
                         <select
                           id="idea-workspace"
                           value={createIdeaForm.workspaceId}
-                          onChange={(e) => setCreateIdeaForm((prev) => ({ ...prev, workspaceId: e.target.value, reviewer: '' }))}
+                          onChange={(e) => {
+                            setIdeaTriggerValues({})
+                            intakeRun.current = null
+                            setCreateIdeaForm((prev) => ({ ...prev, workspaceId: e.target.value, reviewer: '' }))
+                          }}
                           disabled={Boolean(ideaWorkspacePolicy?.orchestrated) || isCreateIdeaWorkspaceLoading || createIdeaWorkspaceOptions.length === 0}
                           className="h-11 w-full rounded-lg border border-input/80 bg-background px-3 text-sm shadow-sm transition focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/20"
                         >
@@ -7152,6 +7190,11 @@ export function IdeaBacklogManagementPage() {
                           <p className="text-[11px] text-muted-foreground/90">Reviewer list will follow this selected workspace.</p>
                         ) : null}
                       </div>
+
+                      {createIdeaTriggerFields.length > 0 && <div className="space-y-2 sm:col-span-2 lg:col-span-6">
+                        <IdeaTriggerInputValues fields={createIdeaTriggerFields} values={ideaTriggerValues}
+                          onChange={(key, value) => setIdeaTriggerValues((current) => ({ ...current, [key]: value }))} />
+                      </div>}
 
                       <div className={cn('space-y-1.5 sm:col-span-1', reviewerPolicy.managed ? 'lg:col-span-6' : 'lg:col-span-2')}>
                         <Label htmlFor="idea-type" className="flex items-center gap-1.5 text-xs text-muted-foreground">

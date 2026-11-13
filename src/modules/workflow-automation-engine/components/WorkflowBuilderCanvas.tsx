@@ -102,6 +102,8 @@ import {
 } from '@/lib/api/workflowAutomationApi'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { WorkspaceSelectionFields, workspaceSelectionIds } from './WorkspaceSelectionFields'
+import { IdeaTriggerInputFields } from './IdeaTriggerInputFields'
+import { IDEA_TRIGGER_INPUTS_CONFIG, isIdeaIntakeTrigger } from '@/modules/project-management/lib/ideaTriggerInputs'
 import { ScopeWorkspacePicker } from './ScopeWorkspacePicker'
 import { IdeaSectionOrderControls } from './IdeaSectionOrderControls'
 import { RotateCcw } from 'lucide-react'
@@ -3246,6 +3248,13 @@ function WorkflowBuilderCanvasInner({
                       })}
                     />
                   </>
+                ) : null}
+
+                {selectedNode.data.kind === 'trigger' && isIdeaIntakeTrigger(selectedNode.data.config) ? (
+                  <IdeaTriggerInputFields value={selectedNode.data.config[IDEA_TRIGGER_INPUTS_CONFIG]}
+                    options={scopeCandidates.filter((item) => item.status_code !== 'archived' && nodes.some((node) =>
+                      !node.data.disabled && isWorkspaceSelectionInput(node.data) && workspaceSelectionIds(node.data.config.allowedWorkspaceIds).includes(item.id)))}
+                    onChange={(config) => updateSelectedNode({ config })} />
                 ) : null}
 
                 {isWorkspaceSelectionInput(selectedNode.data) ? (

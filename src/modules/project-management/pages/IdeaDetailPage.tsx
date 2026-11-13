@@ -175,6 +175,7 @@ import {
   type PartPayload,
   type TemplatePart,
   type TemplatePartChoice,
+  preserveSrdTicketFills,
 } from '@/modules/project-management/lib/templatePartSelection'
 import { PartCommentRail, TECTONA_MENTION } from '@/modules/project-management/components/PartCommentRail'
 import {
@@ -262,6 +263,7 @@ import {
   loadPublishedIdeaSectionPolicy,
   loadViewerGroupWorkspaceNames,
   templateAllowedByWorkflow,
+  templateDocumentKind,
   type IdeaDocumentWorkflowGate,
 } from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
 import { ideaDocumentMatchesApproval, ideaDocumentType } from '@/modules/project-management/lib/ideaDocumentKind'
@@ -3275,13 +3277,14 @@ export function IdeaDetailPage() {
   // the current and the chosen earlier versions held (see templatePartSelection).
   const ideaDocRegenerateTarget = useMemo(() => {
     if (!selectedIdeaDocGenerateTemplate) return null
-    const label = ideaDocTypeLabel(selectedIdeaDocGenerateTemplate.template_code)
+    const label = templateDocumentKind(selectedIdeaDocGenerateTemplate)
     return ideaGeneratedDocs
       .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === label)
       .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0] ?? null
   }, [idea.id, ideaGeneratedDocs, selectedIdeaDocGenerateTemplate])
   const ideaDocParts = useMemo(
-    () => templateParts(selectedIdeaDocGenerateTemplate?.metadata?.agent_schema as TemplateAgentSchema | undefined),
+    () => templateParts(selectedIdeaDocGenerateTemplate?.metadata?.agent_schema as TemplateAgentSchema | undefined,
+      selectedIdeaDocGenerateTemplate ? templateDocumentKind(selectedIdeaDocGenerateTemplate) : undefined),
     [selectedIdeaDocGenerateTemplate],
   )
   const ideaDocRegenerateVersion = ideaDocRegenerateTarget?.current_version_no || 1
@@ -7446,7 +7449,7 @@ export function IdeaDetailPage() {
     const documentAuthor = (currentUserDisplayName || submittedByDisplayName).trim()
     const generatedOn = new Date().toISOString().slice(0, 10)
     const previousDocument = ideaGeneratedDocs
-      .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === ideaDocTypeLabel(template.template_code))
+      .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === templateDocumentKind(template))
       .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0]
     const generationVersion = (previousDocument?.current_version_no ?? 0) + 1
     const sourceWithProvenance = [
@@ -7461,7 +7464,7 @@ export function IdeaDetailPage() {
         : '',
       sourceText,
     ].filter(Boolean).join('\n\n')
-    const docTypeLabel = ideaDocTypeLabel(template.template_code)
+    const docTypeLabel = templateDocumentKind(template)
 
     // The template-fill service cannot infer BRD/URD requirements from the short idea summary.
     // Send every document visible in this Idea Docs section as named evidence, with the latest
@@ -7574,7 +7577,7 @@ export function IdeaDetailPage() {
         collections: (filled.payload.collections ?? {}) as Record<string, unknown>,
         diagrams: filled.rendered_diagrams ?? {},
       }
-      const written = partial
+      const merged = partial
         ? mergePartChoices({
           parts: ideaDocParts,
           choices: ideaDocPartChoices,
@@ -7584,6 +7587,7 @@ export function IdeaDetailPage() {
           drafts: ideaDocCommentDrafts,
         }).payload
         : generatedParts
+      const written = docTypeLabel === 'SRD' ? preserveSrdTicketFills(merged, generatedParts) : merged
 
       const created = await instantiateTemplateFromProject(storageProjectId, template.id, {
         title: idea.title.slice(0, 255),

@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { IdeaWorkspaceSelectionModal } from './IdeaWorkspaceSelectionModal'
 import type { IdeaWorkspaceSelectionPolicy } from '../lib/ideaWorkspaceSelection'
+import type { IdeaTriggerInput } from '../lib/ideaTriggerInputs'
 
 const policy: IdeaWorkspaceSelectionPolicy = {
   workflow_id: 'parent', allowed_workspace_ids: ['bp', 'portfolio'], default_workspace_id: 'bp',
@@ -23,9 +24,9 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-async function render(description?: string, onContinue = vi.fn(), optionDescriptions?: Record<string, string>) {
+async function render(description?: string, onContinue = vi.fn(), optionDescriptions?: Record<string, string>, fields?: IdeaTriggerInput[]) {
   await act(async () => root.render(createElement(IdeaWorkspaceSelectionModal, {
-    policy: { ...policy, popup_description: description, option_descriptions: optionDescriptions },
+    policy: { ...policy, popup_description: description, option_descriptions: optionDescriptions, trigger_inputs: fields },
     options: [{ workspaceId: 'bp', workspaceName: 'IT Business Partner WS' }, { workspaceId: 'portfolio', workspaceName: 'IT Portfolio WS' }],
     onClose: vi.fn(), onContinue,
   })))
@@ -41,7 +42,7 @@ describe('workspace popup description', () => {
     expect(window.location.href).toBe(before)
     expect(onContinue).not.toHaveBeenCalled()
     await act(async () => Array.from(dialog.querySelectorAll('button')).find(button => button.textContent?.includes('Continue'))!.click())
-    expect(onContinue).toHaveBeenCalledWith('portfolio')
+    expect(onContinue).toHaveBeenCalledWith('portfolio', {})
     expect(window.location.href).toBe(before)
   })
   it('shows each option description as plain text without changing its workspace id', async () => {
@@ -61,7 +62,7 @@ describe('workspace popup description', () => {
     await act(async () => portfolio.click())
     const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent?.includes('Continue'))!
     await act(async () => button.click())
-    expect(onContinue).toHaveBeenCalledWith('portfolio')
+    expect(onContinue).toHaveBeenCalledWith('portfolio', {})
   })
 
   it('leaves undescribed options name-only', async () => {
@@ -85,6 +86,35 @@ describe('workspace popup description', () => {
     await act(async () => dialog.querySelector<HTMLInputElement>('input[value="portfolio"]')!.click())
     const button = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent?.includes('Continue'))!
     await act(async () => button.click())
-    expect(onContinue).toHaveBeenCalledWith('portfolio')
+    expect(onContinue).toHaveBeenCalledWith('portfolio', {})
+  })
+
+  it.each(['mandatory', 'optional'] as const)('collects a %s ticket only for the selected workspace', async (requirement) => {
+    const onContinue = vi.fn()
+    const dialog = await render('', onContinue, undefined, [
+      { key: 'ticket_number', label: 'Nomor Ticket', workspace_id: 'portfolio', requirement },
+    ])
+    const choose = async (id: string) => act(async () => dialog.querySelector<HTMLInputElement>(`input[value="${id}"]`)!.click())
+    const next = Array.from(dialog.querySelectorAll('button')).find((item) => item.textContent?.includes('Continue'))!
+    const ticket = () => dialog.querySelector<HTMLInputElement>('input[aria-required]')
+    expect(ticket()).toBeNull()
+    await choose('portfolio')
+    expect(ticket()?.closest('label')?.textContent).toContain('Nomor Ticket')
+    expect(next.disabled).toBe(requirement === 'mandatory')
+    await act(async () => next.click())
+    if (requirement === 'mandatory') expect(onContinue).not.toHaveBeenCalled()
+    else expect(onContinue).toHaveBeenLastCalledWith('portfolio', {})
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(ticket(), ' TCK-001 ')
+      ticket()!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => next.click())
+    expect(onContinue).toHaveBeenLastCalledWith('portfolio', { ticket_number: 'TCK-001' })
+    await choose('bp')
+    expect(ticket()).toBeNull()
+    await act(async () => next.click())
+    expect(onContinue).toHaveBeenLastCalledWith('bp', {})
+    await choose('portfolio')
+    expect(ticket()?.value).toBe('')
   })
 })

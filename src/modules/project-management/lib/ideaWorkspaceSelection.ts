@@ -1,5 +1,6 @@
 import { apiFetch, tectonaServiceHeaders } from '@/lib/api/httpClient'
 import { serviceApiBase } from '@/lib/api/gatewayBase'
+import type { IdeaTriggerInput } from './ideaTriggerInputs'
 
 export type IdeaWorkspaceSelectionPolicy = {
   workflow_id: string
@@ -10,6 +11,7 @@ export type IdeaWorkspaceSelectionPolicy = {
   popup_description?: string
   option_descriptions?: Record<string, string>
   orchestrated?: boolean
+  trigger_inputs?: IdeaTriggerInput[]
 }
 
 function workflowBase(): string {
@@ -24,13 +26,18 @@ async function postIntake<T>(path: string, body: unknown): Promise<T> {
   return result as T
 }
 
-export async function startIdeaIntake(sourceWorkspaceId: string, targetWorkspaceId: string): Promise<string> {
-  const result = await postIntake<{ run_id: string }>('idea-intakes', { source_workspace_id: sourceWorkspaceId, target_workspace_id: targetWorkspaceId, request_key: crypto.randomUUID() })
+export async function startIdeaIntake(sourceWorkspaceId: string, targetWorkspaceId: string, inputs: Record<string, string> = {}): Promise<string> {
+  const result = await postIntake<{ run_id: string }>('idea-intakes', { source_workspace_id: sourceWorkspaceId, target_workspace_id: targetWorkspaceId, request_key: crypto.randomUUID(),
+    ...(Object.keys(inputs).length ? { idea_inputs: inputs } : {}),
+  })
   return result.run_id
 }
 
-export async function createIdeaInIntake<T>(runId: string, payload: unknown, actorId: string): Promise<T> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(payload)))
+export async function createIdeaInIntake<T>(runId: string, payload: unknown, actorId: string, inputs: Record<string, string> = {}): Promise<T> {
+  const entries = Object.entries(inputs).sort(([left], [right]) => left.localeCompare(right))
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(
+    entries.length ? { payload, idea_inputs: entries } : payload,
+  )))
   const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
   const key = `idea-intake-pending:${actorId}:${fingerprint}`
   // A lost HTTP response can be retried after reload without creating a second idea.
