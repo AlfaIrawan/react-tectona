@@ -125,7 +125,7 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         navigateFallback: '/index.html',
         // Keep Vite/dev module graph and API off the SPA fallback.
-        navigateFallbackDenylist: [/^\/api\//, /^\/src\//, /^\/@/, /^\/node_modules\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/src\//, /^\/@/, /^\/node_modules\//, /^\/user-preferences(\/|$)/, /^\/api-catalog(\/|$)/],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {

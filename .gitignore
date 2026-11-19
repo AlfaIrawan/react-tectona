@@ -29,6 +29,7 @@ build
 .env.*
 !.env.example
 !.env.dev
+!.env.awsdev
 .env.local
 .env.development.local
 .env.test.local

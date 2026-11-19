@@ -9,6 +9,7 @@
     "dev:workspace-sandbox": "vite --config vite.workspace-sandbox.config.ts",
     "build": "tsc -b && vite build",
     "build:dev": "tsc -b && vite build --mode dev",
+    "build:awsdev": "tsc -b && vite build --mode awsdev",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
