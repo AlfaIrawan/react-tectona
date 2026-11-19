@@ -1,3 +1,5 @@
+import { withOacContentSha256 } from '@/lib/oacSigning'
+
 export class FetchTimeoutError extends Error {
   constructor(message = 'identity_service_timeout') {
     super(message)
@@ -17,7 +19,8 @@ export async function fetchWithTimeout(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(input, { ...fetchInit, signal: controller.signal })
+    const signedInit = await withOacContentSha256(input, fetchInit)
+    return await fetch(input, { ...signedInit, signal: controller.signal })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw new FetchTimeoutError()

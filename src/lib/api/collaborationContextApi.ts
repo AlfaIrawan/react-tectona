@@ -3,6 +3,7 @@
  * Multi-tenant via app_id — same pattern as notification-service.
  */
 
+import { withOacContentSha256 } from '@/lib/oacSigning'
 import { decodePeopleChatBody } from '@/lib/chat/peopleChatMessagePayload'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 import { TECTONA_APP_ID } from './notificationApi'
@@ -471,7 +472,8 @@ export async function upsertWorkspacePresenceWithToken(
   status: 'online' | 'away' | 'offline' = 'online',
   appId: string = TECTONA_APP_ID,
 ): Promise<void> {
-  const res = await fetch(presenceMeUrl(workspaceId, appId), {
+  const presenceUrl = presenceMeUrl(workspaceId, appId)
+  const res = await fetch(presenceUrl, await withOacContentSha256(presenceUrl, {
     method: 'PUT',
     headers: {
       Accept: 'application/json',
@@ -479,7 +481,7 @@ export async function upsertWorkspacePresenceWithToken(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ status }),
-  })
+  }))
   if (!res.ok) throw new Error(`upsert presence failed: ${res.status}`)
 }
 
@@ -490,7 +492,7 @@ export function sendOfflinePresenceBeacon(
   appId: string = TECTONA_APP_ID,
 ): void {
   const url = presenceMeUrl(workspaceId, appId)
-  void fetch(url, {
+  void withOacContentSha256(url, {
     method: 'PUT',
     headers: {
       Accept: 'application/json',
@@ -499,7 +501,9 @@ export function sendOfflinePresenceBeacon(
     },
     body: JSON.stringify({ status: 'offline' }),
     keepalive: true,
-  }).catch(() => undefined)
+  })
+    .then((init) => fetch(url, init))
+    .catch(() => undefined)
 }
 
 export async function upsertMyWorkspacePresence(

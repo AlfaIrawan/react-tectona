@@ -3,6 +3,7 @@
  * In development, Vite proxies /api/tectona-agent-runtime -> python-tectona-agent-runtime-service-fastapi.
  */
 
+import { withOacContentSha256 } from '@/lib/oacSigning'
 import { getSession } from '@/auth/authService'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 import { tectonaAgentRuntimeApiBase } from './gatewayBase'
@@ -1332,7 +1333,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, tim
   }
 
   try {
-    return await fetch(input, { ...init, headers, signal: controller.signal })
+    return await fetch(input, await withOacContentSha256(input, { ...init, headers, signal: controller.signal }))
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s. Please try again.`)

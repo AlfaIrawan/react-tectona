@@ -1,3 +1,5 @@
+import { withOacContentSha256 } from '@/lib/oacSigning'
+
 function aborted(signal?: AbortSignal | null): void {
   if (signal?.aborted) throw signal.reason ?? new DOMException('Request aborted', 'AbortError')
 }
@@ -18,6 +20,7 @@ export async function fetchWithNetworkRecovery(input: RequestInfo | URL, init?: 
   const method = (init?.method ?? request?.method ?? 'GET').toUpperCase()
   const signal = init?.signal ?? request?.signal
   aborted(signal)
+  init = await withOacContentSha256(input, init)
   try {
     return await fetch(input, init)
   } catch (error) {
