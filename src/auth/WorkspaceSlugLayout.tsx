@@ -93,7 +93,7 @@ export function WorkspaceSlugLayout() {
   }
 
   if (accessState.status === 'unavailable') {
-    return <OnboardingUnavailable dependency={accessState.dependency} onRetry={() => setAttempt((a) => a + 1)} />
+    return <OnboardingUnavailable embedded dependency={accessState.dependency} onRetry={() => setAttempt((a) => a + 1)} />
   }
 
   return <Outlet />
