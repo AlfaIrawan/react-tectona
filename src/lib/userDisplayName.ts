@@ -38,3 +38,8 @@ export function normalizeUserDisplayName(value: string | null | undefined): stri
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(' ')
 }
+
+/** Presentation only: shorten the known legacy name in the account menu. */
+export function topbarAccountDisplayName(value: string): string {
+  return value === 'Development Administrator' ? 'Administrator' : normalizeUserDisplayName(value)
+}

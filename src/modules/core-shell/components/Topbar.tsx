@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { getSession, logoutAsync } from '@/auth/authService'
-import { normalizeUserDisplayName } from '@/lib/userDisplayName'
+import { topbarAccountDisplayName } from '@/lib/userDisplayName'
 import { buildLoginPathAfterSignOut } from '@/auth/loginRedirect'
 import type { Session } from '@/auth/authService'
 import { PresenceDot } from '@/lib/chat/presenceUi'
@@ -127,7 +127,7 @@ export function Topbar({ sidebarCollapsed, onToggleThemeSettings, onToggleTodoPa
   }, [refreshNotificationUnreadCount])
 
   const topbarEnvironment = resolveTopbarEnvironment(window.location.hostname)
-  const userName = normalizeUserDisplayName(session?.user.name || session?.user.email || 'User')
+  const userName = topbarAccountDisplayName(session?.user.name || session?.user.email || 'User')
   const { label: topbarTenantLabel, loading: topbarTenantLabelLoading } = useTopbarTenantLabel()
 
   const handleLogout = () => {
