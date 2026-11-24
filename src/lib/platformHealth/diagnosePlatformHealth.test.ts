@@ -57,6 +57,45 @@ describe('diagnosePlatformHealth', () => {
     expect(diagnosis.code).toBe('SERVICE_ISSUE')
   })
 
+  it('distinguishes unconfigured probes from a service outage', () => {
+    const detail = 'Upstream health probes are not configured for Lambda'
+    for (const overall of ['degraded', 'healthy'] as const) {
+      const diagnosis = diagnosePlatformHealth({
+        browserOnline: true,
+        health: {
+          ...healthyPayload,
+          overall,
+          services: { status: 'unknown', label: 'Services', detail },
+          database: { status: 'unknown', label: 'Database', detail },
+        },
+        fetchError: null,
+        workOffline,
+      })
+      expect(diagnosis.code).toBe('UNKNOWN')
+      expect(diagnosis.headline).toBe('Some platform health checks are not available.')
+      expect(diagnosis.badgeTone).toBe('amber')
+      expect(diagnosis.layers.find((layer) => layer.key === 'services')?.detail).toBe(detail)
+    }
+  })
+
+  it('still reports confirmed application, database and Work failures with Services unknown', () => {
+    const health: PlatformHealthResponse = {
+      ...healthyPayload,
+      overall: 'degraded',
+      services: { status: 'unknown', label: 'Services', detail: 'No probe configured' },
+    }
+    const shared = { browserOnline: true, fetchError: null, workOffline }
+    expect(diagnosePlatformHealth({
+      ...shared, health: { ...health, overall: 'unhealthy', runtime_ready: false },
+    }).code).toBe('APPLICATION_ISSUE')
+    expect(diagnosePlatformHealth({
+      ...shared, health: { ...health, database: { ...health.database, status: 'degraded' } },
+    }).code).toBe('DATABASE_ISSUE')
+    expect(diagnosePlatformHealth({
+      ...shared, health, workOffline: { ...workOffline, isOnline: false },
+    }).code).toBe('SERVICE_ISSUE')
+  })
+
   it('detects database issue from database layer', () => {
     const diagnosis = diagnosePlatformHealth({
       browserOnline: true,

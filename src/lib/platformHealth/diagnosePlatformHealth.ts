@@ -97,7 +97,7 @@ function resolveCode(input: {
   if (!browserOnline) return 'NETWORK_OFFLINE'
 
   const appBad = health ? health.application.status !== 'ok' || !health.runtime_ready : fetchError != null
-  const servicesBad = health ? health.services.status !== 'ok' : fetchError != null
+  const servicesBad = health?.services.status === 'unavailable' || health?.services.status === 'degraded' || !workOffline.isOnline
   const databaseBad = health ? health.database.status === 'unavailable' || health.database.status === 'degraded' : false
   const networkLikely = fetchError === 'network' || fetchError === 'timeout'
 
@@ -110,10 +110,10 @@ function resolveCode(input: {
   if (appBad && databaseBad) return 'APPLICATION_AND_DATABASE'
   if (servicesBad && databaseBad) return 'SERVICE_AND_DATABASE'
   if (databaseBad) return 'DATABASE_ISSUE'
-  if (servicesBad || (!workOffline.isOnline && browserOnline)) return 'SERVICE_ISSUE'
+  if (servicesBad) return 'SERVICE_ISSUE'
   if (appBad) return 'APPLICATION_ISSUE'
   if (networkLikely) return 'NETWORK_OR_GATEWAY'
-  if (health?.overall === 'healthy') return 'ALL_OK'
+  if (health?.overall === 'healthy' && health.services.status === 'ok' && health.database.status === 'ok') return 'ALL_OK'
   return 'UNKNOWN'
 }
 
@@ -138,6 +138,9 @@ function headlineForCode(code: DiagnosisCode, health: PlatformHealthResponse | n
     case 'APPLICATION_AND_DATABASE':
       return 'The gateway application and backend databases are impaired.'
     default:
+      if (health && (health.services.status === 'unknown' || health.database.status === 'unknown')) {
+        return 'Some platform health checks are not available.'
+      }
       return health?.services.detail || 'Platform status needs attention.'
   }
 }
