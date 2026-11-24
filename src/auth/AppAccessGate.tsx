@@ -28,7 +28,7 @@ export function AppAccessGate() {
         <div hidden={statusUnavailable} inert={statusUnavailable} style={{ display: statusUnavailable ? 'none' : 'contents' }}>
           {(verified || mountedIdentity === identity) && <Outlet />}
         </div>
-        {statusUnavailable && <OnboardingUnavailable onRetry={refetch} retrying={retrying} />}
+        {statusUnavailable && <OnboardingUnavailable dependency="workspace-access" onRetry={refetch} retrying={retrying} />}
       </>
     )
   }
