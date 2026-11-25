@@ -1,4 +1,4 @@
-import { summarizeVisibleMembers, workspaceStatusDistribution } from './workspaceManagementReadState'
+import { summarizeVisibleMembers, workspaceStatusDistribution, workspaceOverviewDisplay } from './workspaceManagementReadState'
 import { describe, expect, it } from 'vitest'
 import {
   countWorkspaceMemberships,
@@ -71,4 +71,12 @@ describe('Workspace Management overview parity', () => {
     expect(distribution.map(({ name, value }) => [name, value]))
       .toEqual([['Active', 54], ['At Risk', 0], ['Archived', 0]])
   })
+})
+
+it('renders Overview when workspace rows are available, regardless of startup scheduling', () => {
+  expect(workspaceOverviewDisplay({ status: 'loading' }, 0)).toBe('loading')
+  expect(workspaceOverviewDisplay({ status: 'error' }, 0)).toBe('error')
+  expect(workspaceOverviewDisplay({ status: 'ready' }, 0)).toBe('ready')
+  expect(workspaceOverviewDisplay({ status: 'loading' }, 54)).toBe('ready')
+  expect(workspaceOverviewDisplay({ status: 'error' }, 54)).toBe('ready')
 })

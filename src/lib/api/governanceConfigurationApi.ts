@@ -4,7 +4,7 @@
  */
 
 import { WorkspaceApiError } from '@/lib/workspaceAccessWarning'
-import { readWorkspaceGovernanceResource } from '@/modules/workspace-management/lib/workspaceManagementReadState'
+import { readWorkspaceGovernanceResource, settleWorkspaceGovernanceReads } from '@/modules/workspace-management/lib/workspaceManagementReadState'
 import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
@@ -101,14 +101,14 @@ type PolicyCreatePayload = {
 export async function fetchGovernanceCatalogSnapshot(): Promise<GovernanceCatalogSnapshot> {
   const read = <T>(path: string, resource: string) =>
     readWorkspaceGovernanceResource(resource, async () => handleJson<T>(await apiFetch(url(path))))
-  const [templatesBody, wfBody, slaBody, namingBody, apprBody, rulesBody] = await Promise.all([
+  const [templatesBody, wfBody, slaBody, namingBody, apprBody, rulesBody] = await settleWorkspaceGovernanceReads([
     read<{ items: GovernanceTemplateDto[] }>('/v1/templates', 'Governance templates'),
     read<{ items: CatalogItemDto[] }>('/v1/workflow-policies', 'Governance workflow policies'),
     read<{ items: CatalogItemDto[] }>('/v1/sla-policies', 'Governance SLA policies'),
     read<{ items: CatalogItemDto[] }>('/v1/naming-conventions', 'Governance naming conventions'),
     read<{ items: CatalogItemDto[] }>('/v1/approval-policies', 'Governance approval policies'),
     read<{ items: ComplianceRuleDto[] }>('/v1/compliance-rules', 'Governance compliance rules'),
-  ])
+  ] as const)
   return {
     templates: templatesBody.items ?? [],
     workflowPolicies: wfBody.items ?? [],

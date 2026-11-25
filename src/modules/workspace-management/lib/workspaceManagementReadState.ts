@@ -115,3 +115,31 @@ export async function readWorkspaceGovernanceResource<T>(resource: string, load:
     throw new WorkspaceGovernanceReadError(resource, error)
   }
 }
+
+export function workspaceOverviewDisplay(state: WorkspaceReadState, visibleCount: number) {
+  return visibleCount > 0 || state.status === 'ready' ? 'ready' : state.status
+}
+
+export async function settleWorkspaceGovernanceReads<T extends readonly Promise<unknown>[]>(
+  reads: T,
+): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
+  const results = await Promise.allSettled(reads)
+  const errors = results.flatMap((result) => {
+    if (result.status === 'fulfilled') return []
+    const error: unknown = result.reason
+    return error instanceof AggregateError ? error.errors : [error]
+  })
+  if (errors.length > 0) throw new AggregateError(errors, 'Governance reads failed')
+  return results.map((result) => result.status === 'fulfilled' ? result.value : undefined) as {
+    -readonly [K in keyof T]: Awaited<T[K]>
+  }
+}
+
+export function workspaceGovernanceFailure(error: unknown): WorkspaceReadState {
+  const errors: unknown[] = error instanceof AggregateError ? error.errors : [error]
+  const reasons = errors.map((item) => workspaceReadFailure(
+    item instanceof WorkspaceGovernanceReadError ? item.resource : 'The governance service',
+    item,
+  ).reason)
+  return { status: 'error', reason: [...new Set(reasons)].join(' ') }
+}

@@ -209,7 +209,9 @@ import {
 } from '@/lib/workspaceDirectoryRealtime'
 import {
   summarizeVisibleMembers,
-  WorkspaceGovernanceReadError,
+  workspaceGovernanceFailure,
+  workspaceOverviewDisplay,
+  settleWorkspaceGovernanceReads,
   readWorkspaceGovernanceResource,
   workspaceStatusDistribution,
   createWorkspaceReadQueue,
@@ -5680,44 +5682,14 @@ export function WorkspaceManagementPage() {
     })
   }, [deferredActivePanel])
 
-  /** Paint shell first; defer heavy fetches + chart mount until after first frames. */
   const [wmShellReady, setWmShellReady] = useState(false)
   const [wmDeferredReady, setWmDeferredReady] = useState(false)
 
+  // Required startup must not wait for animation frames (which can pause in a background tab).
   useEffect(() => {
-    let cancelled = false
-    let idleHandle: number | ReturnType<typeof setTimeout> | undefined
-
-    const raf = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (cancelled) return
-        startTransition(() => setWmShellReady(true))
-        if (typeof window.requestIdleCallback === 'function') {
-          idleHandle = window.requestIdleCallback(
-            () => {
-              if (!cancelled) startTransition(() => setWmDeferredReady(true))
-            },
-            { timeout: 1500 },
-          )
-        } else {
-          idleHandle = window.setTimeout(() => {
-            if (!cancelled) startTransition(() => setWmDeferredReady(true))
-          }, 600)
-        }
-      })
-    })
-
-    return () => {
-      cancelled = true
-      window.cancelAnimationFrame(raf)
-      if (idleHandle != null) {
-        if (typeof window.cancelIdleCallback === 'function') {
-          window.cancelIdleCallback(idleHandle as number)
-        } else {
-          window.clearTimeout(idleHandle as ReturnType<typeof setTimeout>)
-        }
-      }
-    }
+    setWmShellReady(true)
+    const timer = window.setTimeout(() => setWmDeferredReady(true), 600)
+    return () => window.clearTimeout(timer)
   }, [])
   // Assistant deep-link params (?view=/?ws=) consumed once to open a panel/detail drawer.
   const [uiSearchParams, setUiSearchParams] = useSearchParams()
@@ -5753,7 +5725,6 @@ export function WorkspaceManagementPage() {
   const [overviewPalette] = useState<WorkspaceOverviewPalette>('pastel')
   /** Workspace `code` highlighted on load distribution chart. */
   const [focusedLoadWorkspaceCode, setFocusedLoadWorkspaceCode] = useState<string | null>(null)
-  const [overviewMotionReady, setOverviewMotionReady] = useState(false)
   const [directoryChartFocus, setDirectoryChartFocus] = useState<DirectoryChartFocus | null>(null)
   const [overviewChartSelection, setOverviewChartSelection] = useState<{ chartId: string; key: string } | null>(null)
   const [directoryPage, setDirectoryPage] = useState(1)
@@ -6507,11 +6478,18 @@ export function WorkspaceManagementPage() {
     const read = async (): Promise<WorkspaceRecord[] | null> => {
       const [[workspaceResult, governanceResult], , typeListResult] = await Promise.all([
         Promise.allSettled([
-          fetchAllWorkspaceOrgWorkspaces(),
-          Promise.all([
+          fetchAllWorkspaceOrgWorkspaces().then((rows) => {
+            // A slow catalog or assignment read must not block the first directory snapshot.
+            const initialRows = [...new Map(rows.map((row) => [row.id, row])).values()]
+              .map(mapWorkspaceOrgWorkspaceDtoToRecord)
+            setDirectoryWorkspaces((previous) => previous.length > 0 ? previous : initialRows)
+            setDirectoryRead({ status: 'ready' })
+            return rows
+          }),
+          settleWorkspaceGovernanceReads([
             fetchGovernanceCatalogSnapshot(),
             readWorkspaceGovernanceResource('Governance assignments', fetchWorkspaceGovernanceAssignments),
-          ]),
+          ] as const),
         ]),
         refreshOrganizationList(),
         fetchWorkspaceOrgWorkspaceTypes().catch(() => null),
@@ -6525,11 +6503,7 @@ export function WorkspaceManagementPage() {
       } else {
         setGovernanceCatalog(null)
         setGovernanceAssignments([])
-        const error: unknown = governanceResult.reason
-        setGovernanceRead(workspaceReadFailure(
-          error instanceof WorkspaceGovernanceReadError ? error.resource : 'The governance service',
-          error,
-        ))
+        setGovernanceRead(workspaceGovernanceFailure(governanceResult.reason))
       }
 
       if (typeListResult) {
@@ -9608,16 +9582,6 @@ export function WorkspaceManagementPage() {
     || activePanel === 'assets'
     || activePanel === 'activity'
 
-  useEffect(() => {
-    if (activePanel !== 'overview') {
-      setOverviewMotionReady(false)
-      return
-    }
-
-    setOverviewMotionReady(false)
-    const timer = window.setTimeout(() => setOverviewMotionReady(true), 60)
-    return () => window.clearTimeout(timer)
-  }, [activePanel])
 
   useEffect(() => {
     if (deferredActivePanel === 'overview') {
@@ -12599,6 +12563,8 @@ export function WorkspaceManagementPage() {
     }
   }, [aggregatedWorkspaceMembers.length, allWorkspacesForList, directoryRead.status, staleWorkspaceMemberCounts, statusCounts, workspaceMemberCounts, workspacesEligibleForMemberListing])
 
+  const overviewDisplay = workspaceOverviewDisplay(directoryRead, allWorkspacesForList.length)
+
   const kpiTrendSeries = useMemo(() => {
     const DAY_MS = 24 * 60 * 60 * 1000
     const toUtcDayEpoch = (value: string): number | null => {
@@ -14045,7 +14011,7 @@ export function WorkspaceManagementPage() {
       />
 
       {showKpiCards ? (
-        wmShellReady ? (
+        overviewDisplay !== 'loading' ? (
         <section
           ref={kpiSectionRef}
           data-chat-evidence-region="workspace-kpi-strip"
@@ -14687,8 +14653,10 @@ export function WorkspaceManagementPage() {
             activePanel={deferredActivePanel}
             visitedPanels={visitedPanels}
           >
-            {!wmShellReady ? (
+            {overviewDisplay === 'loading' ? (
               <WorkspaceManagementPageSkeleton className="min-h-[420px]" />
+            ) : overviewDisplay === 'error' ? (
+              <WorkspaceReadNotice title="Workspace overview could not be loaded" state={directoryRead} onRetry={() => void retryWorkspaceDirectory()} />
             ) : (() => {
               const pal = WORKSPACE_OVERVIEW_PALETTES[overviewPalette]
               const overloadLoadCount = workspaceLoadDistributionData.filter(
@@ -14703,15 +14671,6 @@ export function WorkspaceManagementPage() {
                 workspace: '…',
                 code: '',
               }
-              const chartEnterStyle = (index: number): CSSProperties => ({
-                opacity: overviewMotionReady ? 1 : 0,
-                transform: overviewMotionReady ? 'translateY(0px) scale(1)' : 'translateY(12px) scale(0.985)',
-                transitionProperty: 'opacity, transform',
-                transitionDuration: '480ms, 560ms',
-                transitionTimingFunction: 'cubic-bezier(0.2,0.8,0.2,1), cubic-bezier(0.2,0.8,0.2,1)',
-                transitionDelay: `${index * 110}ms, ${index * 110}ms`,
-                willChange: 'opacity, transform',
-              })
 
               return (
                 <WorkspaceMainPanel
@@ -14745,7 +14704,6 @@ export function WorkspaceManagementPage() {
                         palette={pal}
                         iconBgClass={pal.healthIconBg}
                         iconColorClass={pal.healthIconColor}
-                        style={chartEnterStyle(0)}
                       >
                         <WorkspaceHealthExecutiveDonut
                           data={governanceHealthDistribution}
@@ -14766,7 +14724,6 @@ export function WorkspaceManagementPage() {
                         palette={pal}
                         iconBgClass={pal.trendIconBg}
                         iconColorClass={pal.trendIconColor}
-                        style={chartEnterStyle(1)}
                       >
                         <IntelligenceDonut
                           data={lifecycleDistributionData}
@@ -14792,7 +14749,6 @@ export function WorkspaceManagementPage() {
                         palette={pal}
                         iconBgClass={pal.compositionIconBg}
                         iconColorClass={pal.compositionIconColor}
-                        style={chartEnterStyle(2)}
                       >
                         <IntelligenceDonut
                           data={workspacePurposeCompositionData}
@@ -14815,7 +14771,6 @@ export function WorkspaceManagementPage() {
                         palette={pal}
                         iconBgClass={pal.workloadIconBg}
                         iconColorClass={pal.workloadIconColor}
-                        style={chartEnterStyle(3)}
                         right={
                           <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200/80 bg-gradient-to-r from-rose-50 to-pink-50 px-3 py-1 text-[11px] font-semibold text-rose-600 shadow-sm">
                             <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shadow-[0_0_4px_rgba(244,63,94,0.7)]" />
@@ -15002,7 +14957,6 @@ export function WorkspaceManagementPage() {
                         palette={pal}
                         iconBgClass={pal.compositionIconBg}
                         iconColorClass={pal.compositionIconColor}
-                        style={chartEnterStyle(4)}
                       >
                         <div className="h-64 min-h-[220px] w-full">
                           {ownershipDistributionData.length === 0 ? (
@@ -15066,7 +15020,6 @@ export function WorkspaceManagementPage() {
                         palette={pal}
                         iconBgClass={pal.workloadIconBg}
                         iconColorClass={pal.workloadIconColor}
-                        style={chartEnterStyle(5)}
                       >
                         <div className="h-64 min-h-[220px] w-full">
                           {allWorkspacesForList.length === 0 ||
