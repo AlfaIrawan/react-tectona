@@ -25,7 +25,8 @@ export function workspaceReadFailure(service: string, error: unknown): Workspace
       ? 'Workspace onboarding failed (HTTP 500).'
       : `${service} could not complete the request (HTTP ${status}).` }
   }
-  if (error instanceof TypeError || (error instanceof Error && /^(network request failed|failed to fetch|load failed|networkerror)/i.test(error.message))) {
+  const cause = error instanceof WorkspaceGovernanceReadError ? error.cause : error
+  if (cause instanceof TypeError || (cause instanceof Error && /^(network request failed|failed to fetch|load failed|networkerror)/i.test(cause.message))) {
     return { status: 'error', reason: `${service} could not be reached. Check your connection and try again.` }
   }
   return { status: 'error', reason: `${service} returned an unexpected response. Try again.` }
@@ -97,8 +98,11 @@ export function workspaceStatusDistribution(
 export class WorkspaceGovernanceReadError extends Error {
   readonly status: number | undefined
 
-  constructor(readonly resource: string, error: unknown) {
-    super('Governance read failed')
+  readonly resource: string
+
+  constructor(resource: string, error: unknown) {
+    super('Governance read failed', { cause: error })
+    this.resource = resource
     this.status = workspaceReadStatus(error)
   }
 }
