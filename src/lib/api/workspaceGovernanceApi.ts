@@ -5,6 +5,7 @@
 
 import type { GovernanceCatalogSnapshot } from '@/lib/api/governanceConfigurationApi'
 
+import { WorkspaceApiError } from '@/lib/workspaceAccessWarning'
 import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
@@ -25,7 +26,7 @@ async function handleJson<T>(res: Response): Promise<T> {
         detail = raw
       }
     }
-    throw new Error(detail || `HTTP ${res.status}`)
+    throw new WorkspaceApiError(res.status, detail || `HTTP ${res.status}`)
   }
   return res.json() as Promise<T>
 }

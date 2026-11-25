@@ -3,6 +3,7 @@
  * Namespace: /api/governance-config/v1
  */
 
+import { WorkspaceApiError } from '@/lib/workspaceAccessWarning'
 import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
@@ -26,7 +27,7 @@ async function handleJson<T>(res: Response): Promise<T> {
         detail = raw
       }
     }
-    throw new Error(detail || `HTTP ${res.status}`)
+    throw new WorkspaceApiError(res.status, detail || `HTTP ${res.status}`)
   }
   return res.json() as Promise<T>
 }
