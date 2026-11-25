@@ -214,7 +214,7 @@ import {
   workspaceReadStatus,
   type WorkspaceReadState,
 } from '../lib/workspaceManagementReadState'
-import { WorkspaceAssetsTypeFilter, WorkspaceReadNotice } from '../components/WorkspaceManagementReadControls'
+import { WorkspaceTypeFilter, WorkspaceReadNotice } from '../components/WorkspaceManagementReadControls'
 import type { GovernanceCatalogSnapshot } from '@/lib/api/governanceConfigurationApi'
 import {
   createApprovalPolicy,
@@ -13149,13 +13149,11 @@ export function WorkspaceManagementPage() {
 
     const isSorted = directorySort?.key === columnKey
     const columnFilterActive =
-      columnKey === 'type'
-        ? directoryTypeFilterTags.size > 0
-        : columnKey === 'owner'
-          ? directoryOwnerFilterTags.size > 0
-          : columnKey === 'governanceStatus' && showKpiCarousel
-            ? !isAllGovernanceConfigurationStatusesSelected
-            : false
+      columnKey === 'owner'
+        ? directoryOwnerFilterTags.size > 0
+        : columnKey === 'governanceStatus' && showKpiCarousel
+          ? !isAllGovernanceConfigurationStatusesSelected
+          : false
     const columnFilterButtonClass = cn(
       'inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors',
       'outline-none focus:outline-none focus-visible:outline-none',
@@ -13220,73 +13218,6 @@ export function WorkspaceManagementPage() {
               <ArrowUpDown className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
             )}
           </button>
-
-          {columnKey === 'type' ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className={columnFilterButtonClass}
-                  aria-label="Filter workspace types in table"
-                  title="Filter types"
-                >
-                  <Filter className="h-3.5 w-3.5" aria-hidden />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="start"
-                className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
-              >
-                <DropdownMenuLabel className="flex items-center justify-between">
-                  <span>Type filter</span>
-                  <span className="text-[10px] font-medium text-muted-foreground">
-                    {directoryTypeFilterTags.size === 0 ? 'All' : `${directoryTypeFilterTags.size} selected`}
-                  </span>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => {
-                    setDirectoryTypeFilterTags(new Set())
-                    setDirectoryPage(1)
-                  }}
-                  className="flex items-center justify-between"
-                >
-                  Show all
-                  {directoryTypeFilterTags.size === 0 ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
-                  ) : null}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                {directoryTypeOptionsList.length === 0 ? (
-                  <DropdownMenuItem className="pointer-events-none opacity-60">No types</DropdownMenuItem>
-                ) : (
-                  directoryTypeOptionsList.map((typeLabel) => {
-                    const active = directoryTypeFilterTags.size > 0 && directoryTypeFilterTags.has(typeLabel)
-                    return (
-                      <DropdownMenuItem
-                        key={typeLabel}
-                        onClick={() => {
-                          setDirectoryTypeFilterTags((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(typeLabel)) next.delete(typeLabel)
-                            else next.add(typeLabel)
-                            return next
-                          })
-                          setDirectoryPage(1)
-                        }}
-                        className="flex items-center justify-between"
-                      >
-                        <span className="truncate">{typeLabel}</span>
-                        {active ? (
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
-                        ) : null}
-                      </DropdownMenuItem>
-                    )
-                  })
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null}
 
           {columnKey === 'owner' ? (
             <DropdownMenu>
@@ -15280,7 +15211,7 @@ export function WorkspaceManagementPage() {
               <div className="flex h-full min-h-0 w-full flex-col">
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-4 lg:p-5">
                   <div className="shrink-0">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:flex-wrap xl:items-end xl:justify-between">
                       <div>
                         <div className="flex items-center gap-2">
                           <Building2 className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
@@ -15290,6 +15221,25 @@ export function WorkspaceManagementPage() {
                           Master table for lifecycle-managed workspaces across enterprise delivery.
                         </p>
                       </div>
+                      <WorkspaceTypeFilter
+                        label="Filter workspace types"
+                        menuTitle="Workspace types"
+                        options={directoryTypeOptionsList}
+                        selected={directoryTypeFilterTags}
+                        onClear={() => {
+                          setDirectoryTypeFilterTags(new Set())
+                          setDirectoryPage(1)
+                        }}
+                        onToggle={(type) => {
+                          setDirectoryTypeFilterTags((previous) => {
+                            const next = new Set(previous)
+                            if (next.has(type)) next.delete(type)
+                            else next.add(type)
+                            return next
+                          })
+                          setDirectoryPage(1)
+                        }}
+                      />
                       <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide lg:gap-3">
                         <div className="relative shrink-0">
                           <div className="inline-flex items-center gap-2">
@@ -17920,7 +17870,9 @@ export function WorkspaceManagementPage() {
                           Live governance templates and shared policy assets sourced from workspace-governance service catalog.
                         </p>
                       </div>
-                      <WorkspaceAssetsTypeFilter
+                      <WorkspaceTypeFilter
+                        label="Filter asset types"
+                        menuTitle="Asset types"
                         options={assetsTypeOptionsList}
                         selected={assetsTypeFilterTags}
                         onClear={() => {

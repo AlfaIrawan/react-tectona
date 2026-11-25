@@ -2,16 +2,19 @@
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it } from 'vitest'
-import { WorkspaceAssetsTypeFilter, WorkspaceReadNotice } from './WorkspaceManagementReadControls'
+import { WorkspaceTypeFilter, WorkspaceReadNotice } from './WorkspaceManagementReadControls'
 import { workspaceReadFailure } from '../lib/workspaceManagementReadState'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
-it('opens asset type options, applies and clears a filter, and closes on Escape', async () => {
+it.each([
+  { label: 'Filter asset types', menuTitle: 'Asset types', options: ['Policy', 'Template'] },
+  { label: 'Filter workspace types', menuTitle: 'Workspace types', options: ['Division', 'Organization'] },
+])('opens and applies the $menuTitle filter, clears it, and closes on Escape', async ({ label, menuTitle, options }) => {
   function Panel() {
     const [selected, setSelected] = useState(new Set<string>())
     return <>
-      <WorkspaceAssetsTypeFilter options={['Policy', 'Template']} selected={selected}
+      <WorkspaceTypeFilter label={label} menuTitle={menuTitle} options={options} selected={selected}
         onToggle={(type) => setSelected(new Set([type]))} onClear={() => setSelected(new Set())} />
       <output>{Array.from(selected).join(',') || 'all assets'}</output>
     </>
@@ -21,11 +24,12 @@ it('opens asset type options, applies and clears a filter, and closes on Escape'
   const root = createRoot(host)
   await act(async () => { root.render(<Panel />) })
   const trigger = host.querySelector('button')!
+  expect(trigger.getAttribute('aria-label')).toBe(label)
   expect(trigger.getAttribute('aria-expanded')).toBe('false')
   await act(async () => { trigger.click() })
   expect(trigger.getAttribute('aria-expanded')).toBe('true')
   await act(async () => { host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click() })
-  expect(host.querySelector('output')?.textContent).toBe('Policy')
+  expect(host.querySelector('output')?.textContent).toBe(options[0])
   await act(async () => { [...host.querySelectorAll('button')].find((node) => node.textContent?.includes('Show all'))!.click() })
   expect(host.querySelector('output')?.textContent).toBe('all assets')
   await act(async () => { trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })

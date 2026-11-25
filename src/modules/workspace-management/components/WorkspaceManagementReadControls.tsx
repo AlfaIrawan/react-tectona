@@ -22,7 +22,9 @@ export function WorkspaceReadNotice({ title, state, onRetry }: {
   )
 }
 
-export function WorkspaceAssetsTypeFilter<T extends string>({ options, selected, onClear, onToggle }: {
+export function WorkspaceTypeFilter<T extends string>({ options, selected, onClear, onToggle, label, menuTitle }: {
+  label: string
+  menuTitle: string
   options: readonly T[]
   selected: ReadonlySet<T>
   onClear: () => void
@@ -45,14 +47,14 @@ export function WorkspaceAssetsTypeFilter<T extends string>({ options, selected,
       <DropdownMenuTrigger
         type="button"
         className={cn(enterpriseSecondaryButtonClass(), 'inline-flex h-9 items-center gap-2 px-3 text-xs')}
-        aria-label="Filter asset types in table"
+        aria-label={label}
         aria-expanded={open}
       >
         <Filter className="h-3.5 w-3.5" aria-hidden />
         Type{selected.size ? ` (${selected.size})` : ': All'}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-48 overflow-y-auto">
-        <DropdownMenuLabel>Asset types</DropdownMenuLabel>
+        <DropdownMenuLabel>{menuTitle}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <button type="button" className="w-full px-3 py-1.5 text-left text-xs hover:bg-muted" onClick={onClear}>
           Show all
