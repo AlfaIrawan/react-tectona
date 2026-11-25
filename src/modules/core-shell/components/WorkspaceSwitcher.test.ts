@@ -14,8 +14,11 @@ vi.mock('../hooks/useUserWorkspaceOptions', () => ({
     loading: false,
     fallbackOrgName: 'Example',
     options: [
-      { workspaceId: 'alpha', workspaceName: 'Alpha', organizationId: 'org', organizationName: 'Example', slug: 'alpha', tenantMode: 'organization' },
-      { workspaceId: 'beta', workspaceName: 'Beta', organizationId: 'org', organizationName: 'Example', slug: 'beta', tenantMode: 'organization' },
+      { workspaceId: 'alpha', workspaceName: 'Alpha', organizationId: 'org', organizationName: 'Example', slug: 'alpha', tenantMode: 'organization', workspaceClassification: 'Organization' },
+      { workspaceId: 'beta', workspaceName: 'Beta', organizationId: 'org', organizationName: 'Example', slug: 'beta', tenantMode: 'organization', workspaceClassification: 'Division' },
+      { workspaceId: 'gamma', workspaceName: 'Gamma', organizationId: 'org', organizationName: 'Example', slug: 'gamma', tenantMode: 'organization', parentWorkspaceId: 'alpha' },
+      { workspaceId: 'unknown', workspaceName: 'Unknown', organizationId: '', organizationName: 'Example', slug: null, tenantMode: null },
+      { workspaceId: 'personal', workspaceName: 'Personal', organizationId: 'org', organizationName: 'Example', slug: 'personal', tenantMode: 'personal', workspaceClassification: 'Organization' },
     ],
   }),
 }))
@@ -52,6 +55,25 @@ async function search(value: string) {
 }
 
 describe('workspace chooser scroll region', () => {
+  it('uses directory classification, not tenant mode, for workspace icons and labels', async () => {
+    await open()
+    for (const [name, label, iconClass] of [
+      ['Alpha', 'Organization workspace', 'lucide-building-2'],
+      ['Beta', 'Division workspace', 'lucide-network'],
+      ['Gamma', 'Unit workspace', 'lucide-network'],
+      ['Unknown', 'Workspace', 'lucide-layers'],
+      ['Personal', 'Personal workspace', 'lucide-user-round'],
+    ]) {
+      const nameElement = [...region()!.querySelectorAll('.truncate')]
+        .find((item) => item.textContent === name)!
+      expect(nameElement.nextElementSibling?.textContent).toBe(label)
+      expect(nameElement.parentElement?.parentElement?.querySelector('svg.' + iconClass)?.hasAttribute('aria-hidden')).toBe(true)
+    }
+    await search('Division workspace')
+    expect(region()!.textContent).toContain('Beta')
+    expect(region()!.textContent).not.toContain('Alpha')
+  })
+
   it('is keyboard-focusable, bounded and natively scrollable without switching workspace', async () => {
     expect(trigger().getAttribute('aria-label')).toBe(`${trigger().textContent?.trim()}, switch workspace`)
     await open()

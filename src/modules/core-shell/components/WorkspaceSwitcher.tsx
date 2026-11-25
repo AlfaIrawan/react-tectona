@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Building2, Check, ChevronDown, Loader2, Search, UserRound } from 'lucide-react'
+import { Building2, Check, ChevronDown, Layers, Loader2, Network, Search, UserRound } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,8 +19,21 @@ import { useUserWorkspaceOptions, type UserWorkspaceOption } from '../hooks/useU
 
 const WORKSPACE_LIST_MAX_HEIGHT_CLASS = 'max-h-64'
 
-function workspaceKindLabel(option: UserWorkspaceOption): string {
-  return option.tenantMode === 'personal' ? 'Personal workspace' : 'Organization workspace'
+function workspacePresentation(option: UserWorkspaceOption) {
+  if (option.tenantMode === 'personal') return { Icon: UserRound, label: 'Personal workspace' }
+
+  switch (option.workspaceClassification?.toLowerCase()) {
+    case 'organization': return { Icon: Building2, label: 'Organization workspace' }
+    case 'division': return { Icon: Network, label: 'Division workspace' }
+    case 'department': return { Icon: Network, label: 'Department workspace' }
+    case 'unit': return { Icon: Network, label: 'Unit workspace' }
+    case 'team': return { Icon: Network, label: 'Team workspace' }
+    case 'branch': return { Icon: Network, label: 'Branch workspace' }
+    default:
+      return option.parentWorkspaceId
+        ? { Icon: Network, label: 'Unit workspace' }
+        : { Icon: Layers, label: 'Workspace' }
+  }
 }
 
 interface WorkspaceSwitcherProps {
@@ -57,7 +70,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
         option.workspaceName,
         option.organizationName,
         option.slug ?? '',
-        workspaceKindLabel(option),
+        workspacePresentation(option).label,
       ]
         .join(' ')
         .toLowerCase()
@@ -212,7 +225,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
                 </DropdownMenuLabel>
                 {organizationOptions.map((option) => {
                   const isActive = activeOption?.workspaceId === option.workspaceId
-                  const Icon = option.tenantMode === 'personal' ? UserRound : Building2
+                  const { Icon, label } = workspacePresentation(option)
                   return (
                     <DropdownMenuItem
                       key={option.workspaceId}
@@ -229,7 +242,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
                       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-medium text-foreground">{option.workspaceName}</div>
-                        <div className="text-xs text-muted-foreground">{workspaceKindLabel(option)}</div>
+                        <div className="text-xs text-muted-foreground">{label}</div>
                       </div>
                     </DropdownMenuItem>
                   )
