@@ -6,8 +6,19 @@ html:has(.platform-login), body:has(.platform-login), #root:has(.platform-login)
   height: auto;
   background-color: transparent;
 }
-/* Keep the panel centered when validation or an error makes the page scroll. */
-html:has(.platform-login) { scrollbar-gutter: stable both-edges; }
+/* Do not reserve unpainted viewport strips for the login background.
+   Keep vertical scrolling available without shifting the centered panel. */
+html:has(.platform-login) {
+  scrollbar-gutter: auto;
+  scrollbar-width: none !important;
+}
+html:has(.platform-login)::-webkit-scrollbar { display: none !important; }
+
+/* Retain the visible system scrollbar when explicitly requested by forced colors. */
+@media (forced-colors: active) {
+  html:has(.platform-login) { scrollbar-width: auto !important; }
+  html:has(.platform-login)::-webkit-scrollbar { display: block !important; }
+}
 /* Let the document own vertical scrolling even when desktop zoom is active. */
 html.ui-scale-lock body:has(.platform-login),
 html.ui-scale-lock #root:has(.platform-login) { height: auto; }
