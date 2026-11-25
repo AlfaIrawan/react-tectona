@@ -207,6 +207,14 @@ import {
   setWorkspaceDirectoryRealtimeRefreshHandler,
   subscribeWorkspaceDirectoryRealtimeConnected,
 } from '@/lib/workspaceDirectoryRealtime'
+import {
+  countWorkspaceMemberships,
+  createWorkspaceReadQueue,
+  workspaceReadFailure,
+  workspaceReadStatus,
+  type WorkspaceReadState,
+} from '../lib/workspaceManagementReadState'
+import { WorkspaceAssetsTypeFilter, WorkspaceReadNotice } from '../components/WorkspaceManagementReadControls'
 import type { GovernanceCatalogSnapshot } from '@/lib/api/governanceConfigurationApi'
 import {
   createApprovalPolicy,
@@ -5432,7 +5440,7 @@ function validateNewWorkspaceWizardStep(
     ) {
       return {
         ok: false,
-        error: 'Select a primary organization from the Workspace Org directory (open Manage to refresh the list).',
+        error: 'Select a primary organization from the organization directory.',
         highlights: { primaryOrganization: true },
       }
     }
@@ -5916,6 +5924,20 @@ export function WorkspaceManagementPage() {
   const [governanceAssignments, setGovernanceAssignments] = useState<WorkspaceGovernanceAssignmentDto[]>([])
   const [workspaceOrgBackendConnected, setWorkspaceOrgBackendConnected] = useState(false)
   const [workspaceOrgInitialFetchDone, setWorkspaceOrgInitialFetchDone] = useState(false)
+  const [directoryRead, setDirectoryRead] = useState<WorkspaceReadState>({ status: 'loading' })
+  const [organizationRead, setOrganizationRead] = useState<WorkspaceReadState>({ status: 'loading' })
+  const [governanceRead, setGovernanceRead] = useState<WorkspaceReadState>({ status: 'loading' })
+  const [directoryTreeRevision, setDirectoryTreeRevision] = useState(0)
+  const workspaceOrgReadInFlight = useRef<Promise<WorkspaceRecord[] | null> | null>(null)
+  const organizationReadInFlight = useRef<Promise<void> | null>(null)
+  const workspaceDirectoryPollAfter = useRef(0)
+  const loadWorkspaceMembers = useMemo(
+    () => createWorkspaceReadQueue((workspaceId) => fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspaceId)),
+    [],
+  )
+  const workspaceMembersReadSequence = useRef(0)
+  const membershipCountReadSequence = useRef(0)
+  const latestMembershipCountRead = useRef(new Map<string, number>())
   const [wacBackendConnected, setWacBackendConnected] = useState(false)
   const [workspaceMembers, setWorkspaceMembers] = useState<MemberRecord[]>([])
   const [membersLoading, setMembersLoading] = useState(false)
@@ -6142,7 +6164,7 @@ export function WorkspaceManagementPage() {
     return () => {
       cancelled = true
     }
-  }, [directoryOrgIdsKey])
+  }, [directoryOrgIdsKey, directoryTreeRevision])
 
   const directoryServerCanonicalParentById = useMemo(() => {
     const merged = new Map<string, string | null>()
@@ -6481,105 +6503,80 @@ export function WorkspaceManagementPage() {
     }
   }, [canViewAllActivityAudit, currentSessionUser])
 
-  const refreshWorkspaceOrgLists = useCallback(async () => {
-    try {
-      const [workspaceRows, orgList, typeListResult] = await Promise.all([
-        fetchAllWorkspaceOrgWorkspaces(),
-        fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200, organization_type: 'organization', status_code: 'active' }).catch(
-          async () => {
-            // Older workspace-org builds may not accept organization_type yet.
-            try {
-              return await fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200, status_code: 'active' })
-            } catch {
-              try {
-                return await fetchWorkspaceOrgOrganizations({ page: 1, page_size: 200 })
-              } catch {
-                return { items: [], total: 0 }
-              }
-            }
-          },
-        ),
-        fetchWorkspaceOrgWorkspaceTypes().catch(() => null),
-      ])
-      const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
-      let merged: WorkspaceRecord[] = mapped
+  const refreshOrganizationList = useCallback((showLoading = false) => {
+    if (organizationReadInFlight.current) return organizationReadInFlight.current
+    if (showLoading) setOrganizationRead({ status: 'loading' })
+    const read = async () => {
       try {
-        const [cats, assigns] = await Promise.all([
-          fetchGovernanceCatalogSnapshot(),
-          fetchWorkspaceGovernanceAssignments(),
-        ])
-        setGovernanceCatalog((prev) => {
-          if (prev === cats) return prev
-          if (prev != null && cats != null && JSON.stringify(prev) === JSON.stringify(cats)) return prev
-          return cats
-        })
-        setGovernanceAssignments((prev) => {
-          const next = assigns.items ?? []
+        const params = { page: 1, page_size: 200, status_code: 'active' }
+        let orgList
+        try {
+          orgList = await fetchWorkspaceOrgOrganizations({ ...params, organization_type: 'organization' })
+        } catch (error) {
+          // Use the legacy query only for an unsupported filter, not for 429/5xx/auth failures.
+          const status = workspaceReadStatus(error)
+          if (status !== 400 && status !== 422) throw error
+          orgList = await fetchWorkspaceOrgOrganizations(params)
+        }
+        const orgNodes = [...(orgList.items ?? [])]
+          .filter((o) => isCorporateOrganizationForPicker(o))
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+          .map((o) => ({
+            id: o.id,
+            code: o.organization_code,
+            label: o.name,
+            parentId: (typeof o.metadata?.parent_org_id === 'string' ? o.metadata.parent_org_id : null),
+            version: o.version,
+            metadata: o.metadata,
+            verifiedDomains: normalizeVerifiedDomainEntries(o.verified_domains),
+          }))
+        setOrganizationNodes((prev) => {
           if (
-            prev.length === next.length
-            && prev.every((row, index) => row.workspace_id === next[index]?.workspace_id && row.row_version === next[index]?.row_version)
+            prev.length === orgNodes.length
+            && prev.every((row, index) => {
+              const next = orgNodes[index]
+              return next && row.id === next.id && row.label === next.label && row.parentId === next.parentId
+            })
           ) {
             return prev
           }
-          return next
+          return orgNodes
         })
-        const byId = new Map((assigns.items ?? []).map((a) => [a.workspace_id, a]))
-        merged = mapped.map((rec) => applyManagedGovernanceToRecord(rec, byId.get(rec.id), cats))
-      } catch {
+        setOrganizationRead({ status: 'ready' })
+      } catch (error) {
+        const status = workspaceReadStatus(error)
+        if (status === 401 || status === 403) setOrganizationNodes([])
+        setOrganizationRead(workspaceReadFailure('The organization directory', error))
+      }
+    }
+    const pending = read().finally(() => { organizationReadInFlight.current = null })
+    organizationReadInFlight.current = pending
+    return pending
+  }, [])
+
+  const readWorkspaceOrgLists = useCallback(() => {
+    if (workspaceOrgReadInFlight.current) return workspaceOrgReadInFlight.current
+    const read = async (): Promise<WorkspaceRecord[] | null> => {
+      const [[workspaceResult, governanceResult], , typeListResult] = await Promise.all([
+        Promise.allSettled([
+          fetchAllWorkspaceOrgWorkspaces(),
+          Promise.all([fetchGovernanceCatalogSnapshot(), fetchWorkspaceGovernanceAssignments()]),
+        ]),
+        refreshOrganizationList(),
+        fetchWorkspaceOrgWorkspaceTypes().catch(() => null),
+      ])
+
+      if (governanceResult.status === 'fulfilled') {
+        const [catalog, assignments] = governanceResult.value
+        setGovernanceCatalog(catalog)
+        setGovernanceAssignments(assignments.items ?? [])
+        setGovernanceRead({ status: 'ready' })
+      } else {
         setGovernanceCatalog(null)
         setGovernanceAssignments([])
-        setWorkspaceActivityFeed([])
+        setGovernanceRead(workspaceReadFailure('The governance service', governanceResult.reason))
       }
-      setWorkspaceOrgBackendConnected(true)
-      setDirectoryWorkspaces((prev) => {
-        const now = Date.now()
-        const pendingMap = pendingDirectoryWorkspaceIdsRef.current
-        for (const [id, createdAt] of pendingMap) {
-          if (now - createdAt > DIRECTORY_PENDING_WORKSPACE_TTL_MS) pendingMap.delete(id)
-        }
-        const pendingIds = new Set(pendingMap.keys())
-        for (const row of merged) {
-          pendingMap.delete(row.id)
-        }
-        const combined = mergeDirectoryWorkspaceRecords(merged, prev, pendingIds)
-        if (
-          prev.length === combined.length
-          && prev.every((row, index) => {
-            const next = combined[index]
-            // version bumps on every server-side mutation (archive, rename, metadata
-            // change, ...) -- comparing id/code/name alone missed status-only changes
-            // like archiving, silently keeping the stale row after a refetch.
-            return next && row.id === next.id && row.code === next.code && row.name === next.name && row.version === next.version
-          })
-        ) {
-          return prev
-        }
-        return combined
-      })
-      const orgNodes = [...(orgList.items ?? [])]
-        .filter((o) => isCorporateOrganizationForPicker(o))
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-        .map((o) => ({
-          id: o.id,
-          code: o.organization_code,
-          label: o.name,
-          parentId: (typeof o.metadata?.parent_org_id === 'string' ? o.metadata.parent_org_id : null),
-          version: o.version,
-          metadata: o.metadata,
-          verifiedDomains: normalizeVerifiedDomainEntries(o.verified_domains),
-        }))
-      setOrganizationNodes((prev) => {
-        if (
-          prev.length === orgNodes.length
-          && prev.every((row, index) => {
-            const next = orgNodes[index]
-            return next && row.id === next.id && row.label === next.label && row.parentId === next.parentId
-          })
-        ) {
-          return prev
-        }
-        return orgNodes
-      })
+
       if (typeListResult) {
         setWorkspaceTypeOptions(
           typeListResult.items
@@ -6588,112 +6585,140 @@ export function WorkspaceManagementPage() {
             .map((t) => ({ id: t.id, typeCode: t.type_code, label: t.label, sortOrder: t.sort_order, isActive: t.is_active, version: t.version }))
         )
       }
-    } catch {
+      if (workspaceResult.status === 'rejected') {
+        const error = workspaceResult.reason
+        const status = workspaceReadStatus(error)
+        setDirectoryRead(workspaceReadFailure('Workspace Directory', error))
+        setWorkspaceOrgBackendConnected(false)
+        if (status === 401 || status === 403) setDirectoryWorkspaces([])
+        workspaceDirectoryPollAfter.current = Date.now() + 30_000
+        return null
+      }
+
+      const distinct = new Map(workspaceResult.value.map((row) => [row.id, row]))
+      let merged = [...distinct.values()].map(mapWorkspaceOrgWorkspaceDtoToRecord)
+      if (governanceResult.status === 'fulfilled') {
+        const [catalog, assignments] = governanceResult.value
+        const byId = new Map((assignments.items ?? []).map((row) => [row.workspace_id, row]))
+        merged = merged.map((record) => applyManagedGovernanceToRecord(record, byId.get(record.id), catalog))
+      }
+      setDirectoryWorkspaces((prev) => {
+        const pendingMap = pendingDirectoryWorkspaceIdsRef.current
+        const now = Date.now()
+        for (const [id, createdAt] of pendingMap) {
+          if (now - createdAt > DIRECTORY_PENDING_WORKSPACE_TTL_MS) pendingMap.delete(id)
+        }
+        for (const row of merged) pendingMap.delete(row.id)
+        const combined = mergeDirectoryWorkspaceRecords(merged, prev, new Set(pendingMap.keys()))
+        if (prev.length === combined.length && prev.every((row, index) => {
+          const next = combined[index]
+          return row.id === next.id && row.code === next.code && row.name === next.name
+            && row.version === next.version && JSON.stringify(row.governance) === JSON.stringify(next.governance)
+        })) return prev
+        return combined
+      })
+      setDirectoryRead({ status: 'ready' })
+      setWorkspaceOrgBackendConnected(true)
+      workspaceDirectoryPollAfter.current = governanceResult.status === 'rejected' ? Date.now() + 30_000 : 0
+      return merged
+    }
+    const pending = read().catch((error: unknown) => {
+      setDirectoryRead(workspaceReadFailure('Workspace Directory', error))
       setWorkspaceOrgBackendConnected(false)
-      setDirectoryWorkspaces([])
-      setOrganizationNodes([])
-      setGovernanceCatalog(null)
-      setGovernanceAssignments([])
-      setWorkspaceActivityFeed([])
-      setDirectoryOwnerFilterTags(() => new Set())
-      setDirectoryOrgFilterTags(() => new Set())
-    } finally {
+      workspaceDirectoryPollAfter.current = Date.now() + 30_000
+      return null
+    }).finally(() => {
+      workspaceOrgReadInFlight.current = null
       setWorkspaceOrgInitialFetchDone(true)
-    }
-  }, [])
-
-  const applyWorkspaceMemberCounts = useCallback((counts: Record<string, number>) => {
-    setWorkspaceMemberCounts((prev) => {
-      const prevKeys = Object.keys(prev)
-      const nextKeys = Object.keys(counts)
-      if (
-        prevKeys.length === nextKeys.length
-        && nextKeys.every((key) => prev[key] === counts[key])
-      ) {
-        return prev
-      }
-      return counts
     })
-  }, [])
+    workspaceOrgReadInFlight.current = pending
+    return pending
+  }, [refreshOrganizationList])
 
-  const applyWorkspaceMembers = useCallback((members: MemberRecord[]) => {
+  // A user action or completed mutation must not join a snapshot that started before it.
+  const refreshWorkspaceOrgLists = useCallback(async () => {
+    if (workspaceOrgReadInFlight.current) await workspaceOrgReadInFlight.current
+    return readWorkspaceOrgLists()
+  }, [readWorkspaceOrgLists])
+
+  const retryWorkspaceDirectory = useCallback(async () => {
+    setDirectoryRead({ status: 'loading' })
+    setGovernanceRead({ status: 'loading' })
+    const rows = await refreshWorkspaceOrgLists()
+    if (rows !== null) setDirectoryTreeRevision((revision) => revision + 1)
+  }, [refreshWorkspaceOrgLists])
+
+  // Unknown or failed member reads are not zero. Keep a last-known count only for
+  // transient failures; an explicit denial must remove the prior count.
+  const [staleWorkspaceMemberCounts, setStaleWorkspaceMemberCounts] = useState<ReadonlySet<string>>(() => new Set())
+  const readWorkspaceMemberships = useCallback(async (workspaceIds: string[]) => {
+    const request = ++membershipCountReadSequence.current
+    for (const id of workspaceIds) latestMembershipCountRead.current.set(id, request)
+    const results = await Promise.all(workspaceIds.map(async (id) => {
+      try {
+        return { id, response: await loadWorkspaceMembers(id), status: undefined }
+      } catch (error) {
+        return { id, response: null, status: workspaceReadStatus(error) }
+      }
+    }))
+    const latestResults = results.filter(({ id }) => latestMembershipCountRead.current.get(id) === request)
+    setWorkspaceMemberCounts((previous) => {
+      const next = { ...previous }
+      for (const { id, response, status } of latestResults) {
+        if (response) next[id] = response.total
+        else if (status === 401 || status === 403 || status === 404) delete next[id]
+      }
+      return Object.keys(next).length === Object.keys(previous).length
+        && Object.keys(next).every((id) => next[id] === previous[id]) ? previous : next
+    })
+    setStaleWorkspaceMemberCounts((previous) => {
+      const next = new Set(previous)
+      for (const { id, response } of latestResults) {
+        if (response) next.delete(id)
+        else next.add(id)
+      }
+      return next.size === previous.size && [...next].every((id) => previous.has(id)) ? previous : next
+    })
+    return results
+  }, [loadWorkspaceMembers])
+
+  const loadWorkspaceMemberRows = useCallback(async (
+    workspaces: WorkspaceRecord[],
+    users: IdentityUserDto[],
+    request: number,
+  ) => {
+    const results = await readWorkspaceMemberships(workspaces.map((workspace) => workspace.id))
+    if (request !== workspaceMembersReadSequence.current) return
+    const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
+    const userBySubject = new Map(users.map((user) => [user.id, user]))
+    const unresolvedIds = new Set(results
+      .filter(({ response, status }) => !response && status !== 401 && status !== 403 && status !== 404)
+      .map(({ id }) => id))
+    const received = results.flatMap(({ id, response }) => {
+      const workspace = workspaceById.get(id)
+      return workspace && response
+        ? response.items.map((row) => mapWacMembershipToMemberRecord(row, userBySubject, { id, name: workspace.name }))
+        : []
+    })
     setWorkspaceMembers((prev) => {
-      if (
-        prev.length === members.length
-        && prev.every((row, index) => row.id === members[index]?.id && row.version === members[index]?.version)
-      ) {
-        return prev
-      }
-      return members
+      const next = [...received, ...prev.filter((row) => unresolvedIds.has(row.workspaceId))]
+      return prev.length === next.length && prev.every((row, index) => (
+        row.id === next[index]?.id && row.version === next[index]?.version
+      )) ? prev : next
     })
-  }, [])
-
-  const refreshWorkspaceMemberCounts = useCallback(async (workspaceIds: string[]) => {
-    if (workspaceIds.length === 0) {
-      applyWorkspaceMemberCounts({})
-      return
-    }
-    try {
-      const pairs = await Promise.all(
-        workspaceIds.map(async (workspaceId) => {
-          try {
-            const res = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, workspaceId)
-            return [workspaceId, res.total] as const
-          } catch {
-            return [workspaceId, 0] as const
-          }
-        })
-      )
-      applyWorkspaceMemberCounts(Object.fromEntries(pairs))
-      setWacBackendConnected(true)
-    } catch {
-      setWacBackendConnected(false)
-    }
-  }, [applyWorkspaceMemberCounts])
+    if (results.length > 0) setWacBackendConnected(results.some(({ response }) => response !== null))
+  }, [readWorkspaceMemberships])
 
   const refreshAllWorkspaceMembers = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true
-    const workspaces = workspacesEligibleForMemberListing
-    if (workspaces.length === 0) {
-      applyWorkspaceMembers([])
-      applyWorkspaceMemberCounts({})
-      return
-    }
+    const request = ++workspaceMembersReadSequence.current
     if (!silent) setMembersLoading(true)
     try {
-      const userBySubject = new Map(identityUsers.map((u) => [u.id, u]))
-      const results = await Promise.all(
-        workspaces.map(async (w) => {
-          try {
-            const res = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, w.id)
-            return { workspace: w, items: res.items, total: res.total }
-          } catch {
-            return { workspace: w, items: [] as WacMembershipDto[], total: 0 }
-          }
-        })
-      )
-      const counts: Record<string, number> = {}
-      const merged: MemberRecord[] = []
-      for (const { workspace, items, total } of results) {
-        counts[workspace.id] = total
-        for (const row of items) {
-          merged.push(mapWacMembershipToMemberRecord(row, userBySubject, { id: workspace.id, name: workspace.name }))
-        }
-      }
-      applyWorkspaceMembers(merged)
-      applyWorkspaceMemberCounts(counts)
-      setWacBackendConnected(true)
-    } catch (e) {
-      setWacBackendConnected(false)
-      if (!silent) {
-      applyWorkspaceMembers([])
-      const msg = e instanceof Error ? e.message : 'Could not load workspace members.'
-      addToast({ variant: 'error', title: 'Workspace members unavailable', description: msg })
-      }
+      await loadWorkspaceMemberRows(workspacesEligibleForMemberListing, identityUsers, request)
     } finally {
       if (!silent) setMembersLoading(false)
     }
-  }, [workspacesEligibleForMemberListing, identityUsers, addToast, applyWorkspaceMembers, applyWorkspaceMemberCounts])
+  }, [workspacesEligibleForMemberListing, identityUsers, loadWorkspaceMemberRows])
 
   useEffect(() => {
     if (!isMultiWorkspaceScope) return
@@ -6747,53 +6772,15 @@ export function WorkspaceManagementPage() {
 
   const refreshLiveMembersPanel = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true
+    const request = ++workspaceMembersReadSequence.current
     const scope = liveMembersPanelScopeRef.current
     if (!silent) setMembersLoading(true)
     try {
-      const [workspaceRows, identityRes] = await Promise.all([
-        fetchAllWorkspaceOrgWorkspaces(),
+      const [mapped, identityRes] = await Promise.all([
+        readWorkspaceOrgLists(),
         fetchWorkspaceManagementIdentityDirectory().catch(() => ({ items: [] as IdentityUserDto[] })),
       ])
-      const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
-      setDirectoryWorkspaces((prev) => {
-        // Prefer keeping governance overlays from previous merge when ids match.
-        const prevById = new Map(prev.map((w) => [w.id, w]))
-        const mergedFromServer = mapped.map((rec) => {
-          const existing = prevById.get(rec.id)
-          return existing
-            ? {
-                ...rec,
-                governance: {
-                  ...rec.governance,
-                  configurationStatus: existing.governance.configurationStatus,
-                  complianceStatus: existing.governance.complianceStatus,
-                },
-              }
-            : rec
-        })
-        const now = Date.now()
-        const pendingMap = pendingDirectoryWorkspaceIdsRef.current
-        for (const [id, createdAt] of pendingMap) {
-          if (now - createdAt > DIRECTORY_PENDING_WORKSPACE_TTL_MS) pendingMap.delete(id)
-        }
-        const pendingIds = new Set(pendingMap.keys())
-        for (const row of mapped) {
-          pendingMap.delete(row.id)
-        }
-        const next = mergeDirectoryWorkspaceRecords(mergedFromServer, prev, pendingIds)
-        if (
-          next.length === prev.length
-          && next.every((row, index) => {
-            const prior = prev[index]
-            // version bumps on every server-side mutation -- id/code/name alone
-            // missed status-only changes like archiving (see refreshWorkspaceOrgLists).
-            return prior?.id === row.id && prior.code === row.code && prior.name === row.name && prior.version === row.version
-          })
-        ) {
-          return prev
-        }
-        return next
-      })
+      if (!mapped) return
       const users = identityRes.items ?? []
       setIdentityUsers((prev) => {
         if (
@@ -6804,7 +6791,6 @@ export function WorkspaceManagementPage() {
         }
         return users
       })
-      setWorkspaceOrgBackendConnected(true)
 
       // Same visibility as Directory / KPI — never load org-wide members into personal view.
       const scopedWorkspaces = filterWorkspacesEligibleForWacMemberListing(
@@ -6827,34 +6813,7 @@ export function WorkspaceManagementPage() {
         },
       )
 
-      if (scopedWorkspaces.length === 0) {
-        applyWorkspaceMembers([])
-        applyWorkspaceMemberCounts({})
-        return
-      }
-
-      const userBySubject = new Map(users.map((u) => [u.id, u]))
-      const results = await Promise.all(
-        scopedWorkspaces.map(async (w) => {
-          try {
-            const res = await fetchWorkspaceMembers(TECTONA_WAC_APP_ID, w.id)
-            return { workspace: w, items: res.items, total: res.total }
-          } catch {
-            return { workspace: w, items: [] as WacMembershipDto[], total: 0 }
-          }
-        })
-      )
-      const counts: Record<string, number> = {}
-      const merged: MemberRecord[] = []
-      for (const { workspace, items, total } of results) {
-        counts[workspace.id] = total
-        for (const row of items) {
-          merged.push(mapWacMembershipToMemberRecord(row, userBySubject, { id: workspace.id, name: workspace.name }))
-        }
-      }
-      applyWorkspaceMembers(merged)
-      applyWorkspaceMemberCounts(counts)
-      setWacBackendConnected(true)
+      await loadWorkspaceMemberRows(scopedWorkspaces, users, request)
     } catch (e) {
       setWacBackendConnected(false)
       if (!silent) {
@@ -6864,10 +6823,10 @@ export function WorkspaceManagementPage() {
     } finally {
       if (!silent) setMembersLoading(false)
     }
-  }, [addToast, applyWorkspaceMembers, applyWorkspaceMemberCounts])
+  }, [addToast, loadWorkspaceMemberRows, readWorkspaceOrgLists])
 
-  const refreshWorkspaceOrgListsRef = useRef(refreshWorkspaceOrgLists)
-  refreshWorkspaceOrgListsRef.current = refreshWorkspaceOrgLists
+  const refreshWorkspaceOrgListsRef = useRef(readWorkspaceOrgLists)
+  refreshWorkspaceOrgListsRef.current = readWorkspaceOrgLists
   const refreshWorkspaceActivityFeedRef = useRef(refreshWorkspaceActivityFeed)
   refreshWorkspaceActivityFeedRef.current = refreshWorkspaceActivityFeed
   const refreshLiveMembersPanelRef = useRef(refreshLiveMembersPanel)
@@ -6964,13 +6923,13 @@ export function WorkspaceManagementPage() {
   /** Keep directory, identity people, and members lists fresh without a manual reload. */
   const refreshLiveDirectoryData = useCallback(async () => {
     await Promise.all([
-      refreshWorkspaceOrgLists(),
+      readWorkspaceOrgLists(),
       refreshIdentityUserDirectory(),
       refreshMyMembershipWorkspaceIds(),
       refreshMyOrgDirectoryWorkspaceIds(),
     ])
   }, [
-    refreshWorkspaceOrgLists,
+    readWorkspaceOrgLists,
     refreshIdentityUserDirectory,
     refreshMyMembershipWorkspaceIds,
     refreshMyOrgDirectoryWorkspaceIds,
@@ -7162,7 +7121,7 @@ export function WorkspaceManagementPage() {
     if (deferredActivePanel !== 'directory' && deferredActivePanel !== 'members') return
     if (workspaceDirectoryWsLive) return
     const tick = () => {
-      if (document.visibilityState !== 'visible') return
+      if (document.visibilityState !== 'visible' || Date.now() < workspaceDirectoryPollAfter.current) return
       if (deferredActivePanel === 'members') {
         void refreshLiveMembersPanelRef.current({ silent: true })
       } else {
@@ -7245,11 +7204,11 @@ export function WorkspaceManagementPage() {
     ) {
       return
     }
-    void refreshWorkspaceMemberCounts(workspaceListIdsKey.split('\0'))
+    void refreshAllWorkspaceMembers({ silent: true })
   }, [
     workspaceOrgBackendConnected,
     workspaceListIdsKey,
-    refreshWorkspaceMemberCounts,
+    refreshAllWorkspaceMembers,
     myMembershipWorkspaceIdsLoaded,
     wmAuth.isPlatformAdmin,
     canViewAllActivityAudit,
@@ -10748,6 +10707,10 @@ export function WorkspaceManagementPage() {
     directoryServerCanonicalParentById,
   ])
 
+  const directoryDistinctWorkspaceCount = useMemo(
+    () => new Set(directoryFlatRows.map(({ workspace }) => workspace.id)).size,
+    [directoryFlatRows],
+  )
   const directoryTotalPages = Math.max(1, Math.ceil(directoryFlatRows.length / directoryPageSize))
 
   const directoryTableRows = useMemo(() => {
@@ -11358,9 +11321,6 @@ export function WorkspaceManagementPage() {
   const closeNewWorkspaceDrawer = () => {
     resetNewWorkspaceForm()
     setNewWorkspaceWizardStep(1)
-    if (!workspaceOrgBackendConnected) {
-      setOrganizationNodes([])
-    }
     setPrimaryOrgManageOpen(false)
     setWorkspaceTypeManageOpen(false)
     try {
@@ -11599,6 +11559,12 @@ export function WorkspaceManagementPage() {
       return
     }
     for (let s = 1; s < targetStep; s += 1) {
+      if (s === 2 && organizationRead.status !== 'ready') {
+        setNewWorkspaceWizardStep(2)
+        setWizardFieldHighlights({ primaryOrganization: true })
+        setNewWorkspaceFormError(organizationRead.reason ?? 'Wait for the organization list to load.')
+        return
+      }
       const r = validateNewWorkspaceWizardStep(s, newWorkspaceForm, directoryWorkspaces, wizardValidationOptions)
       if ('error' in r) {
         setNewWorkspaceWizardStep(s)
@@ -11613,6 +11579,11 @@ export function WorkspaceManagementPage() {
   }
 
   const goWizardNext = () => {
+    if (newWorkspaceWizardStep === 2 && organizationRead.status !== 'ready') {
+      setWizardFieldHighlights({ primaryOrganization: true })
+      setNewWorkspaceFormError(organizationRead.reason ?? 'Wait for the organization list to load.')
+      return
+    }
     const formForStep = mergePendingOwnershipSearchIntoForm(newWorkspaceForm, workspaceOwnershipAllPeople)
     if (formForStep !== newWorkspaceForm) setNewWorkspaceForm(formForStep)
     const r = validateNewWorkspaceWizardStep(
@@ -12052,7 +12023,7 @@ export function WorkspaceManagementPage() {
     }
     const parentId = newOrgParentId === ORG_PARENT_ROOT_SENTINEL ? null : newOrgParentId
     if (!workspaceOrgBackendConnected) {
-      setNewOrgError('Workspace Org backend is not connected. Start the service and try again.')
+      setNewOrgError(directoryRead.reason ?? 'Workspace Directory is not ready. Try again.')
       return
     }
     if (parentId !== null) {
@@ -12333,17 +12304,15 @@ export function WorkspaceManagementPage() {
     }
 
     if (!workspaceOrgBackendConnected) {
-      const msg =
-        'The workspace directory service is unavailable. Start the workspace-org backend (e.g. port 8424) and try again.'
+      const msg = directoryRead.reason ?? 'Workspace Directory is not ready. Try again.'
       setNewWorkspaceFormError(msg)
       addToast({ variant: 'error', title: 'Unable to create workspace', description: msg })
       setIsSubmittingNewWorkspace(false)
       return
     }
 
-    if (!hasWorkspaceOrgOrganizations) {
-      const msg =
-        'The organization list from Workspace Org has not loaded yet. Wait a few seconds and click "Try again", or reload the page.'
+    if (!hasWorkspaceOrgOrganizations || organizationRead.status !== 'ready') {
+      const msg = organizationRead.reason ?? 'The organization list is not ready. Check the Organization step and try again.'
       setNewWorkspaceFormError(msg)
       addToast({ variant: 'error', title: 'Organization directory not ready', description: msg })
       setIsSubmittingNewWorkspace(false)
@@ -12670,22 +12639,24 @@ export function WorkspaceManagementPage() {
   const metrics = useMemo(() => {
     const list = allWorkspacesForList
     // Only count members for workspaces in the current tenant view (not leftover global counts).
-    const totalMembers = list.reduce(
-      (sum, workspace) => sum + (workspaceMemberCounts[workspace.id] ?? workspace.members),
-      0,
-    )
+    const membershipTotal = countWorkspaceMemberships(list.map((workspace) => workspace.id), workspaceMemberCounts)
+    const totalMembers = membershipTotal == null ? null : aggregatedWorkspaceMembers.length
+    const membersStale = list.some((workspace) => staleWorkspaceMemberCounts.has(workspace.id))
+    const catalogUnavailable = list.length === 0 && directoryRead.status !== 'ready'
     const totalProjects = list.reduce((sum, workspace) => sum + workspace.projects, 0)
     const activeCount = list.filter((workspace) => workspace.lifecycle === 'Active').length
-    const atRiskCount = list.filter((workspace) => workspaceHealthBand(workspace) === 'At Risk').length
+    const atRiskCount = statusCounts.get('At Risk') ?? 0
 
     return {
       totalWorkspaces: list.length,
       activeCount,
       atRiskCount,
       totalMembers,
+      membersStale,
+      catalogUnavailable,
       totalProjects,
     }
-  }, [allWorkspacesForList, workspaceMemberCounts])
+  }, [aggregatedWorkspaceMembers.length, allWorkspacesForList, directoryRead.status, staleWorkspaceMemberCounts, statusCounts, workspaceMemberCounts])
 
   const kpiTrendSeries = useMemo(() => {
     const DAY_MS = 24 * 60 * 60 * 1000
@@ -12702,31 +12673,28 @@ export function WorkspaceManagementPage() {
     const total = Array.from({ length: 30 }, () => 0)
     const active = Array.from({ length: 30 }, () => 0)
     const risk = Array.from({ length: 30 }, () => 0)
-    const members = Array.from({ length: 30 }, () => 0)
     const projects = Array.from({ length: 30 }, () => 0)
 
     for (const workspace of allWorkspacesForList) {
       const createdDay = toUtcDayEpoch(workspace.createdDate)
       if (createdDay == null || createdDay > endDay) continue
 
-      const memberCount = workspaceMemberCounts[workspace.id] ?? workspace.members
       const startIndex = createdDay <= startDay ? 0 : Math.floor((createdDay - startDay) / DAY_MS)
       for (let idx = startIndex; idx < 30; idx += 1) {
         total[idx] += 1
-        members[idx] += memberCount
         projects[idx] += workspace.projects
         if (workspace.lifecycle === 'Active') active[idx] += 1
-        if (workspaceHealthBand(workspace) === 'At Risk') risk[idx] += 1
+        if (workspace.status === 'At Risk') risk[idx] += 1
       }
     }
 
-    return { total, active, risk, members, projects }
-  }, [allWorkspacesForList, workspaceMemberCounts])
+    return { total, active, risk, projects }
+  }, [allWorkspacesForList])
 
   const kpiCardMap = useMemo(() => {
     const totalWorkspacesCard = {
       label: 'Total Workspaces',
-      value: String(metrics.totalWorkspaces),
+      value: metrics.catalogUnavailable ? '—' : String(metrics.totalWorkspaces),
       subtitle: 'Registered workspace boundaries',
       trend: '+6.2%',
       trendSeries: kpiTrendSeries.total,
@@ -12744,8 +12712,8 @@ export function WorkspaceManagementPage() {
     }
     const atRiskCard = {
       label: 'At Risk',
-      value: String(metrics.atRiskCount),
-      subtitle: 'Health band At Risk (not Critical)',
+      value: metrics.catalogUnavailable ? '—' : String(metrics.atRiskCount),
+      subtitle: 'Workspace status · matches Directory',
       trend: '-0.8%',
       trendSeries: kpiTrendSeries.risk,
       trendColor: '#f43f5e',
@@ -12753,10 +12721,11 @@ export function WorkspaceManagementPage() {
     }
     const membersCard = {
       label: 'Total Members',
-      value: String(metrics.totalMembers),
-      subtitle: 'Across workspace participation scopes',
-      trend: '+4.5%',
-      trendSeries: kpiTrendSeries.members,
+      value: metrics.catalogUnavailable || metrics.totalMembers == null ? '—' : String(metrics.totalMembers),
+      subtitle: metrics.catalogUnavailable || metrics.totalMembers == null ? 'Member total unavailable'
+        : metrics.membersStale ? 'Last known member total' : 'Unique people · matches Workspace Members',
+      trend: '',
+      trendSeries: [],
       trendColor: '#6366f1',
       icon: Users,
     }
@@ -13766,7 +13735,7 @@ export function WorkspaceManagementPage() {
     }, 0)
 
     const statusScore = (weightedStatusScore / list.length) * 100
-    const memberCapacityScore = Math.min(100, (metrics.totalMembers / (list.length * 25)) * 100)
+    const memberCapacityScore = Math.min(100, ((metrics.totalMembers ?? 0) / (list.length * 25)) * 100)
     const projectCoverageScore = Math.min(100, (metrics.totalProjects / (list.length * 10)) * 100)
 
     return Math.round((statusScore * 0.5) + (memberCapacityScore * 0.25) + (projectCoverageScore * 0.25))
@@ -15581,7 +15550,9 @@ export function WorkspaceManagementPage() {
                           <span className="font-semibold text-foreground">
                             {Math.min(directoryFlatRows.length, directoryPage * directoryPageSize)}
                           </span>{' '}
-                          of <span className="font-semibold text-foreground">{directoryFlatRows.length}</span>
+                          of <span className="font-semibold text-foreground">{directoryFlatRows.length}</span> rows
+                          {' · '}<span className="font-semibold text-foreground">{directoryDistinctWorkspaceCount}</span> workspaces
+                          {directoryDistinctWorkspaceCount !== metrics.totalWorkspaces ? ` of ${metrics.totalWorkspaces} total` : null}
                         </p>
                         <span className="shrink-0 text-xs text-muted-foreground">Rows:</span>
                         <Select
@@ -15664,6 +15635,9 @@ export function WorkspaceManagementPage() {
                     ) : null}
                   </div>
 
+                  {directoryRead.status === 'error' ? (
+                    <WorkspaceReadNotice title="Directory could not be loaded" state={directoryRead} onRetry={() => void retryWorkspaceDirectory()} />
+                  ) : null}
                   <div
                     className={cn(
                       'scrollbar-hide min-h-0 w-full min-w-0 flex-1 rounded-xl',
@@ -15673,54 +15647,13 @@ export function WorkspaceManagementPage() {
                     )}
                   >
                     {sortedFilteredWorkspaces.length === 0 ? (
+                      directoryRead.status === 'error' ? null :
                       <div className="flex w-full flex-col items-center justify-center px-6">
-                        {!workspaceOrgInitialFetchDone ? (
+                        {directoryRead.status === 'loading' ? (
                           <PlatformServiceLoadingPanel
                             title="Loading workspace directory"
                             description="Syncing your workspaces from the workspace-org service."
                           />
-                        ) : allWorkspacesForList.length === 0 && !workspaceOrgBackendConnected ? (
-                          <div
-                            className={cn(
-                              'relative w-full max-w-2xl rounded-lg border border-amber-200/50 bg-amber-50/60 px-5 py-6 shadow-sm dark:border-amber-900/30 dark:bg-amber-950/20'
-                            )}
-                            role="alert"
-                          >
-                            <div className="flex gap-4">
-                              <div className="flex-shrink-0 pt-0.5">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100/60 dark:bg-amber-900/40">
-                                  <ShieldAlert className="h-6 w-6 text-amber-700 dark:text-amber-400" aria-hidden />
-                                </div>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-foreground">
-                                  Directory could not be loaded
-                                </p>
-                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                  The connection to the workspace directory service was lost, or the backend is not running. Make sure
-                                  the workspace-org service is active so your enterprise data appears here.
-                                </p>
-                                <div className="mt-3 rounded-md border border-amber-200/30 bg-white/40 px-3 py-2 dark:bg-white/[0.02]">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
-                                    Dev proxy
-                                  </p>
-                                  <code className="mt-1 block break-all font-mono text-[10px] text-foreground/80">
-                                    /api/workspace-org → workspace-org backend (port 8424)
-                                  </code>
-                                </div>
-                                <Button
-                                  type="button"
-                                  className={cn(
-                                    'mt-3 h-8 px-4 text-xs font-semibold',
-                                    'bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white'
-                                  )}
-                                  onClick={() => void refreshWorkspaceOrgLists()}
-                                >
-                                  Try again
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
                         ) : allWorkspacesForList.length === 0 ? (
                           <div
                             className={cn(
@@ -16841,6 +16774,9 @@ export function WorkspaceManagementPage() {
                     </div>
                   </div>
 
+                  {directoryRead.status === 'error' || governanceRead.status === 'error' ? (
+                    <WorkspaceReadNotice title="Governance matrix could not be loaded" state={directoryRead.status === 'error' ? directoryRead : governanceRead} onRetry={() => void retryWorkspaceDirectory()} />
+                  ) : null}
                   <div
                     className={cn(
                       'scrollbar-hide min-h-0 w-full min-w-0 flex-1 rounded-xl border border-border/30',
@@ -16850,53 +16786,13 @@ export function WorkspaceManagementPage() {
                     )}
                   >
                     {sortedGovernanceWorkspaces.length === 0 ? (
+                      directoryRead.status === 'error' || governanceRead.status === 'error' ? null :
                       <div className="flex w-full flex-col items-center justify-center px-6">
-                        {!workspaceOrgInitialFetchDone ? (
+                        {directoryRead.status === 'loading' || governanceRead.status === 'loading' ? (
                           <PlatformServiceLoadingPanel
                             title="Loading governance matrix"
                             description="Connecting to workspace-org and workspace-governance."
                           />
-                        ) : allWorkspacesForList.length === 0 && !workspaceOrgBackendConnected ? (
-                          <div
-                            className={cn(
-                              'relative w-full max-w-2xl rounded-lg border border-amber-200/50 bg-amber-50/60 px-5 py-6 shadow-sm dark:border-amber-900/30 dark:bg-amber-950/20'
-                            )}
-                            role="alert"
-                          >
-                            <div className="flex gap-4">
-                              <div className="flex-shrink-0 pt-0.5">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100/60 dark:bg-amber-900/40">
-                                  <ShieldAlert className="h-6 w-6 text-amber-700 dark:text-amber-400" aria-hidden />
-                                </div>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-foreground">
-                                  Governance matrix could not be loaded
-                                </p>
-                                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                  The workspace-org service is required. Make sure the service is active.
-                                </p>
-                                <div className="mt-3 rounded-md border border-amber-200/30 bg-white/40 px-3 py-2 dark:bg-white/[0.02]">
-                                  <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
-                                    Dev proxy
-                                  </p>
-                                  <code className="mt-1 block break-all font-mono text-[10px] text-foreground/80">
-                                    /api/workspace-org → workspace-org backend (port 8424)
-                                  </code>
-                                </div>
-                                <Button
-                                  type="button"
-                                  className={cn(
-                                    'mt-3 h-8 px-4 text-xs font-semibold',
-                                    'bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white'
-                                  )}
-                                  onClick={() => void refreshWorkspaceOrgLists()}
-                                >
-                                  Try again
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
                         ) : allWorkspacesForList.length === 0 ? (
                           <div
                             className={cn(
@@ -18024,6 +17920,23 @@ export function WorkspaceManagementPage() {
                           Live governance templates and shared policy assets sourced from workspace-governance service catalog.
                         </p>
                       </div>
+                      <WorkspaceAssetsTypeFilter
+                        options={assetsTypeOptionsList}
+                        selected={assetsTypeFilterTags}
+                        onClear={() => {
+                          setAssetsTypeFilterTags(new Set())
+                          setAssetsPage(1)
+                        }}
+                        onToggle={(type) => {
+                          setAssetsTypeFilterTags((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(type)) next.delete(type)
+                            else next.add(type)
+                            return next
+                          })
+                          setAssetsPage(1)
+                        }}
+                      />
                       <div className="flex items-center gap-3 overflow-x-auto whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
                         <p className="text-xs text-muted-foreground">
                           Showing{' '}
@@ -18106,12 +18019,7 @@ export function WorkspaceManagementPage() {
                               ] as const
                             ).map(({ key, label }) => {
                               const isSorted = assetsSort?.key === key
-                              const columnFilterActive =
-                                key === 'type'
-                                  ? assetsTypeFilterTags.size > 0
-                                  : key === 'owner'
-                                    ? assetsOwnerFilterTags.size > 0
-                                    : false
+                              const columnFilterActive = key === 'owner' && assetsOwnerFilterTags.size > 0
                               const columnFilterButtonClass = cn(
                                 'inline-flex h-6 w-6 items-center justify-center rounded-md transition-colors',
                                 'outline-none focus:outline-none focus-visible:outline-none',
@@ -18141,69 +18049,6 @@ export function WorkspaceManagementPage() {
                                         <ArrowUpDown className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />
                                       )}
                                     </button>
-
-                                    {key === 'type' ? (
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                    <button
-                                      type="button"
-                                            className={columnFilterButtonClass}
-                                            aria-label="Filter asset types in table"
-                                            title="Filter types"
-                                          >
-                                            <Filter className="h-3.5 w-3.5" aria-hidden />
-                                    </button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent
-                                          align="start"
-                                          className="w-56 !bg-white !text-slate-900 dark:!bg-slate-950 dark:!text-slate-100 border border-slate-300 dark:border-slate-700 shadow-lg !backdrop-blur-none"
-                                        >
-                                          <DropdownMenuLabel className="flex items-center justify-between">
-                                            <span>Type filter</span>
-                                            <span className="text-[10px] font-medium text-muted-foreground">
-                                              {assetsTypeFilterTags.size === 0 ? 'All' : `${assetsTypeFilterTags.size} selected`}
-                                            </span>
-                                          </DropdownMenuLabel>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            onClick={() => {
-                                              setAssetsTypeFilterTags(new Set())
-                                              setAssetsPage(1)
-                                            }}
-                                            className="flex items-center justify-between"
-                                          >
-                                            Show all
-                                            {assetsTypeFilterTags.size === 0 ? (
-                                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden />
-                                            ) : null}
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator />
-                                          {assetsTypeOptionsList.map((typeLabel) => {
-                                            const active = assetsTypeFilterTags.has(typeLabel)
-                                            return (
-                                              <DropdownMenuItem
-                                                key={typeLabel}
-                                                onClick={() => {
-                                                  setAssetsTypeFilterTags((prev) => {
-                                                    const next = new Set(prev)
-                                                    if (next.has(typeLabel)) next.delete(typeLabel)
-                                                    else next.add(typeLabel)
-                                                    return next
-                                                  })
-                                                  setAssetsPage(1)
-                                                }}
-                                                className="flex items-center justify-between"
-                                              >
-                                                <span className="truncate">{typeLabel}</span>
-                                                {active ? (
-                                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
-                                                ) : null}
-                                              </DropdownMenuItem>
-                                            )
-                                          })}
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
-                                    ) : null}
 
                                     {key === 'owner' ? (
                                       <DropdownMenu>
@@ -21054,9 +20899,12 @@ export function WorkspaceManagementPage() {
                         <Select
                           id="ws-primary-org"
                           value={newWorkspaceForm.primaryOrganizationId}
-                          disabled={isPlainWacMemberForNewWorkspaceOrgScope}
+                          disabled={isPlainWacMemberForNewWorkspaceOrgScope || organizationRead.status !== 'ready'}
+                          required
+                          aria-describedby={wizardFieldHighlights.primaryOrganization ? 'ws-primary-org-error' : undefined}
                           onChange={(e) => {
                             const id = e.target.value
+                            setNewWorkspaceFormError(null)
                             setNewWorkspaceForm((prev) => ({
                               ...prev,
                               primaryOrganizationId: id,
@@ -21072,13 +20920,27 @@ export function WorkspaceManagementPage() {
                           )}
                           aria-invalid={wizardFieldHighlights.primaryOrganization === true}
                         >
-                          <option value="">Select organization (tree)</option>
+                          <option value="">{organizationRead.status === 'loading' ? 'Loading organizations…' : 'Select organization (tree)'}</option>
                           {orgSelectRows.map(({ id, label, depth }) => (
                             <option key={id} value={id}>
                               {`${'\u2003'.repeat(depth)}${label}`}
                             </option>
                           ))}
                         </Select>
+                        {organizationRead.status === 'error' ? (
+                          <WorkspaceReadNotice title="Organizations could not be loaded" state={organizationRead} onRetry={() => {
+                            setNewWorkspaceFormError(null)
+                            setWizardFieldHighlights((previous) => ({ ...previous, primaryOrganization: false }))
+                            void refreshOrganizationList(true)
+                          }} />
+                        ) : organizationRead.status === 'ready' && orgSelectRows.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No organizations are available to select.</p>
+                        ) : null}
+                        {wizardFieldHighlights.primaryOrganization && newWorkspaceFormError ? (
+                          <p id="ws-primary-org-error" role="alert" className="text-xs text-destructive">
+                            {newWorkspaceFormError}
+                          </p>
+                        ) : null}
                       </div>
                       {!isPlainWacMemberForNewWorkspaceOrgScope ? (
                       <div className="space-y-2">
@@ -21100,6 +20962,7 @@ export function WorkspaceManagementPage() {
                                     id={`new-ws-related-org-${row.id}`}
                                     name={`new-ws-related-org-${row.id}`}
                                     className="h-3.5 w-3.5 rounded border-border"
+                                    disabled={organizationRead.status !== 'ready'}
                                     checked={checked}
                                     onChange={() => {
                                       setNewWorkspaceForm((prev) => {
@@ -22034,8 +21897,8 @@ export function WorkspaceManagementPage() {
                   ) : null}
                 </div>
 
-                {newWorkspaceFormError ? (
-                  <div className="mt-2 shrink-0 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+                {newWorkspaceFormError && !(newWorkspaceWizardStep === 2 && wizardFieldHighlights.primaryOrganization) ? (
+                  <div role="alert" className="mt-2 shrink-0 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
                     {newWorkspaceFormError}
                   </div>
                 ) : null}
