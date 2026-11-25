@@ -7,12 +7,10 @@ import {
   CalendarClock,
   CalendarRange,
   ChevronLeft,
-  ChevronDown,
   ChevronRight,
   Clock3,
   Download,
   Flag,
-  GitBranch,
   GripVertical,
   Layers,
   LayoutGrid,
@@ -28,10 +26,10 @@ import {
   Signal,
   Sparkles,
   Target,
-  TrendingDown,
   TrendingUp,
   Users,
   Zap,
+  type LucideIcon,
 } from 'lucide-react'
 import {
   CartesianGrid,
@@ -92,18 +90,6 @@ type PlanningPanelId = 'overview' | 'timeline' | 'sprint' | 'calendar' | 'capaci
 
 const WORK_TIMELINE_UNAVAILABLE_MESSAGE =
   'Work Management API is unavailable. Start python-work-management-service-fastapi (port 8432), ensure PostgreSQL is running, then refresh.'
-
-type SprintRecord = {
-  id: string
-  name: string
-  goal: string
-  dateRange: string
-  team: string
-  capacity: string
-  assignedItems: number
-  status: string
-  completion: number
-}
 
 type CalendarEventRecord = {
   id: string
@@ -211,165 +197,9 @@ type DependencyNode = {
 
 type DependencyEdge = { from: string; to: string; kind: 'normal' | 'cross-team' | 'blocked' }
 
-const dependencyNodes: DependencyNode[] = [
-  { id: 'pa', label: 'Program A', meta: '6 projects', x: 8, y: 14, status: 'on-track' },
-  { id: 'pc', label: 'Program C', meta: '2 projects', x: 8, y: 74, status: 'at-risk' },
-  { id: 'alpha', label: 'Project Alpha', meta: 'Epic · Onboarding', x: 50, y: 8, status: 'on-track' },
-  { id: 'beta', label: 'Project Beta', meta: 'Epic · Payments', x: 50, y: 44, status: 'blocked' },
-  { id: 'gamma', label: 'Project Gamma', meta: 'Epic · Risk', x: 50, y: 80, status: 'at-risk' },
-  { id: 'delta', label: 'Project Delta', meta: 'Epic · Core', x: 90, y: 18, status: 'on-track' },
-  { id: 'pb', label: 'Program B', meta: '5 projects', x: 90, y: 70, status: 'on-track' },
-]
-
-const dependencyEdges: DependencyEdge[] = [
-  { from: 'pa', to: 'alpha', kind: 'normal' },
-  { from: 'pa', to: 'beta', kind: 'cross-team' },
-  { from: 'pc', to: 'beta', kind: 'cross-team' },
-  { from: 'pc', to: 'gamma', kind: 'normal' },
-  { from: 'beta', to: 'delta', kind: 'blocked' },
-  { from: 'gamma', to: 'pb', kind: 'normal' },
-  { from: 'alpha', to: 'delta', kind: 'normal' },
-]
-
-const capacityForecast = [
-  { team: 'PMO', values: [92, 105, 110] },
-  { team: 'Engineering', values: [78, 87, 95] },
-  { team: 'QA', values: [68, 102, 115] },
-  { team: 'Business', values: [60, 75, 80] },
-  { team: 'Operations', values: [85, 90, 95] },
-]
 const capacityForecastColumns = ['Current Sprint', 'Next Sprint', 'Next Quarter']
 
-const scheduleVariance = [
-  { project: 'Project Alpha', planned: 'Jun 30', forecast: 'Jun 25', variance: -5 },
-  { project: 'Project Beta', planned: 'Jul 15', forecast: 'Jul 20', variance: 5 },
-  { project: 'Project Gamma', planned: 'Aug 30', forecast: 'Sep 11', variance: 12 },
-  { project: 'Project Delta', planned: 'May 28', forecast: 'May 26', variance: -2 },
-  { project: 'Project Epsilon', planned: 'Jul 31', forecast: 'Aug 07', variance: 7 },
-]
-
-const aiPlanningInsights = [
-  { icon: TrendingDown, text: 'Sprint velocity decreased by 12% compared to the previous sprint.' },
-  { icon: CalendarClock, text: 'Milestone “UAT Go Live” is likely to be delayed by 5 days.' },
-  { icon: Users, text: 'QA team capacity exceeds 105% in the next sprint.' },
-  { icon: GitBranch, text: 'Cross-team dependency between Beta and Gamma increases schedule risk.' },
-]
-
-const sprintRecords: SprintRecord[] = [
-  {
-    id: 'sprint-24',
-    name: 'Sprint 24',
-    goal: 'Stabilize sequencing across channels and reduce dependency spillover.',
-    dateRange: '14 Apr - 25 Apr',
-    team: 'PMO Core',
-    capacity: '420 pts',
-    assignedItems: 61,
-    status: 'Active',
-    completion: 68,
-  },
-  {
-    id: 'sprint-18',
-    name: 'Sprint 18',
-    goal: 'Lock design approvals and calendar alignment for downstream releases.',
-    dateRange: '21 Apr - 02 May',
-    team: 'Studio West',
-    capacity: '290 pts',
-    assignedItems: 44,
-    status: 'Upcoming',
-    completion: 22,
-  },
-  {
-    id: 'sprint-27',
-    name: 'Sprint 27',
-    goal: 'Complete mock cutover rehearsal and resolve environment contention.',
-    dateRange: '28 Apr - 09 May',
-    team: 'Migration Guild',
-    capacity: '360 pts',
-    assignedItems: 53,
-    status: 'At Capacity',
-    completion: 34,
-  },
-]
-
-const sprintBoardSummary = [
-  { label: 'To Do', value: 38, tone: 'bg-slate-100 text-slate-700 border-slate-200' },
-  { label: 'In Progress', value: 26, tone: 'bg-sky-100 text-sky-700 border-sky-200' },
-  { label: 'Review', value: 11, tone: 'bg-amber-100 text-amber-700 border-amber-200' },
-  { label: 'Done', value: 57, tone: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-]
-
-const calendarEvents: CalendarEventRecord[] = [
-  { id: 'milestone-ux', title: 'Experience freeze', dateLabel: 'Apr 18', type: 'Milestone', project: 'Retail Growth Platform', owner: 'Jonas Reed' },
-  { id: 'sprint-24', title: 'Sprint 24 planning', dateLabel: 'Apr 19', type: 'Sprint', project: 'Omni Channel Modernization', owner: 'Ayla Brooks' },
-  { id: 'deadline-qa', title: 'Regression sign-off', dateLabel: 'Apr 22', type: 'Deadline', project: 'Service Excellence Program', owner: 'Nadia Singh' },
-  { id: 'checkpoint-ops', title: 'Portfolio checkpoint', dateLabel: 'Apr 23', type: 'Checkpoint', project: 'Enterprise Delivery Office', owner: 'PMO Council' },
-  { id: 'sla-bridge', title: 'SLA bridge window', dateLabel: 'Apr 24', type: 'SLA', project: 'Loan Origination Revamp', owner: 'Mina Alvarez' },
-  { id: 'stream-data', title: 'Migration rehearsal', dateLabel: 'Apr 25', type: 'Milestone', project: 'Loan Origination Revamp', owner: 'Mina Alvarez' },
-]
-
 const capacityPeriods = ['W1', 'W2', 'W3', 'W4', 'W5']
-
-const capacityRows = [
-  { name: 'PMO Core', values: [72, 84, 90, 77, 66] },
-  { name: 'Studio West', values: [64, 71, 88, 92, 80] },
-  { name: 'Migration Guild', values: [83, 95, 97, 91, 78] },
-  { name: 'Service Ops', values: [58, 62, 68, 73, 61] },
-]
-
-const deadlineRecords: DeadlineRecord[] = [
-  { id: 'deadline-qa', title: 'Regression sign-off', project: 'Service Excellence Program', owner: 'Nadia Singh', due: '22 Apr, 17:00', deadlineStatus: 'Upcoming', slaStatus: 'Warning' },
-  { id: 'milestone-ux', title: 'Design approval package', project: 'Retail Growth Platform', owner: 'Jonas Reed', due: '18 Apr, 12:00', deadlineStatus: 'Overdue', slaStatus: 'Breach Risk' },
-  { id: 'stream-data', title: 'Cutover readiness report', project: 'Loan Origination Revamp', owner: 'Mina Alvarez', due: '24 Apr, 18:00', deadlineStatus: 'Upcoming', slaStatus: 'Warning' },
-  { id: 'plan-001', title: 'Baseline commitment review', project: 'Omni Channel Modernization', owner: 'Ayla Brooks', due: '17 Apr, 09:00', deadlineStatus: 'Missed', slaStatus: 'Breach Risk' },
-]
-
-const resourceAllocations: ResourceAllocationRecord[] = [
-  { id: 'res-001', resource: 'Ayla Brooks', project: 'Omni Channel Modernization', team: 'PMO Core', allocation: 88, period: 'Apr W3', conflict: 'None' },
-  { id: 'res-002', resource: 'Mina Alvarez', project: 'Loan Origination Revamp', team: 'Migration Guild', allocation: 112, period: 'Apr W4', conflict: 'Overlap' },
-  { id: 'res-003', resource: 'Jonas Reed', project: 'Retail Growth Platform', team: 'Studio West', allocation: 96, period: 'Apr W3', conflict: 'Contention' },
-  { id: 'res-004', resource: 'Nadia Singh', project: 'Service Excellence Program', team: 'Service Ops', allocation: 74, period: 'Apr W4', conflict: 'None' },
-]
-
-const baselineRecords: BaselineRecord[] = [
-  { id: 'plan-001', title: 'Execution baseline', project: 'Omni Channel Modernization', planned: '01 Apr - 23 May', actual: '03 Apr - 27 May', delayDays: 4, deviation: 6, adherence: '92%' },
-  { id: 'milestone-ux', title: 'Experience freeze', project: 'Retail Growth Platform', planned: '18 Apr', actual: '23 Apr', delayDays: 5, deviation: 14, adherence: '79%' },
-  { id: 'stream-data', title: 'Migration rehearsal', project: 'Loan Origination Revamp', planned: '24 Apr - 08 May', actual: '27 Apr - 13 May', delayDays: 6, deviation: 17, adherence: '74%' },
-]
-
-const alertFeed: AlertRecord[] = [
-  {
-    id: 'alert-1',
-    title: 'Delayed milestone trend detected',
-    severity: 'High',
-    detail: 'Retail Growth Platform has slipped two approval gates in one planning cycle.',
-    recommendation: 'Re-sequence external design dependencies and lock decision SLA with vendor governance.',
-    linkedItemId: 'milestone-ux',
-  },
-  {
-    id: 'alert-2',
-    title: 'Resource contention on migration guild',
-    severity: 'High',
-    detail: 'Two concurrent cutover rehearsals exceed team capacity by 12%.',
-    recommendation: 'Shift the reconciliation stream into Sprint 28 and assign overflow to shared ops pool.',
-    linkedItemId: 'stream-data',
-  },
-  {
-    id: 'alert-3',
-    title: 'Sprint over-commitment warning',
-    severity: 'Medium',
-    detail: 'Sprint 27 includes more committed work than available burn profile allows.',
-    recommendation: 'Move lower-criticality backlog items into the next sprint and preserve release blockers only.',
-    linkedItemId: 'sprint-27',
-  },
-  {
-    id: 'alert-4',
-    title: 'SLA breach window approaching',
-    severity: 'Medium',
-    detail: 'Baseline commitment review has less than 24 hours before governance SLA breach.',
-    recommendation: 'Escalate to delivery council and assign alternate approver for same-day decisioning.',
-    linkedItemId: 'plan-001',
-  },
-]
 
 function toneForVariance(days: number) {
   if (days <= 0) return 'text-emerald-700 bg-emerald-50 border-emerald-200'
@@ -399,8 +229,8 @@ function toneForCalendarType(type: CalendarEventRecord['type']) {
 }
 
 function toneForSla(status: DeadlineRecord['slaStatus']) {
-  if (status === 'On Track' || status === 'Healthy') return 'bg-emerald-100 text-emerald-700 border-emerald-200'
-  if (status === 'At Risk' || status === 'Warning') return 'bg-amber-100 text-amber-700 border-amber-200'
+  if (status === 'Healthy') return 'bg-emerald-100 text-emerald-700 border-emerald-200'
+  if (status === 'Warning') return 'bg-amber-100 text-amber-700 border-amber-200'
   return 'bg-rose-100 text-rose-700 border-rose-200'
 }
 
@@ -594,7 +424,7 @@ export function PlanningSchedulingPage() {
   // Match Document & Knowledge Management: 260px panel when expanded (compact layout width, full content labels).
   const enterpriseNavLayoutVariant = enterpriseNavWidthVariant === 'default' ? 'compact' : enterpriseNavWidthVariant
 
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading] = useState(false)
   const [rawWorkItems, setRawWorkItems] = useState<WorkItemApiModel[]>([])
   const [orgWorkspaces, setOrgWorkspaces] = useState<WorkspaceOrgWorkspaceDto[]>([])
   const [workItemsLoading, setWorkItemsLoading] = useState(true)
@@ -692,14 +522,10 @@ export function PlanningSchedulingPage() {
     })
   }, [accessibleWorkspaceKeys, isPlatformAdmin, rawWorkItems, userWorkspacesLoading])
 
-  const timelineModel = useMemo(
+  const { items: timelineItems, workspaceOrder: timelineWorkspaceOrder } = useMemo(
     () => mapWorkItemsToPlanningGantt(visibleWorkItems, accessibleOrgWorkspaces),
     [accessibleOrgWorkspaces, visibleWorkItems],
   )
-  const timelineItems = Array.isArray(timelineModel.items) ? timelineModel.items : []
-  const timelineWorkspaceOrder = Array.isArray(timelineModel.workspaceOrder)
-    ? timelineModel.workspaceOrder
-    : []
   const timelineLoading = workItemsLoading || userWorkspacesLoading
 
   useEffect(() => {
@@ -821,10 +647,10 @@ export function PlanningSchedulingPage() {
   const overviewSprintBurnup = sprintBurnup.map((item) => ({ ...item, ideal: 0, remaining: 0, completed: 0 }))
   const overviewDependencyNodes: DependencyNode[] = []
   const overviewDependencyEdges: DependencyEdge[] = []
-  const overviewCapacityForecast: typeof capacityForecast = []
-  const overviewScheduleVariance: typeof scheduleVariance = []
-  const overviewAiInsights: typeof aiPlanningInsights = []
-  const overviewCapacityRows: typeof capacityRows = []
+  const overviewCapacityForecast: { team: string; values: number[] }[] = []
+  const overviewScheduleVariance: { project: string; planned: string; forecast: string; variance: number }[] = []
+  const overviewAiInsights: { icon: LucideIcon; text: string }[] = []
+  const overviewCapacityRows: { name: string; values: number[] }[] = []
   const overviewResourceAllocations: ResourceAllocationRecord[] = []
   const overviewBaselineRecords: BaselineRecord[] = []
   const overviewAlertFeed: AlertRecord[] = []
@@ -1057,7 +883,7 @@ export function PlanningSchedulingPage() {
 
             {isWorkspaceCollapsed ? (
               <div className={cn(workspaceNavMenuScrollClass(), 'pt-0')}>
-                <EnterpriseNavIconRail items={PLANNING_PANELS} activeId={activePanel} onSelect={setActivePanel} />
+                <EnterpriseNavIconRail<PlanningPanelId> items={PLANNING_PANELS} activeId={activePanel} onSelect={setActivePanel} />
               </div>
             ) : (
               <>

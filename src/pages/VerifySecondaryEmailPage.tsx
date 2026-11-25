@@ -9,7 +9,7 @@ function VerificationShell({ children }: { children: ReactNode }) {
       <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
         <div className="h-1.5 bg-blue-600" />
         <div className="px-8 py-8 text-center">
-          <img src="/images/logo-white.png" alt="Tectona" className="mx-auto h-12 w-auto rounded bg-slate-900 px-3 py-2 object-contain" />
+          <img src="/images/tectona-wordmark.svg" alt="Tectona" className="mx-auto h-12 max-w-full w-auto object-contain" />
           <p className="mt-4 text-xs font-semibold uppercase tracking-[0.24em] text-blue-600">Profile security</p>
           <div className="mt-6 space-y-4">{children}</div>
         </div>

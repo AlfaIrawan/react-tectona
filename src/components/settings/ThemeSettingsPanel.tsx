@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useThemeStore } from '@/stores/theme-store'
 import { usePreferencesStore } from '@/stores/preferences-store'
+import { TECTONA_THEMES, normalizeAccent, type AccentColor } from '@/lib/tectonaThemes'
 import { updateAnimationSpeed, initializeAnimationSpeed } from '@/lib/animationUtils'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -24,6 +25,14 @@ const ThemeSettingsPanel = () => {
   const { preferences, updatePreferences } = usePreferencesStore()
   const [fontSize, setFontSize] = useState(preferences?.fontSize || 14)
   const [animationSpeed, setAnimationSpeed] = useState(preferences?.animationSpeed || 300)
+  const [systemMotionReduced, setSystemMotionReduced] = useState(false)
+
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setSystemMotionReduced(query.matches)
+    update(); query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
 
   // Initialize animation speed on a mount
   useEffect(() => {
@@ -33,11 +42,11 @@ const ThemeSettingsPanel = () => {
   }, [preferences.animationSpeed])
 
   // Accent choice (default theme)
-  const currentAccentChoice = preferences?.accentColor || 'gradient'
+  const currentAccentChoice = normalizeAccent(preferences?.accentColor)
 
   // Handle accent choice change
-  const handleAccentChoiceChange = (choice: string) => {
-    updatePreferences({ accentColor: choice as never })
+  const handleAccentChoiceChange = (choice: AccentColor) => {
+    updatePreferences({ accentColor: choice })
   }
 
   // Handle font size change
@@ -74,65 +83,36 @@ const ThemeSettingsPanel = () => {
 
         {/* Theme Tab */}
         <TabsContent value="theme" className="space-y-6">
-          {/* Accent Color / Theme */}
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium">Accent Color</h3>
-            <div className="theme-swatch-grid grid grid-cols-3 gap-2">
-              <Button
-                variant="outline"
-                className={`h-auto flex flex-col items-center justify-center p-4 ${currentAccentChoice === 'gradient' ? 'border-primary bg-accent' : ''}`}
-                onClick={() => handleAccentChoiceChange('gradient')}
-              >
-                <div
-                  className="w-6 h-6 rounded-full mb-2"
-                  style={{ backgroundImage: 'linear-gradient(90deg, #D1D5DB, #9CA3AF)' }}
-                />
-                <span className="theme-swatch-label text-xs font-medium" style={{ color: '#1e293b' }}>Default</span>
-              </Button>
-              <Button
-                variant="outline"
-                className={`theme-swatch-dark-bg h-auto flex flex-col items-center justify-center p-4 ${currentAccentChoice === 'deep-cosmic' ? 'border-primary bg-accent' : ''}`}
-                onClick={() => handleAccentChoiceChange('deep-cosmic')}
-              >
-                <div
-                  className="w-6 h-6 rounded-full mb-2"
-                  style={{ background: 'linear-gradient(135deg, #0B1F3A 0%, #1F3C88 50%, #6A7FDB 100%)' }}
-                />
-                <span className="theme-swatch-label theme-swatch-label-dark text-xs text-center leading-tight" style={{ color: '#1e293b' }}>Deep Cosmic</span>
-              </Button>
-              <Button
-                variant="outline"
-                className={`theme-swatch-dark-bg h-auto flex flex-col items-center justify-center p-4 ${currentAccentChoice === 'indigo-command' ? 'border-primary bg-accent' : ''}`}
-                onClick={() => handleAccentChoiceChange('indigo-command')}
-              >
-                <div
-                  className="w-6 h-6 rounded-full mb-2"
-                  style={{ background: 'linear-gradient(135deg, #112240 0%, #2E4F9C 100%)' }}
-                />
-                <span className="theme-swatch-label theme-swatch-label-dark text-xs text-center leading-tight" style={{ color: '#1e293b' }}>Indigo</span>
-              </Button>
-              <Button
-                variant="outline"
-                className={`h-auto flex flex-col items-center justify-center p-4 ${currentAccentChoice === 'frosted-steel' ? 'border-primary bg-accent' : ''}`}
-                onClick={() => handleAccentChoiceChange('frosted-steel')}
-              >
-                <div
-                  className="w-6 h-6 rounded-full mb-2"
-                  style={{ background: 'linear-gradient(135deg, #94A3B8 0%, #0EA5E9 100%)' }}
-                />
-                <span className="theme-swatch-label text-xs text-center leading-tight font-medium" style={{ color: '#1e293b' }}>Frosted Steel</span>
-              </Button>
-              <Button
-                variant="outline"
-                className={`theme-swatch-dark-bg h-auto flex flex-col items-center justify-center p-4 ${currentAccentChoice === 'blue-granite' ? 'border-primary bg-accent' : ''}`}
-                onClick={() => handleAccentChoiceChange('blue-granite')}
-              >
-                <div
-                  className="w-6 h-6 rounded-full mb-2"
-                  style={{ background: 'linear-gradient(135deg, #1C2638 0%, #243B6B 50%, #4F5D75 100%)' }}
-                />
-                <span className="theme-swatch-label theme-swatch-label-dark text-xs text-center leading-tight" style={{ color: '#1e293b' }}>Blue Granite</span>
-              </Button>
+          {/* Tectona Gray-to-Blue theme family; Default keeps its original media. */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium">Tectona Themes</h3>
+            <p className="text-xs text-muted-foreground">Choose a cinematic palette and background. Default stays unchanged.</p>
+            {(systemMotionReduced || preferences.reduceAnimations || preferences.highContrast) && (
+              <p role="status" className="rounded-md border border-border bg-muted p-2 text-xs text-muted-foreground">
+                Background video is paused. {systemMotionReduced ? 'Your device has Reduce Motion enabled.' : preferences.reduceAnimations ? 'Reduce Animations is enabled in Behavior.' : 'High Contrast is enabled in Behavior.'} A static poster is shown instead.
+              </p>
+            )}
+            <div className="theme-swatch-grid grid grid-cols-2 gap-2">
+              {TECTONA_THEMES.map(theme => (
+                <Button
+                  key={theme.id}
+                  variant="outline"
+                  aria-pressed={currentAccentChoice === theme.id}
+                  className={`tectona-theme-option h-auto min-h-24 flex flex-col items-start justify-center p-3 text-left whitespace-normal ${currentAccentChoice === theme.id ? 'border-primary ring-1 ring-primary bg-accent' : ''}`}
+                  onClick={() => handleAccentChoiceChange(theme.id)}
+                >
+                  <span
+                    className="theme-swatch-sphere mb-2 block h-9 w-9 shrink-0 rounded-full border border-black/10"
+                    style={{
+                      backgroundImage: `radial-gradient(circle at 28% 22%, rgba(255,255,255,.85), rgba(255,255,255,.12) 35%, transparent 58%), radial-gradient(circle at 70% 80%, rgba(0,0,0,.25), transparent 65%), ${theme.swatch}`,
+                      boxShadow: 'inset 0 1px 2px rgba(255,255,255,.7), inset -3px -4px 6px rgba(0,0,0,.16), 0 2px 4px rgba(0,0,0,.12)',
+                    }}
+                    aria-hidden
+                  />
+                  <span className="text-xs font-semibold">{theme.label}</span>
+                  <span className="mt-1 text-[10px] text-muted-foreground">{theme.description}</span>
+                </Button>
+              ))}
             </div>
           </div>
 

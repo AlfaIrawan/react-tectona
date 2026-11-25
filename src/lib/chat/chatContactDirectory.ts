@@ -54,7 +54,7 @@ export const TECTONA_ASSISTANT_CONTACT: ChatContact = {
   name: 'Smith',
   subtitle: 'AI Project Management Assistant',
   mode: 'genai',
-  avatarSrc: '/images/logo.png',
+  avatarSrc: '/images/tectona-icon.svg',
   initials: 'SM',
   isAssistant: true,
   avatarClassName: 'bg-gradient-to-br from-violet-500/20 to-sky-500/20 ring-2 ring-violet-400/30',
@@ -598,6 +598,7 @@ export async function publishMyCollaborationPresence(
   workspaceId: string = TECTONA_CHAT_WORKSPACE_ID,
   status?: 'online' | 'away' | 'offline',
 ): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return
   if (!getCurrentChatActorId()) return
   const resolved =
     status

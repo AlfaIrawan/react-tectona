@@ -13,8 +13,6 @@ interface BreadcrumbProps {
 }
 
 export function Breadcrumb({ items, className }: BreadcrumbProps) {
-  const location = useLocation()
-
   return (
     <nav
       className={cn('flex items-center gap-2 text-sm text-muted-foreground', className)}
@@ -22,9 +20,10 @@ export function Breadcrumb({ items, className }: BreadcrumbProps) {
     >
       <Link
         to="/"
+        aria-label="Home"
         className="flex items-center gap-1 hover:text-foreground transition-colors"
       >
-        <Home className="w-4 h-4" />
+        <Home aria-hidden="true" className="w-4 h-4" />
       </Link>
       {items.map((item, index) => {
         const isLast = index === items.length - 1

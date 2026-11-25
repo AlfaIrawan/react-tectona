@@ -1,6 +1,15 @@
-import { memo, useCallback, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
-import { Hand, ImagePlus, Type } from 'lucide-react'
+import { retargetMovedDiagramEdges } from '@/modules/project-management/lib/diagramMovingAnchors'
+import { DiagramReconnectContext, useDiagramReconnect } from '@/modules/project-management/lib/useDiagramReconnect'
+import { DiagramConnectionLine } from './DiagramConnectionLine'
+import { DiagramSmartGuides } from './DiagramSmartGuides'
+import { DiagramInteractionContext, type DiagramResizeConstraints } from '../lib/diagramInteractionContext'
+import { diagramNodeRect, snapDiagramDrag, snapDiagramResize, type DiagramGuideFeedback, type DiagramResizeSession } from '../lib/diagramSmartGuides'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { Hand, ImagePlus, Type, Undo2, Redo2 } from 'lucide-react'
 import {
+  applyNodeChanges,
+  useStore,
+  useReactFlow,
   ConnectionLineType,
   ConnectionMode,
   ControlButton,
@@ -10,12 +19,13 @@ import {
   ReactFlowProvider,
   useStoreApi,
   type Connection,
-  type ConnectionLineComponentProps,
   type Edge,
   type EdgeTypes,
   type Node,
+  type NodeTypes,
   type OnEdgesChange,
   type OnNodesChange,
+  type OnMove,
   type OnSelectionChangeFunc,
   type ReactFlowInstance,
   type Viewport,
@@ -23,44 +33,39 @@ import {
 import { CanvasViewportGrid, CanvasViewportRulers } from '@/modules/project-management/components/CanvasViewportRulers'
 import { AnchoredSmoothStepEdge } from '@/modules/project-management/components/AnchoredSmoothStepEdge'
 import { ErdCrowfootEdge } from '@/modules/project-management/components/ErdCrowfootEdge'
-import { integrationArchimateNodeTypes } from '@/modules/project-management/components/integrationArchimateNodeTypes'
+import {
+  ArchimateBoundaryNode,
+  ArchimateElementNode,
+  ArchimateImageNode,
+  ArchimateLegendNode,
+  ArchimateNoteNode,
+  BpmnElementNode,
+  C4ElementNode,
+  ErdEntityNode,
+  UmlClassNode,
+  UmlUseCaseNode,
+} from '@/modules/project-management/components/integrationArchimateNodeTypes'
 import { isArchimateElementData, type ArchimateNodeData } from '@/modules/project-management/lib/integrationArchitectureTypes'
 
 const INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS = { type: 'smoothstep' as const }
-const INTEGRATION_FLOW_FIT_VIEW_OPTIONS = { padding: 0.08, minZoom: 0.7 }
-const INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS = { padding: 0.22, maxZoom: 1 }
+const INTEGRATION_FLOW_FIT_VIEW_OPTIONS = { padding: 0.08, minZoom: 0.1, maxZoom: 1.4 }
+const INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS = { padding: 0.22, minZoom: 0.000001, maxZoom: 1 }
 const INTEGRATION_FLOW_PRO_OPTIONS = { hideAttribution: true as const }
 const INTEGRATION_EDGE_TYPES: EdgeTypes = { smoothstep: AnchoredSmoothStepEdge, erd: ErdCrowfootEdge }
-const INTEGRATION_NODE_TYPES = integrationArchimateNodeTypes
-const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
-const EDGE_UPDATE_DRAG_THRESHOLD_PX = 8
-
-function DiagramConnectionLine({ fromX, fromY, toX, toY }: ConnectionLineComponentProps) {
-  const horizontal = Math.abs(toX - fromX) >= Math.abs(toY - fromY)
-  const bendX = fromX + (toX - fromX) / 2
-  const bendY = fromY + (toY - fromY) / 2
-  const path = horizontal
-    ? `M ${fromX},${fromY} L ${bendX},${fromY} L ${bendX},${toY} L ${toX},${toY}`
-    : `M ${fromX},${fromY} L ${fromX},${bendY} L ${toX},${bendY} L ${toX},${toY}`
-
-  return (
-    <g>
-      <defs>
-        <marker id="tectona-connection-preview-arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
-          <path d="M 0 0 L 9 4.5 L 0 9 z" fill="#64748b" />
-        </marker>
-      </defs>
-      <path
-        d={path}
-        fill="none"
-        stroke="#64748b"
-        strokeWidth={1.5}
-        strokeDasharray="4 4"
-        markerEnd="url(#tectona-connection-preview-arrow)"
-      />
-    </g>
-  )
+const INTEGRATION_NODE_TYPES: NodeTypes = {
+  archimateElement: ArchimateElementNode,
+  archimateBoundary: ArchimateBoundaryNode,
+  archimateNote: ArchimateNoteNode,
+  archimateImage: ArchimateImageNode,
+  archimateLegend: ArchimateLegendNode,
+  c4Element: C4ElementNode,
+  umlClass: UmlClassNode,
+  umlUseCase: UmlUseCaseNode,
+  erdEntity: ErdEntityNode,
+  bpmnElement: BpmnElementNode,
 }
+const INTEGRATION_SNAP_GRID: [number, number] = [20, 20]
+
 
 function handleReactFlowError(messageId: string, message: string) {
   if (messageId === '002') return
@@ -116,11 +121,16 @@ type IntegrationArchitectureFlowProps = {
   showConnectionArrows?: boolean
   showConnectionPoints?: boolean
   preview?: boolean
+  previewNavigation?: boolean
   defaultViewport?: Viewport
   controlsStyle?: CSSProperties
+  onUndo?: () => void
+  onRedo?: () => void
+  canUndo?: boolean
+  canRedo?: boolean
   onAddText?: () => void
   onInsertImage?: () => void
-  onMoveEnd?: (event: MouseEvent | TouchEvent, viewport: Viewport) => void
+  onMoveEnd?: OnMove
 }
 
 function IntegrationArchitectureFlowInner({
@@ -139,68 +149,98 @@ function IntegrationArchitectureFlowInner({
   onNodeDoubleClick,
   onEdgeContextMenu,
   showGrid = true,
+  showGuides = true,
   snapToGrid = false,
   showRuler = true,
+  showConnectionArrows = true,
   showConnectionPoints = true,
   preview = false,
+  previewNavigation = false,
   defaultViewport,
   controlsStyle,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
   onAddText,
   onInsertImage,
   onMoveEnd,
 }: IntegrationArchitectureFlowProps) {
-  const pendingEdgeUpdateRef = useRef<{
-    original: Edge
-    x: number
-    y: number
-    oldEdge?: Edge
-    connection?: Connection
-  } | null>(null)
-  const reconnectingEdgeRef = useRef(false)
-  const [panMode, setPanMode] = useState(false)
-  const hasSelectedEdge = !preview && edges.some((edge) => edge.selected)
-
-  const finishEdgeReconnect = useCallback(() => {
-    pendingEdgeUpdateRef.current = null
-    window.setTimeout(() => {
-      reconnectingEdgeRef.current = false
-    }, 0)
-  }, [])
-
-  const handleEdgeUpdateStart = useCallback((event: MouseEvent, edge: Edge) => {
-    reconnectingEdgeRef.current = true
-    pendingEdgeUpdateRef.current = {
-      original: edge,
-      x: event.clientX,
-      y: event.clientY,
-    }
-  }, [])
-
-  const handleEdgeUpdate = useCallback((oldEdge: Edge, connection: Connection) => {
-    const pending = pendingEdgeUpdateRef.current
-    if (pending) {
-      pendingEdgeUpdateRef.current = { ...pending, oldEdge, connection }
-      return
-    }
-    onEdgeUpdate?.(oldEdge, connection)
-  }, [onEdgeUpdate])
-
-  const handleEdgeUpdateEnd = useCallback((event: MouseEvent | TouchEvent) => {
-    const pending = pendingEdgeUpdateRef.current
-    if (pending?.oldEdge && pending.connection) {
-      const point = 'clientX' in event ? event : { clientX: pending.x, clientY: pending.y }
-      const distance = Math.hypot(point.clientX - pending.x, point.clientY - pending.y)
-      if (distance >= EDGE_UPDATE_DRAG_THRESHOLD_PX) {
-        onEdgeUpdate?.(pending.oldEdge, pending.connection)
+  const store = useStoreApi()
+  const { getNodes, screenToFlowPosition, setEdges } = useReactFlow()
+  const transform = useStore((state) => state.transform)
+  const zoom = transform[2] || 1
+  const resizeSession = useRef<DiagramResizeSession | null>(null)
+  const [guideFeedback, setGuideFeedback] = useState<DiagramGuideFeedback>({ lines: [] })
+  const clearGuides = useCallback(() => setGuideFeedback({ lines: [] }), [])
+  const beginResize = useCallback((nodeId: string, constraints: DiagramResizeConstraints) => {
+    const current = getNodes(), node = current.find(item => item.id === nodeId)
+    if (!node || preview) return
+    const initial = diagramNodeRect(node, current)
+    resizeSession.current = { ...constraints, nodeId, initial }
+    setGuideFeedback({ lines: [], size: initial })
+  }, [getNodes, preview])
+  const endResize = useCallback(() => { resizeSession.current = null; clearGuides() }, [clearGuides])
+  const interactions = useMemo(() => ({ showConnectionArrows: !preview && showConnectionArrows,
+    showConnectionPoints: !preview && showConnectionPoints, beginResize, endResize }),
+  [preview, showConnectionArrows, showConnectionPoints, beginResize, endResize])
+  const changeNodes: OnNodesChange = useCallback(changes => {
+    let nextChanges = changes
+    if (!preview) {
+      if (resizeSession.current) {
+        const result = snapDiagramResize(changes, nodes, resizeSession.current, zoom, !showGuides || snapToGrid)
+        nextChanges = result.changes
+        if (result.feedback.size) setGuideFeedback(showGuides ? result.feedback : { lines: [], size: result.feedback.size })
+      } else if (changes.some(change => change.type === 'position' && change.dragging !== undefined)) {
+        const result = showGuides ? snapDiagramDrag(changes, nodes, zoom, snapToGrid) : { changes, feedback: { lines: [] } }
+        nextChanges = result.changes
+        setGuideFeedback(changes.some(change => change.type === 'position' && change.dragging) ? result.feedback : { lines: [] })
       }
+      if (changes.some(change => change.type === 'remove' || change.type === 'reset' || change.type === 'dimensions' && change.resizing === false)) clearGuides()
     }
-    finishEdgeReconnect()
-  }, [finishEdgeReconnect, onEdgeUpdate])
+    const moved = new Set(nextChanges.flatMap(change => change.type === 'position' && change.position ? [change.id] : []))
+    if (!preview && onEdgeUpdate && moved.size) {
+      const nextNodes = applyNodeChanges(nextChanges, nodes)
+      setEdges(current => retargetMovedDiagramEdges(nextNodes, current, moved))
+    }
+    onNodesChange?.(nextChanges)
+  }, [nodes, onNodesChange, onEdgeUpdate, preview, setEdges, zoom, showGuides, snapToGrid, clearGuides])
+  const cancelledRef = useRef(false)
+  const [panMode, setPanMode] = useState(false)
+  const displayedEdges = useMemo(() => edges.map(edge => ({ ...edge, updatable: false })), [edges])
+  const hasSelectedEdge = !preview && edges.some((edge) => edge.selected)
+  const reconnect = useDiagramReconnect(edges, getNodes, screenToFlowPosition, zoom, preview ? undefined : onEdgeUpdate,
+    connection => !store.getState().isValidConnection || store.getState().isValidConnection!(connection),
+    point => {
+      const state = store.getState(), bounds = state.domNode?.getBoundingClientRect()
+      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return false
+      const x = point.x < bounds.left + 32 ? 8 : point.x > bounds.right - 32 ? -8 : 0
+      const y = point.y < bounds.top + 32 ? 8 : point.y > bounds.bottom - 32 ? -8 : 0
+      return x || y ? state.panBy({ x, y }) : false
+    }, transform.join(':'))
 
   const handleConnect = useCallback((connection: Connection) => {
-    if (reconnectingEdgeRef.current) return
+    if (cancelledRef.current) return
     onConnect?.(connection)
   }, [onConnect])
+
+  useEffect(() => {
+    const cancel = () => {
+      endResize()
+      if (!store.getState().connectionStartHandle) return
+      cancelledRef.current = true
+      store.getState().cancelConnection()
+    }
+    const keyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel() }
+    window.addEventListener('keydown', keyDown)
+    window.addEventListener('blur', cancel)
+    window.addEventListener('touchcancel', cancel)
+    return () => {
+      window.removeEventListener('keydown', keyDown)
+      window.removeEventListener('blur', cancel)
+      window.removeEventListener('touchcancel', cancel)
+    }
+  }, [store, endResize])
 
   const handleInit = useCallback((instance: ReactFlowInstance) => {
     if (preview) {
@@ -215,24 +255,26 @@ function IntegrationArchitectureFlowInner({
   }, [defaultViewport, preview])
 
   return (
-    <>
+    <DiagramInteractionContext.Provider value={interactions}>
+    <DiagramReconnectContext.Provider value={preview || !onEdgeUpdate ? null : reconnect}>
       <PatchReactFlowOnError />
       <ReactFlow
-        className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}${panMode ? ' pan-mode' : ''}`}
+        className={`integration-flow-canvas h-full w-full${hasSelectedEdge ? ' edge-endpoint-edit' : ''}${panMode ? ' pan-mode' : ''}${preview || !showConnectionArrows ? ' hide-connection-arrows' : ''}${preview || !showConnectionPoints ? ' hide-connection-points' : ''}`}
         nodes={nodes}
-        edges={edges}
+        edges={displayedEdges}
         nodeTypes={INTEGRATION_NODE_TYPES}
         edgeTypes={INTEGRATION_EDGE_TYPES}
-        onNodesChange={onNodesChange}
-        onNodeDragStop={onNodeDragStop}
+        onNodesChange={changeNodes}
+        onNodeDragStop={(event, node, draggedNodes) => { clearGuides(); onNodeDragStop?.(event, node, draggedNodes) }}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}
-        onEdgeUpdateStart={preview || !onEdgeUpdate ? undefined : handleEdgeUpdateStart}
-        onEdgeUpdate={preview || !onEdgeUpdate ? undefined : handleEdgeUpdate}
-        onEdgeUpdateEnd={preview || !onEdgeUpdate ? undefined : handleEdgeUpdateEnd}
+        onConnectStart={() => { cancelledRef.current = false }}
+        onConnectEnd={() => { cancelledRef.current = false }}
+        connectionRadius={18 / zoom}
+        autoPanOnConnect={!preview}
         onSelectionChange={onSelectionChange}
         onEdgeClick={onEdgeClick}
-        onPaneClick={onPaneClick}
+        onPaneClick={() => { clearGuides(); onPaneClick?.() }}
         onPaneContextMenu={onPaneContextMenu}
         onNodeContextMenu={onNodeContextMenu}
         onNodeDoubleClick={onNodeDoubleClick}
@@ -248,23 +290,25 @@ function IntegrationArchitectureFlowInner({
         defaultViewport={defaultViewport}
         nodesDraggable={!preview}
         selectNodesOnDrag={!preview}
-        nodesConnectable={!preview && showConnectionPoints}
+        nodesConnectable={!preview && (showConnectionPoints || showConnectionArrows)}
         elementsSelectable={!preview}
         edgesFocusable={!preview}
-        edgesUpdatable={!preview ? 'selected' : false}
-        edgeUpdaterRadius={14}
-        panOnDrag={preview ? false : panMode ? [0, 1, 2] : [1, 2]}
+        edgesUpdatable={false}
+        elevateEdgesOnSelect
+        edgeUpdaterRadius={10 / zoom}
+        panOnDrag={preview ? previewNavigation ? [0, 1] : false : panMode ? [0, 1] : [1]}
         selectionOnDrag={!preview && !panMode}
         snapToGrid={!preview && snapToGrid}
         snapGrid={INTEGRATION_SNAP_GRID}
         zoomOnScroll={!preview}
-        zoomOnPinch={!preview}
+        zoomOnPinch={!preview || previewNavigation}
         zoomOnDoubleClick={false}
-        minZoom={preview ? 0.2 : 0.55}
-        maxZoom={preview ? 1 : 1.4}
+        minZoom={preview ? 0.000001 : 0.1}
+        maxZoom={preview && !previewNavigation ? 1 : 4}
         proOptions={INTEGRATION_FLOW_PRO_OPTIONS}
         defaultEdgeOptions={INTEGRATION_FLOW_DEFAULT_EDGE_OPTIONS}
       >
+      {preview && previewNavigation ? <Controls showInteractive={false} fitViewOptions={INTEGRATION_PREVIEW_FIT_VIEW_OPTIONS} position="bottom-left" /> : null}
       {!preview ? (
         <MiniMap
           zoomable
@@ -276,6 +320,8 @@ function IntegrationArchitectureFlowInner({
       ) : null}
       {!preview ? (
         <Controls showInteractive className="canvas-flow-controls" position="bottom-left" style={controlsStyle}>
+          {onUndo ? <ControlButton onClick={onUndo} disabled={!canUndo} title="Undo (Ctrl+Z)" aria-label="Undo"><Undo2 /></ControlButton> : null}
+          {onRedo ? <ControlButton onClick={onRedo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><Redo2 /></ControlButton> : null}
           <ControlButton
             onClick={() => setPanMode((current) => !current)}
             className={panMode ? 'is-active' : undefined}
@@ -290,8 +336,10 @@ function IntegrationArchitectureFlowInner({
       ) : null}
         {showGrid && !preview ? <CanvasViewportGrid /> : null}
         {showRuler && !preview ? <CanvasViewportRulers /> : null}
+        {!preview && (guideFeedback.size || showGuides && guideFeedback.lines.length > 0) ? <DiagramSmartGuides feedback={guideFeedback} /> : null}
       </ReactFlow>
-    </>
+    </DiagramReconnectContext.Provider>
+    </DiagramInteractionContext.Provider>
   )
 }
 
@@ -305,9 +353,11 @@ const NOOP_SELECTION: OnSelectionChangeFunc = () => undefined
 export function IntegrationArchitecturePreview({
   nodes,
   edges,
+  navigation = false,
 }: {
   nodes: Node<ArchimateNodeData>[]
   edges: Edge[]
+  navigation?: boolean
 }) {
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-white/75">
@@ -320,6 +370,7 @@ export function IntegrationArchitecturePreview({
           onConnect={NOOP_CONNECT}
           onSelectionChange={NOOP_SELECTION}
           preview
+          previewNavigation={navigation}
           showRuler={false}
           showGuides={false}
           showConnectionPoints={false}

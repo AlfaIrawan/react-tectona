@@ -19,6 +19,27 @@ import { serviceApiBase, tectonaAgentRuntimeApiBase } from './gatewayBase'
 
 const BASE_URL = serviceApiBase('/api/idea-backlog', import.meta.env.VITE_IDEA_BACKLOG_API_URL)
 
+export async function getIdeaDocumentDiagramSources(ideaId: string): Promise<Record<string, string>> {
+  const base = serviceApiBase('/api/document-knowledge', import.meta.env.VITE_DOCUMENT_KNOWLEDGE_API_URL)
+  const response = await apiFetch(`${base}/v1/ideas/${encodeURIComponent(ideaId)}/document-diagram-sources`, { headers: defaultHeaders() })
+  const result = await handleResponse<{ sources: Record<string, string> }>(response)
+  return result.sources
+}
+
+export type IdeaContentLock = {
+  state: 'draft' | 'submitted' | 'approved' | 'revision' | 'rejected'
+  locked: boolean
+  run_id: string | null
+}
+
+export async function getIdeaContentLock(ideaId: string): Promise<IdeaContentLock> {
+  const response = await apiFetch(`${BASE_URL}/v1/ideas/${encodeURIComponent(ideaId)}/content-lock`, {
+    headers: tectonaServiceHeaders(),
+  })
+  if (!response.ok) throw new Error('Approval lock status could not be verified.')
+  return response.json() as Promise<IdeaContentLock>
+}
+
 export type DiagramArchitectureReviewApi = {
   id: string
   idea_id: string
@@ -228,6 +249,7 @@ export interface IdeaApi {
   title_sync?: { status: 'synced' | 'failed' | 'disabled'; updated?: number; error?: string } | null
   id: string
   workspace_id?: string | null
+  source_workspace_id?: string | null
   project_id?: string | null
   portfolio_id?: string | null
   title: string
@@ -239,6 +261,7 @@ export interface IdeaApi {
   card_accent_color?: string | null
   tags: string[]
   owner_id?: string | null
+  created_by?: string | null
   assignee_id?: string | null
   folder_id?: string | null
   status_code: BackendIdeaStatus
@@ -714,6 +737,13 @@ export async function upsertPersistentIdeaProcessDiagram(
   return handleResponse<IdeaProcessDiagramPersistent>(res)
 }
 
+export async function syncIdeaProcessDiagramDocuments(ideaId: string, processKey: string): Promise<IdeaProcessDiagramPersistent> {
+  const res = await apiFetch(`${BASE_URL}/v1/ideas/${ideaId}/process-diagram/${processKey}/sync-documents`, {
+    method: 'POST', headers: defaultHeaders(),
+  })
+  return handleResponse<IdeaProcessDiagramPersistent>(res)
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export async function getIdeaById(ideaId: string): Promise<IdeaApi> {
@@ -726,6 +756,7 @@ export async function getIdeaById(ideaId: string): Promise<IdeaApi> {
 export async function listIdeas(params?: {
   status?: BackendIdeaStatus
   workspace_id?: string
+  include_mine?: boolean
   project_id?: string
   folder_id?: string | null
   q?: string
@@ -736,6 +767,7 @@ export async function listIdeas(params?: {
   const qs = new URLSearchParams()
   if (params?.status) qs.set('status', params.status)
   if (params?.workspace_id) qs.set('workspace_id', params.workspace_id)
+  if (params?.include_mine) qs.set('include_mine', 'true')
   if (params?.project_id) qs.set('project_id', params.project_id)
   if (params?.folder_id !== undefined) {
     qs.set('folder_id', params.folder_id === null ? 'null' : params.folder_id)
@@ -780,6 +812,7 @@ export async function createIdea(body: {
   card_accent_color?: string
   tags?: string[]
   workspace_id?: string
+  source_workspace_id?: string
   /** Creates the idea already linked to this project (one project can hold many ideas). */
   project_id?: string
   owner_id?: string
@@ -810,6 +843,7 @@ export async function patchIdea(
     workspace_id?: string
     project_id?: string | null
     folder_id?: string | null
+    assignee_id?: string | null
     /** Where a title change came from; the backend versions every title change. */
     title_source?: 'idea' | 'document'
     title_source_document_id?: string
@@ -986,8 +1020,9 @@ export async function generateIdeaDescriptionWithAI(
     throw new Error(`AI assistance failed: ${text || `HTTP ${res.status}`}`)
   }
 
-  const data = (await res.json()) as any
-  const responseText = typeof data?.response === 'string' ? data.response : JSON.stringify(data?.response || data || '')
+  const data: unknown = await res.json()
+  const response = readAgentField(data, 'response')
+  const responseText = typeof response === 'string' ? response : JSON.stringify(response || data || '')
   const result = extractAgentResponseText(responseText)
 
   if (isFallbackLikeResponse({
@@ -1181,7 +1216,7 @@ ${languageInstruction}`
  * Extract plain text from agent response, preferring the answer field when the
  * runtime returns a JSON envelope.
  */
-function extractAgentResponseText(response: any): string {
+function extractAgentResponseText(response: unknown): string {
   if (!response) {
     return ''
   }
@@ -1216,10 +1251,14 @@ function extractAgentResponseText(response: any): string {
   return String(response)
 }
 
-function pickAgentAnswer(payload: any): string {
+function readAgentField(value: unknown, key: string): unknown {
+  return value !== null && typeof value === 'object' ? Reflect.get(value, key) : undefined
+}
+
+function pickAgentAnswer(payload: unknown): string {
   const visited = new WeakSet<object>()
 
-  const search = (value: any): string => {
+  const search = (value: unknown): string => {
     if (!value) {
       return ''
     }
@@ -1241,23 +1280,9 @@ function pickAgentAnswer(payload: any): string {
     }
     visited.add(value)
 
-    const directCandidates = [
-      value.answer,
-      value.result,
-      value.content,
-      value.message,
-      value.text,
-      value.data?.answer,
-      value.data?.result,
-      value.data?.content,
-      value.data?.message,
-      value.data?.text,
-      value.response?.answer,
-      value.response?.result,
-      value.response?.content,
-      value.response?.message,
-      value.response?.text,
-    ]
+    const fields = ['answer', 'result', 'content', 'message', 'text']
+    const directCandidates = [value, readAgentField(value, 'data'), readAgentField(value, 'response')]
+      .flatMap((entry) => fields.map((key) => readAgentField(entry, key)))
 
     for (const candidate of directCandidates) {
       const extracted = search(candidate)

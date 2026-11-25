@@ -16,6 +16,7 @@ export function PlatformServiceLoadingPanel({
 }: PlatformServiceLoadingPanelProps) {
   return (
     <div
+      data-theme-surface="loading-card"
       className={cn(
         'relative w-full max-w-[22rem] overflow-hidden rounded-2xl text-center',
         'border border-white/70 bg-white/55 shadow-[0_8px_40px_-12px_rgba(15,23,42,0.18)]',
@@ -29,7 +30,7 @@ export function PlatformServiceLoadingPanel({
       aria-busy="true"
       aria-label={title}
     >
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/50 via-transparent to-slate-100/20 dark:from-white/[0.06] dark:to-transparent" />
+      <div data-theme-part="loading-wash" className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/50 via-transparent to-slate-100/20 dark:from-white/[0.06] dark:to-transparent" />
       <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-white/20" />
 
       <div className="relative">
@@ -40,8 +41,10 @@ export function PlatformServiceLoadingPanel({
             compact ? 'h-8 w-8 border-[1.5px]' : 'h-9 w-9 border-2',
           )}
           aria-hidden
+          data-theme-part="loading-spinner"
         />
         <p
+          data-theme-part="loading-title"
           className={cn(
             'font-medium tracking-[-0.01em] text-slate-900 dark:text-slate-50',
             compact ? 'mt-4 text-[13px]' : 'mt-5 text-sm',
@@ -51,6 +54,7 @@ export function PlatformServiceLoadingPanel({
         </p>
         {description ? (
           <p
+            data-theme-part="loading-description"
             className={cn(
               'mx-auto max-w-[18rem] leading-relaxed text-slate-500 dark:text-slate-400',
               compact ? 'mt-1.5 text-[11px]' : 'mt-2 text-xs',

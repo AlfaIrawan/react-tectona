@@ -1,3 +1,4 @@
+import { WorkspaceApiError } from '@/lib/workspaceAccessWarning'
 /**
  * Workspace Access Control (shared WAC) API client.
  * Backend: python-workspace-access-control-service-fastapi (port 8421).
@@ -130,7 +131,7 @@ async function handleJson<T>(res: Response): Promise<T> {
         detail = raw
       }
     }
-    throw new Error(detail || `HTTP ${res.status}`)
+    throw new WorkspaceApiError(res.status, detail || `HTTP ${res.status}`)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>

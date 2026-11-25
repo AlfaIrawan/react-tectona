@@ -32,12 +32,12 @@ export function AIPerformanceCard() {
     let active=true
     const timeout=window.setTimeout(()=>controller.abort(),20000)
     setLoading(true); setError(false); setData(null); setCatalog(null); setCatalogError(false)
-    const token=getSession()?.token
+    const session = getSession()
     const load=async () => {
       try {
-        if (!token) throw new Error('Missing session')
+        if (!session) throw new Error('Missing session')
         const response=await fetch(`${tectonaAgentRuntimeApiBase()}/v1/agent/ai-performance?days=${days}`, {
-          signal:controller.signal,cache:'no-store',headers:{Authorization:`Bearer ${token}`},
+          signal:controller.signal,cache:'no-store',headers: session.token ? {Authorization:`Bearer ${session.token}`} : {},
         })
         if (!response.ok) throw new Error('Performance unavailable')
         const result=await response.json() as Data
@@ -46,7 +46,7 @@ export function AIPerformanceCard() {
       } catch { if(active) setError(true) }
       finally { if(active) setLoading(false) }
     }
-    const loadCatalog=fetchModelCatalog(controller.signal,token).then(result=>{if(active)setCatalog(result)}).catch(()=>{if(active)setCatalogError(true)})
+    const loadCatalog=fetchModelCatalog(controller.signal,session?.token).then(result=>{if(active)setCatalog(result)}).catch(()=>{if(active)setCatalogError(true)})
     void Promise.all([load(),loadCatalog]).finally(()=>window.clearTimeout(timeout))
     return ()=>{active=false;window.clearTimeout(timeout);controller.abort()}
   },[days,revision,subject])

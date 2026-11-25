@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_IDEA_SECTION_AUDIENCE,
   ideaDiagramTypesFor,
+  isIdeaDiagramOwner,
   ideaMenuForWorkflowAudience,
   readIdeaSectionAudience,
   visibleIdeaNavSections,
@@ -92,6 +93,29 @@ describe('ideaMenuForWorkflowAudience', () => {
 })
 
 describe('ideaDiagramTypesFor', () => {
+  it('shows every diagram type to a Business Partner owner with legacy workflow settings', () => {
+    expect(ideaDiagramTypesFor(['IT Business Partner'], null, true)).toEqual({ technical: true, bpmn: true })
+    const menu = ideaMenuForWorkflowAudience(undefined, docsOnly, ['IT Business Partner'], null, undefined, false, true)
+    expect(menu).toEqual(['diagrams', 'document'])
+  })
+
+  it('lets an owner review an explicitly visible section without architecture membership', () => {
+    expect(ideaMenuForWorkflowAudience(undefined, { ...docsOnly, diagrams: 'show' }, [], null, undefined, false, true))
+      .toEqual(['diagrams', 'document'])
+    expect(ideaDiagramTypesFor([], null, true)).toEqual({ technical: true, bpmn: true })
+  })
+
+  it('keeps hidden sections hidden unless the creator review option explicitly shows them', () => {
+    const audience = readIdeaSectionAudience({ alsoShowTo: { diagrams: [] } })
+    expect(ideaMenuForWorkflowAudience(undefined, docsOnly, [], audience, undefined, false, true)).toEqual(['document'])
+    expect(ideaMenuForWorkflowAudience(undefined, docsOnly, [], audience, undefined, true, true)).toEqual(['diagrams', 'document'])
+  })
+
+  it('does not grant another Business Partner the owner exception', () => {
+    expect(ideaDiagramTypesFor(['IT Business Partner'], null, isIdeaDiagramOwner('other', 'owner', 'creator')))
+      .toEqual({ technical: false, bpmn: true })
+  })
+
   it('uses the old rule when no workflow set one', () => {
     expect(ideaDiagramTypesFor(['Architecture'], null)).toEqual({ technical: true, bpmn: false })
     expect(ideaDiagramTypesFor(['Business Relationship'], null)).toEqual({ technical: false, bpmn: true })
@@ -102,6 +126,21 @@ describe('ideaDiagramTypesFor', () => {
   it('lets an empty list mean everyone who sees Diagrams', () => {
     const audience = readIdeaSectionAudience({ diagramTypes: { technical: [], bpmn: ['Business Partner'] } })
     expect(ideaDiagramTypesFor(['Finance'], audience)).toEqual({ technical: true, bpmn: false })
+  })
+})
+
+describe('isIdeaDiagramOwner', () => {
+  it('matches the stored owner or creator identity', () => {
+    expect(isIdeaDiagramOwner('owner', 'owner', 'creator')).toBe(true)
+    expect(isIdeaDiagramOwner('creator', 'owner', 'creator')).toBe(true)
+    expect(isIdeaDiagramOwner('owner', ' owner ')).toBe(true)
+  })
+
+  it('does not infer ownership from missing identities or partial display names', () => {
+    expect(isIdeaDiagramOwner(undefined, 'owner')).toBe(false)
+    expect(isIdeaDiagramOwner('owner', undefined, undefined)).toBe(false)
+    expect(isIdeaDiagramOwner('', '')).toBe(false)
+    expect(isIdeaDiagramOwner('Alfa', 'Alfa Irawan')).toBe(false)
   })
 })
 

@@ -1,5 +1,5 @@
-export type ProcessDiagramKind = 'as_is' | 'to_be' | 'c4' | 'class' | 'erd' | 'sequence' | 'unlabeled'
-export type TechnicalDiagramKind = 'c4' | 'class' | 'erd' | 'sequence'
+export type ProcessDiagramKind = 'as_is' | 'to_be' | 'c4' | 'class' | 'erd' | 'use-case' | 'sequence' | 'unlabeled'
+export type TechnicalDiagramKind = 'c4' | 'class' | 'erd' | 'use-case' | 'sequence'
 
 export type ExtractedProcessDiagram = {
   kind: ProcessDiagramKind
@@ -10,20 +10,20 @@ export type ExtractedProcessDiagram = {
 const DIAGRAM_FENCE_RE = /```[ \t]*(?:mermaid|plantuml|tecchart|bpmn)\b[ \t]*\r?\n?[\s\S]*?```/gi
 const PROCESS_FENCE_RE = /```[ \t]*(?:mermaid|plantuml)\b[ \t]*\r?\n?([\s\S]*?)```/gi
 const TECTONA_DIAGRAM_COMMENT_RE = /<!--tectona-mermaid\b[\s\S]*?-->/gi
-const TECTONA_ENCODED_DIAGRAM_COMMENT_RE = /<!--tectona-process-diagram:(?:(as_is|to_be|c4|class|erd|sequence|unlabeled):)?([^>]+)-->/gi
-const STORED_DIAGRAM_KINDS = new Set<ProcessDiagramKind>(['as_is', 'to_be', 'c4', 'class', 'erd', 'sequence', 'unlabeled'])
+const TECTONA_ENCODED_DIAGRAM_COMMENT_RE = /<!--tectona-process-diagram:(?:(as_is|to_be|c4|class|erd|use-case|sequence|unlabeled):)?([^>]+)-->/gi
+const STORED_DIAGRAM_KINDS = new Set<ProcessDiagramKind>(['as_is', 'to_be', 'c4', 'class', 'erd', 'use-case', 'sequence', 'unlabeled'])
 
 function storedDiagramKind(raw: string | undefined): ProcessDiagramKind {
   return raw && STORED_DIAGRAM_KINDS.has(raw as ProcessDiagramKind) ? raw as ProcessDiagramKind : 'unlabeled'
 }
 
 function emptyKindCounts(): Record<ProcessDiagramKind, number> {
-  return { as_is: 0, to_be: 0, c4: 0, class: 0, erd: 0, sequence: 0, unlabeled: 0 }
+  return { as_is: 0, to_be: 0, c4: 0, class: 0, erd: 0, 'use-case': 0, sequence: 0, unlabeled: 0 }
 }
 
 const AS_IS_RE = /\b(as[\s-]?is|proses\s+saat\s+ini|kondisi\s+saat\s+ini)\b/i
 const TO_BE_RE = /\b(to[\s-]?be|proses\s+target|kondisi\s+target|expected|diharapkan)\b/i
-const NON_PROCESS_DIAGRAM_RE = /!include\s*<\s*(?:c4|archimate)|tectona-view:|tectona-dimension:|^\s*(?:class|entity)\b|sequenceDiagram|^\s*(?:participant|actor)\b/im
+const NON_PROCESS_DIAGRAM_RE = /!include\s*<\s*(?:c4|archimate)|tectona-view:|tectona-dimension:|^\s*(?:class|entity|usecase)\b|sequenceDiagram|^\s*(?:participant|actor)\b/im
 
 function classifyPrefix(prefix: string): ProcessDiagramKind {
   const window = prefix.slice(-500)
@@ -47,6 +47,7 @@ function labelFor(kind: ProcessDiagramKind, index: number, counts: Record<Proces
       : kind === 'c4' ? 'C4'
         : kind === 'class' ? 'Class'
           : kind === 'erd' ? 'ERD'
+            : kind === 'use-case' ? 'Use Case'
             : kind === 'sequence' ? 'Sequence'
             : 'Diagram proses bisnis'
   return counts[kind] > 1 ? `${base} #${index}` : base
@@ -54,6 +55,7 @@ function labelFor(kind: ProcessDiagramKind, index: number, counts: Record<Proces
 
 export function technicalDiagramKind(source: string): TechnicalDiagramKind | null {
   const text = source || ''
+  if (/tectona-view:\s*use[-_ ]?case|^\s*usecase\b|^\s*\([^)]+\)\s+as\s+/im.test(text)) return 'use-case'
   if (/tectona-view:\s*erd/i.test(text) || /^\s*entity\s+/m.test(text)) return 'erd'
   if (/tectona-view:\s*class/i.test(text) || /^\s*class\s+/m.test(text)) return 'class'
   if (/!include\s*<\s*C4\/|tectona-view:\s*c4/i.test(text)) return 'c4'
@@ -70,6 +72,13 @@ export function isBusinessProcessSource(source: string): boolean {
   const text = (source || '').trim()
   if (!text || NON_PROCESS_DIAGRAM_RE.test(text)) return false
   return /process_start|\(\)\s+"|^\s*start\b|^\s*(?:flowchart|graph)\s+|rectangle\s+"/im.test(text)
+}
+
+/** Identity may distinguish lanes only from an attached standalone heading, not prose mentions. */
+function explicitHeadingIdentity(prefix: string): 'as_is' | 'to_be' | 'unlabeled' {
+  const heading = (prefix.trimEnd().split('\n').at(-1)?.trim() ?? '')
+    .replace(/^#{1,6}\s*/, '').replace(/\*\*|__/g, '').replace(/:\s*$/, '').trim()
+  return /^AS[ -]?IS$/i.test(heading) ? 'as_is' : /^TO[ -]?BE$/i.test(heading) ? 'to_be' : 'unlabeled'
 }
 
 /** Extract canonical PlantUML and legacy Mermaid diagrams from idea text. */
@@ -103,16 +112,16 @@ export function extractProcessDiagramsFromText(text: string): ExtractedProcessDi
   while ((fenceMatch = PROCESS_FENCE_RE.exec(input)) !== null) {
     const source = (fenceMatch[1] || '').trim()
     if (!source) continue
-    const key = source.replace(/\s+/g, ' ').toLowerCase()
+    const kind = classifyPrefix(input.slice(Math.max(0, fenceMatch.index - 500), fenceMatch.index))
+    const key = JSON.stringify([technicalDiagramKind(source) ?? explicitHeadingIdentity(input.slice(0, fenceMatch.index)), source])
     if (seen.has(key)) continue
     seen.add(key)
 
-    const kind = classifyPrefix(input.slice(Math.max(0, fenceMatch.index - 500), fenceMatch.index))
     results.push({ kind, label: '', source })
   }
 
   for (const comment of commentSources) {
-    const key = comment.source.replace(/\s+/g, ' ').toLowerCase()
+    const key = JSON.stringify([technicalDiagramKind(comment.source) ?? comment.kind, comment.source])
     if (seen.has(key)) continue
     seen.add(key)
     results.push({ kind: comment.kind, label: '', source: comment.source })
@@ -169,24 +178,97 @@ const TECHNICAL_LABEL: Record<TechnicalDiagramKind, string> = {
   class: 'Class',
   erd: 'ERD',
   sequence: 'Sequence',
+  'use-case': 'Use Case',
 }
 
-/** Last confirmed C4, class, and ERD picture from brainstorming. Earlier sketches are dropped. */
+export const TECHNICAL_DIAGRAM_SLOTS = [
+  { kind: 'c4', label: 'C4 Level 1', persistKey: 'brainstorm-c4-level-1' },
+  { kind: 'c4', label: 'C4 Level 2', persistKey: 'brainstorm-c4-level-2' },
+  { kind: 'sequence', label: 'Sequence', persistKey: 'brainstorm-sequence' },
+  { kind: 'use-case', label: 'Use Case', persistKey: 'brainstorm-use-case' },
+  { kind: 'class', label: 'Class', persistKey: 'brainstorm-class' },
+  { kind: 'erd', label: 'ERD', persistKey: 'brainstorm-erd' },
+] as const
+
+export function brainstormTechnicalPersistKey(diagram: ExtractedProcessDiagram): string {
+  if (diagram.kind === 'c4') {
+    return /!include\s*<\s*C4\/C4_Container|\bContainer\s*\(/i.test(diagram.source)
+      ? 'brainstorm-c4-level-2' : 'brainstorm-c4-level-1'
+  }
+  return `brainstorm-${diagram.kind}`
+}
+
 export function latestValidatedTechnicalDiagrams(text: string): ExtractedProcessDiagram[] {
-  const latest: Partial<Record<TechnicalDiagramKind, ExtractedProcessDiagram>> = {}
+  const latest = new Map<string, ExtractedProcessDiagram>()
   for (const diagram of extractProcessDiagramsFromText(text)) {
-    const kind = diagram.kind === 'c4' || diagram.kind === 'class' || diagram.kind === 'erd'
+    const kind = diagram.kind === 'c4' || diagram.kind === 'class' || diagram.kind === 'erd' || diagram.kind === 'use-case' || diagram.kind === 'sequence'
       ? diagram.kind
       : technicalDiagramKind(diagram.source)
     if (!kind) continue
-    latest[kind] = { ...diagram, kind, label: TECHNICAL_LABEL[kind] }
+    const entry = { ...diagram, kind, label: TECHNICAL_LABEL[kind] }
+    latest.set(brainstormTechnicalPersistKey(entry), entry)
   }
-  return [latest.c4, latest.sequence, latest.class, latest.erd].filter((diagram): diagram is ExtractedProcessDiagram => Boolean(diagram))
+  return TECHNICAL_DIAGRAM_SLOTS.flatMap(slot => {
+    const entry = latest.get(slot.persistKey)
+    return entry ? [{ ...entry, label: slot.label }] : []
+  })
+}
+
+/** Stored server sources win; absent diagrams retain their slot instead of disappearing. */
+export function technicalDiagramGallery(
+  diagrams: ExtractedProcessDiagram[],
+  saved: Record<string, { source?: string } | undefined>,
+) {
+  const byKey = new Map(diagrams.map(diagram => [brainstormTechnicalPersistKey(diagram), diagram]))
+  return TECHNICAL_DIAGRAM_SLOTS.map(slot => ({
+    ...slot,
+    source: saved[slot.persistKey]?.source?.trim() || byKey.get(slot.persistKey)?.source || '',
+  }))
+}
+
+/** Remove only same-lane caption wrappers bound to an extracted business-process block. */
+export function stripAttachedProcessCaptions(text: string): string {
+  const blocks = new RegExp([
+    TECTONA_ENCODED_DIAGRAM_COMMENT_RE.source,
+    TECTONA_DIAGRAM_COMMENT_RE.source,
+    DIAGRAM_FENCE_RE.source,
+  ].join('|'), 'gi')
+  let result = text
+  // Work backwards so offsets still refer to the original source, not cleaned prose.
+  for (const match of [...text.matchAll(blocks)].reverse()) {
+    const diagram = extractProcessDiagramsFromText(match[0])[0]
+    if (!diagram || !['as_is', 'to_be', 'unlabeled'].includes(diagram.kind) || !isBusinessProcessSource(diagram.source)) continue
+    const prefix = text.slice(0, match.index)
+    if (diagram.kind === 'unlabeled' && classifyPrefix(prefix) === 'unlabeled') continue
+    const lines = [...prefix.matchAll(/^[^\r\n]*(?:\r?\n|$)/gm)]
+    let start = prefix.length
+    let lane: 'as_is' | 'to_be' | null = diagram.kind === 'as_is' || diagram.kind === 'to_be' ? diagram.kind : null
+    let found = false
+    while (lines.length) {
+      const line = lines.pop()!
+      const clean = line[0].trim().replace(/^#{1,6}\s+/, '').replace(/\*\*|__/g, '').replace(/:\s*$/, '').trim()
+      if (clean) {
+        // Only the known internal wrapper directly attached to a recognized lane.
+        if (found && /^DIAGRAM PROSES BISNIS YANG SUDAH DISETUJUI \(wajib masuk draft\)$/i.test(clean)) {
+          start = line.index!
+          break
+        }
+        const candidate = /^AS[ -]?IS$/i.test(clean) ? 'as_is' : /^TO[ -]?BE$/i.test(clean) ? 'to_be' : null
+        if (!candidate || (lane && lane !== candidate)) break
+        lane = candidate
+        found = true
+      }
+      // Use original line lengths, including CRLF, rather than normalized offsets.
+      start = line.index!
+    }
+    if (found) result = result.slice(0, start) + result.slice(match.index)
+  }
+  return result
 }
 
 /** Remove diagram implementation text from prose that is shown in a rich-text editor. */
 export function stripProcessDiagramsFromText(text: string): string {
-  return (text || '')
+  return stripAttachedProcessCaptions(text || '')
     .replace(TECTONA_ENCODED_DIAGRAM_COMMENT_RE, '')
     .replace(TECTONA_DIAGRAM_COMMENT_RE, '')
     .replace(DIAGRAM_FENCE_RE, '')
@@ -204,7 +286,7 @@ export function appendProcessDiagramsToText(
     .filter((diagram) => {
       const source = diagram.source.trim()
       if (!source) return false
-      const key = source.replace(/\s+/g, ' ').toLowerCase()
+      const key = JSON.stringify([technicalDiagramKind(source) ?? storedDiagramKind(diagram.kind), source])
       if (seen.has(key)) return false
       seen.add(key)
       return true

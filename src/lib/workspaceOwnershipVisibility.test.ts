@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  collectMembershipWorkspaceIdsForSubject,
   isWorkspaceOwnedBySubject,
   resolveDirectoryAccessBadgesForViewer,
   subjectHasDirectoryWacMemberBadge,
@@ -40,7 +41,7 @@ describe('subjectHasDirectoryWacMemberBadge', () => {
     ).toBe(true)
   })
 
-  it('shows read-only membership as a badge without granting full workspace access', () => {
+  it('shows active org-home read-only membership without granting full workspace access', () => {
     const membershipIds = new Set([orgId])
     const rows = [{ subjectId: henrySubjectId, workspaceId: orgId, scopeCode: 'read_only_workspace' }]
     expect(
@@ -52,6 +53,26 @@ describe('subjectHasDirectoryWacMemberBadge', () => {
         orgHomeWorkspaceId: orgId,
       }),
     ).toBe(true)
+    expect(subjectHasFullWacOnWorkspace(henrySubjectId, orgId, membershipIds, rows)).toBe(false)
+  })
+
+  it('keeps the badge and full-access checks positive for an all-scope org-home member', () => {
+    const rows = [{ subjectId: henrySubjectId, workspaceId: orgId, scopeCode: 'all' }]
+    const membershipIds = collectMembershipWorkspaceIdsForSubject(henrySubjectId, rows)
+    expect(subjectHasDirectoryWacMemberBadge({
+      workspaceId: henryPersonalId, subjectId: henrySubjectId,
+      membershipWorkspaceIds: membershipIds, membershipRows: rows, orgHomeWorkspaceId: orgId,
+    })).toBe(true)
+    expect(subjectHasFullWacOnWorkspace(henrySubjectId, orgId, membershipIds, rows)).toBe(true)
+  })
+
+  it('does not show a badge or grant full access from another subject membership', () => {
+    const rows = [{ subjectId: 'other-subject', workspaceId: orgId, scopeCode: 'all' }]
+    const membershipIds = collectMembershipWorkspaceIdsForSubject(henrySubjectId, rows)
+    expect(subjectHasDirectoryWacMemberBadge({
+      workspaceId: henryPersonalId, subjectId: henrySubjectId,
+      membershipWorkspaceIds: membershipIds, membershipRows: rows, orgHomeWorkspaceId: orgId,
+    })).toBe(false)
     expect(subjectHasFullWacOnWorkspace(henrySubjectId, orgId, membershipIds, rows)).toBe(false)
   })
 })

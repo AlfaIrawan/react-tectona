@@ -172,7 +172,7 @@ export async function extractSpreadsheetFromArrayBuffer(
   const Workbook = await getWorkbookConstructor()
   const workbook = new Workbook()
   try {
-    await workbook.xlsx.load(bytes)
+    await workbook.xlsx.load(data instanceof Uint8Array ? new Uint8Array(data).buffer : data)
   } catch {
     return ''
   }
@@ -197,7 +197,7 @@ export async function extractSpreadsheetTablesFromArrayBuffer(
   const Workbook = await getWorkbookConstructor()
   const workbook = new Workbook()
   try {
-    await workbook.xlsx.load(bytes)
+    await workbook.xlsx.load(data instanceof Uint8Array ? new Uint8Array(data).buffer : data)
   } catch {
     return ''
   }

@@ -3,13 +3,12 @@
  */
 
 import {
-  getDocumentAttachmentDownloadUrl,
-  listDocumentAttachments,
   resolveLatestDocumentAttachmentBlob,
 } from '@/lib/api/documentKnowledgeApi'
 import { extractDocumentTextPreview } from '@/lib/api/documentParserApi'
 import { extractRepositoryDocxStructure, extractRepositoryPdfText } from '@/lib/api/tectonaAgentRuntimeApi'
 import { extractSpreadsheetText, isSpreadsheetFile } from './extractSpreadsheetText'
+import { replaceExtractedTextControls } from './replaceExtractedTextControls'
 
 export const KB_REPOSITORY_EXTRACT_MAX_CHARS = 80_000
 export const KB_REPOSITORY_LLM_EXCERPT_MAX_CHARS = 3_200
@@ -53,7 +52,7 @@ export interface RepositoryKbSourceMeta {
   extract: RepositoryDocumentExtractResult
 }
 
-import type { BrdKbRequiredSection, BrdToKbContentStandardParsed } from './brdToKbContentStandard'
+import type { BrdToKbContentStandardParsed } from './brdToKbContentStandard'
 
 export type BrdStructuredNameParts = {
   projectOrInitiativeName: string
@@ -129,9 +128,9 @@ export function extractBrdVersionFromDocumentText(text: string): string | null {
   // here it takes priority OVER the (already-correct) file-name detection, since document-body
   // text is checked first. (?:\.\d+)* allows any number of segments.
   const patterns = [
-    /\b(?:document\s+)?version\s*(?:no\.?|number)?\s*[:\-]\s*([vV]?\d+(?:\.\d+)*)/i,
-    /\bversi\s*(?:dokumen)?\s*[:\-]\s*([vV]?\d+(?:\.\d+)*)/i,
-    /\bversion\s*[:\-]\s*([vV]?\d+(?:\.\d+)*)/i,
+    /\b(?:document\s+)?version\s*(?:no\.?|number)?\s*[:-]\s*([vV]?\d+(?:\.\d+)*)/i,
+    /\bversi\s*(?:dokumen)?\s*[:-]\s*([vV]?\d+(?:\.\d+)*)/i,
+    /\bversion\s*[:-]\s*([vV]?\d+(?:\.\d+)*)/i,
   ]
 
   for (const pattern of patterns) {
@@ -147,8 +146,8 @@ export function extractBrdProjectOrInitiativeNameFromDocumentText(text: string):
   const lines = text.replace(/\r/g, '\n').slice(0, 8000).split('\n')
 
   const linePatterns = [
-    /^(?:project\s*(?:\/\s*initiative)?\s*name|project\s*or\s*initiative(?:\s*name)?|initiative\s*name|program\s*name|nama\s*(?:proyek|inisiatif|program))\s*[:\-]\s*(.+)$/i,
-    /^(?:business\s+initiative|initiative)\s*[:\-]\s*(.+)$/i,
+    /^(?:project\s*(?:\/\s*initiative)?\s*name|project\s*or\s*initiative(?:\s*name)?|initiative\s*name|program\s*name|nama\s*(?:proyek|inisiatif|program))\s*[:-]\s*(.+)$/i,
+    /^(?:business\s+initiative|initiative)\s*[:-]\s*(.+)$/i,
   ]
 
   for (const line of lines) {
@@ -263,7 +262,7 @@ function normalizeHeadingLabel(value: string): string {
     // Strip dotted TOC leaders ("Latar Belakang .... 6") before trailing page numbers.
     .replace(/\.{2,}.*$/, '')
     // Strip trailing page numbers, with dotted leader ("...6") OR plain whitespace ("Overview 6")
-    .replace(/[\s. ]+\d+\s*$/, '')
+    .replace(/[\s.\u00a0]+\d+\s*$/, '')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -418,7 +417,7 @@ export function extractAffectedApplicationsFromDocumentText(text: string, maxIte
   }
 
   const sectionMatch = source.match(
-    /(?:^|\n)\s*(?:aplikasi\s+yang\s+terdampak|affected\s+applications?|sistem\s+(?:terkait|terdampak)|system\s+landscape|integrasi\s+sistem)\s*[:\-]?\s*\n([\s\S]{0,3000}?)(?:\n\s*\n|\n\s*(?:[IVXLCDM]+\.|[0-9]+\.)|$)/i,
+    /(?:^|\n)\s*(?:aplikasi\s+yang\s+terdampak|affected\s+applications?|sistem\s+(?:terkait|terdampak)|system\s+landscape|integrasi\s+sistem)\s*[:-]?\s*\n([\s\S]{0,3000}?)(?:\n\s*\n|\n\s*(?:[IVXLCDM]+\.|[0-9]+\.)|$)/i,
   )
   if (sectionMatch?.[1]) {
     for (const line of sectionMatch[1].split('\n')) {
@@ -500,7 +499,7 @@ function splitApprovalRoleAndName(line: string): BrdStakeholderEntry | null {
   if (tabParts.length >= 2) {
     const role = tabParts[0]
     let name = tabParts[1]
-    if (/^(?:OK|\-+|\.+|comments?|signature|date)$/i.test(name) && tabParts[2]) {
+    if (/^(?:OK|-+|\.+|comments?|signature|date)$/i.test(name) && tabParts[2]) {
       name = tabParts[2]
     }
     name = name.replace(/\s+OK\s*$/i, '').trim()
@@ -781,10 +780,6 @@ function looksLikeBrdRole(value: string): boolean {
   return BRD_ROLE_TITLE_PATTERN.test(role)
 }
 
-function isLikelyPersonName(value: string): boolean {
-  return looksLikeBrdPersonName(value)
-}
-
 export function filterVerifiedStakeholders(stakeholders: BrdStakeholderEntry[]): BrdStakeholderEntry[] {
   return stakeholders.filter(
     (entry) =>
@@ -841,7 +836,7 @@ export function extractBrdStakeholdersFromDocumentText(text: string, maxItems = 
 
   extractApprovalTableStakeholders(source, byKey, maxItems)
 
-  const roleLineRegex = /^(PIC|Owner|Pemilik|Approver|Approval|Reviewer|Business Owner|Chief|Head|Director|Manager|Officer|Partner|Accountable|Responsible|Consulted|Informed|Penanggung\s*Jawab|Stakeholder|Process Owner|Product Owner|Key User|Dept\.?\s*Head|Div\.?\s*Head|IT Business Partner|Head Of)\s*[:\-]\s*(.+)$/gim
+  const roleLineRegex = /^(PIC|Owner|Pemilik|Approver|Approval|Reviewer|Business Owner|Chief|Head|Director|Manager|Officer|Partner|Accountable|Responsible|Consulted|Informed|Penanggung\s*Jawab|Stakeholder|Process Owner|Product Owner|Key User|Dept\.?\s*Head|Div\.?\s*Head|IT Business Partner|Head Of)\s*[:-]\s*(.+)$/gim
   for (const match of source.matchAll(roleLineRegex)) {
     const role = (match[1] ?? 'Stakeholder').trim()
     const tail = (match[2] ?? '').trim()
@@ -853,10 +848,10 @@ export function extractBrdStakeholdersFromDocumentText(text: string, maxItems = 
 
   for (const line of source.split('\n')) {
     const trimmed = line.trim().replace(/^[-*•]\s*/, '')
-    if (!trimmed || /^(PIC|Owner|Approver|Reviewer|Business Owner|Stakeholder|Chief|Head)\s*[:\-]/i.test(trimmed)) continue
+    if (!trimmed || /^(PIC|Owner|Approver|Reviewer|Business Owner|Stakeholder|Chief|Head)\s*[:-]/i.test(trimmed)) continue
 
     const executiveDashMatch = trimmed.match(
-      /^([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,4})\s*[—\-]\s*((?:Chief|Head|Director|Manager|Officer|Partner|Owner|PIC|President|Lead|VP|BRM|BRS|Architect|Analyst|Consultant|Supervisor|Coordinator).+)$/i,
+      /^([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,4})\s*[—-]\s*((?:Chief|Head|Director|Manager|Officer|Partner|Owner|PIC|President|Lead|VP|BRM|BRS|Architect|Analyst|Consultant|Supervisor|Coordinator).+)$/i,
     )
     if (executiveDashMatch?.[1] && executiveDashMatch[2]) {
       pushStakeholder(byKey, executiveDashMatch[1], executiveDashMatch[2])
@@ -1223,7 +1218,7 @@ function resolveTocSummary(
 
 function parseStakeholdersFromHtml(contentHtml: string): BrdStakeholderEntry[] {
   const entries: BrdStakeholderEntry[] = []
-  const liRegex = /<li[^>]*>\s*<strong>([^<]+)<\/strong>\s*(?:[—\-]|&mdash;)\s*([^<]+)\s*<\/li>/gi
+  const liRegex = /<li[^>]*>\s*<strong>([^<]+)<\/strong>\s*(?:[—-]|&mdash;)\s*([^<]+)\s*<\/li>/gi
   for (const match of contentHtml.matchAll(liRegex)) {
     const name = stripHtmlToPlainText(match[1] ?? '')
     const role = normalizeStakeholderRole(stripHtmlToPlainText(match[2] ?? ''))
@@ -1354,7 +1349,7 @@ export function ensureBrdKbStandardContent(
         break
       }
       default:
-        parts.push(buildGenericSectionFallbackHtml(section.title))
+        parts.push(`<h2>${escapeHtml(section.title)}</h2>${extractH2SectionBody(contentHtml, section.title)}`)
         break
     }
   }
@@ -1434,9 +1429,7 @@ function canExtractPlainTextFile(file: File): boolean {
 }
 
 function preserveStructureExtractedText(value: string, maxChars: number): string {
-  const compact = value
-    .replace(/\u0000/g, '')
-    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+  const compact = replaceExtractedTextControls(value, '')
     .replace(/\r\n/g, '\n')
     .replace(/[ \t\f\v]+/g, ' ')
     .replace(/ *\n */g, '\n')
@@ -1455,9 +1448,7 @@ function preserveStructureExtractedText(value: string, maxChars: number): string
 }
 
 function normalizeExtractedText(value: string, maxChars: number): string {
-  const compact = value
-    .replace(/\u0000/g, ' ')
-    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+  const compact = replaceExtractedTextControls(value, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   if (!compact) return ''
@@ -1513,7 +1504,7 @@ export function pickRoleNameFromTableCells(cells: string[]): { role: string; nam
   const headerIndices = findApprovalTableColumnIndices(cleaned)
   if (headerIndices) return null
 
-  const dataCells = cleaned.filter((cell) => !/^(?:OK|\-+|\.+)$/i.test(cell))
+  const dataCells = cleaned.filter((cell) => !/^(?:OK|-+|\.+)$/i.test(cell))
   if (dataCells.length < 2) return null
 
   let start = 0
@@ -1690,7 +1681,7 @@ const BRD_HEADER_LINE_RE = /^(?:BRD\s*#|Business Requirement Document|Priority\s
 
 export function stripBrdPageArtifacts(text: string): string {
   if (!text.trim()) return ''
-  let cleaned = text.replace(BRD_INLINE_FOOTER_RE, ' ')
+  const cleaned = text.replace(BRD_INLINE_FOOTER_RE, ' ')
   const lines = cleaned.replace(/\r/g, '\n').split('\n').map((line) => {
     const trimmed = line.trim()
     if (!trimmed) return ''
@@ -1983,8 +1974,8 @@ export function repositoryTraceEntryTitle(documentTitle: string) {
   return `${documentTitle.trim() || 'Uploaded Document'} Source Document`
 }
 
-export function findRepositoryTraceEntryByDocumentId(
-  entries: Array<{ id: string; title: string; content?: string | null }>,
+export function findRepositoryTraceEntryByDocumentId<T extends { id: string; title: string; content?: string | null }>(
+  entries: readonly T[],
   documentId: string,
   documentTitle: string,
 ) {

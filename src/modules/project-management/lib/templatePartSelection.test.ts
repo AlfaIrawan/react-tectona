@@ -6,6 +6,7 @@ import {
   mergePartChoices,
   partPreview,
   partPreviewSummary,
+  preserveSrdTicketFills,
   templateParts,
   versionsNeeded,
   type PartPayload,
@@ -28,6 +29,21 @@ const schema = {
 }
 
 const empty: PartPayload = { fills: {}, sections: {}, collections: {}, diagrams: {} }
+
+it('does not ask for a revision choice for the SRD ticket, including previously blank tickets', () => {
+  const schema = { placeholders: [{ key: 'ticket', label: 'Ticket' }] }
+  expect(templateParts(schema, 'SRD')).toEqual([])
+  expect(templateParts(schema, 'BRD').map(({ key }) => key)).toEqual(['ticket'])
+})
+
+it.each(['0007-A', ''])('uses the current SRD ticket (%j) instead of a kept revision value', (ticket) => {
+  const old = { ...empty, fills: { ticket: 'STALE', project_name: 'Original title' }, diagrams: { ticket: 'old-image' } }
+  const generated = { ...empty, fills: { ticket } }
+  expect(preserveSrdTicketFills(old, generated)).toEqual({
+    ...empty, fills: { ticket, project_name: 'Original title' },
+  })
+  expect(old.fills.ticket).toBe('STALE')
+})
 
 describe('templateParts', () => {
   it('lists fields, sections and top-level tables, leaving out what the system fills', () => {

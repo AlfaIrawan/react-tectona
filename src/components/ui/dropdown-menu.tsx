@@ -54,6 +54,7 @@ const DropdownMenu = React.forwardRef<
     <DropdownMenuContext.Provider value={{ open: isOpen, setOpen }}>
       <div
         ref={internalRef}
+        data-theme-menu-open={isOpen ? 'true' : undefined}
         className={cn('relative', className)}
         {...props}
       >
@@ -107,7 +108,12 @@ DropdownMenuTrigger.displayName = 'DropdownMenuTrigger'
 
 const DropdownMenuContent = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { align?: 'start' | 'end'; side?: 'top' | 'bottom' }
+  React.HTMLAttributes<HTMLDivElement> & {
+    align?: 'start' | 'end'
+    side?: 'top' | 'bottom'
+    onCloseAutoFocus?: (event: Event) => void
+    onOpenAutoFocus?: (event: Event) => void
+  }
 >(({ className, align = 'end', side = 'bottom', onCloseAutoFocus: _onCloseAutoFocus, onOpenAutoFocus: _onOpenAutoFocus, ...props }, ref) => {
   const context = React.useContext(DropdownMenuContext)
   const [isAnimating, setIsAnimating] = React.useState(false)

@@ -34,7 +34,7 @@ function ownedPersonalWorkspaceRoot(
     current = parentId ? byId.get(parentId) : undefined
   }
 
-  if (!rootPersonal) return null
+  if (!rootPersonal || !subject.id?.trim()) return null
   return isWorkspaceOwnedBySubject(
       {
         id: rootPersonal.id,
@@ -42,7 +42,7 @@ function ownedPersonalWorkspaceRoot(
         createdBy: rootPersonal.created_by ?? null,
         tenantMode: rootPersonal.tenant_mode ?? null,
       },
-      subject,
+      { ...subject, id: subject.id },
     )
     ? rootPersonal
     : null

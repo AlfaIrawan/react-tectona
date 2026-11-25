@@ -1,9 +1,11 @@
-import { useCallback, useLayoutEffect, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode, type WheelEvent } from 'react'
+import { useCallback, useLayoutEffect, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 /** Space kept free under the grid so the page's bottom edge is never cut off. */
 export const SLIDING_GRID_BOTTOM_RESERVE_PX = 24
+/** Blank space on each page lets selection rings and blurred shadows fade before the horizontal clip. */
+export const SLIDING_GRID_SHADOW_BLEED_PX = 48
 /** Height assumed before the first card has been measured. */
 const FALLBACK_ROW_HEIGHT_PX = 220
 /** Movement of the two fingers' midpoint before a swipe is recognised as horizontal. */
@@ -13,6 +15,26 @@ const SWIPE_COMMIT_RATIO = 0.15
 const SWIPE_COMMIT_MIN_PX = 60
 /** A trackpad flick turns one page; further flicks wait this long. */
 const WHEEL_PAGE_LOCK_MS = 450
+const WHEEL_COMMIT_PX = 40
+const WHEEL_GESTURE_GAP_MS = 180
+
+/** Normalize mouse wheels (including Shift+wheel) and trackpad horizontal movement. */
+export function wheelPageDelta(event: Pick<WheelEvent, 'deltaX' | 'deltaY' | 'deltaMode' | 'ctrlKey' | 'metaKey'>, viewportHeight: number): number {
+  if (event.ctrlKey || event.metaKey) return 0
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+  return delta * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewportHeight : 1)
+}
+
+function hasNestedWheelTarget(target: EventTarget | null, viewport: HTMLElement): boolean {
+  if (!(target instanceof Element)) return false
+  if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="slider"], [role="spinbutton"]')) return true
+  for (let node = target; node !== viewport && viewport.contains(node); node = node.parentElement!) {
+    const style = getComputedStyle(node)
+    if ((/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight)
+        || (/(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth)) return true
+  }
+  return false
+}
 
 /** Columns at a viewport-based width, matching the grid breakpoints (md = 768px, lg = 1024px). */
 export function columnsForWidth(width: number, listView: boolean): number {
@@ -38,21 +60,40 @@ export type SlidingLayout = {
  * Measures the grid against the space it has. Sliding is only on when the whole grid is taller
  * than that space; otherwise every card is shown at once and there is no pager.
  */
+export function gridAvailableLayoutHeight(input: { viewportHeight: number; top: number; renderedWidth: number; layoutWidth: number }): number {
+  const scale = input.layoutWidth > 0 && input.renderedWidth > 0 ? input.renderedWidth / input.layoutWidth : 1
+  return Math.max(0, input.viewportHeight - input.top - SLIDING_GRID_BOTTOM_RESERVE_PX) / scale
+}
+
+/** Keep decorative bleed inside the page scroller; it must never widen the scrollable page. */
+export function gridShadowBleed(input: { left: number; right: number; renderedWidth: number; layoutWidth: number; boundaryLeft: number; boundaryRight: number }): number {
+  const scale = input.layoutWidth > 0 && input.renderedWidth > 0 ? input.renderedWidth / input.layoutWidth : 1
+  return Math.max(0, Math.min(SLIDING_GRID_SHADOW_BLEED_PX, (input.left - input.boundaryLeft) / scale, (input.boundaryRight - input.right) / scale))
+}
+
 export function slidingLayout(input: {
-  itemCount: number
-  columns: number
-  rowHeight: number
-  gap: number
-  availableHeight: number
+  itemCount: number; columns: number; rowHeight: number; rowHeights?: number[]; gap: number; availableHeight: number
 }): SlidingLayout {
-  const { itemCount, columns, rowHeight, gap, availableHeight } = input
-  const rowStep = Math.max(1, rowHeight + gap)
-  const rowsFit = Math.max(1, Math.floor((availableHeight + gap) / rowStep))
-  const totalRows = Math.ceil(itemCount / Math.max(1, columns))
-  const sliding = totalRows > rowsFit
-  const pageSize = Math.max(1, columns) * rowsFit
-  const pageCount = sliding ? Math.ceil(itemCount / pageSize) : 1
-  return { rowsFit, totalRows, sliding, pageSize, pageCount }
+  const columns = Math.max(1, input.columns), gap = Math.max(0, input.gap)
+  const totalRows = Math.ceil(input.itemCount / columns)
+  const heights = Array.from({ length: totalRows }, (_, i) => Math.max(1, input.rowHeights?.[i] ?? input.rowHeight))
+  const prefix = [0]
+  for (const height of heights) prefix.push(prefix[prefix.length - 1] + height)
+  const heightOf = (start: number, end: number) => prefix[end] - prefix[start] + Math.max(0, end - start - 1) * gap
+  const fits = (height: number) => height <= input.availableHeight + 0.001
+  const sliding = totalRows > 1 && !fits(heightOf(0, totalRows))
+  let rowsFit = Math.max(1, totalRows)
+  if (sliding) {
+    rowsFit = 1
+    // A uniform page size must fit every page, including later pages with taller cards.
+    for (let rows = totalRows - 1; rows > 1; rows--) {
+      let allFit = true
+      for (let start = 0; start < totalRows; start += rows) if (!fits(heightOf(start, Math.min(totalRows, start + rows)))) { allFit = false; break }
+      if (allFit) { rowsFit = rows; break }
+    }
+  }
+  const pageSize = columns * rowsFit
+  return { rowsFit, totalRows, sliding, pageSize, pageCount: sliding ? Math.ceil(input.itemCount / pageSize) : 1 }
 }
 
 type SlidingCardGridProps<T> = {
@@ -71,9 +112,10 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const viewportRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [availableHeight, setAvailableHeight] = useState(Number.POSITIVE_INFINITY)
-  const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT_PX)
+  const [rowHeights, setRowHeights] = useState<number[]>([])
   const [page, setPage] = useState(0)
   const [dragOffset, setDragOffset] = useState(0)
+  const [shadowBleed, setShadowBleed] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
   const dragOffsetRef = useRef(0)
   // Fingers currently on the viewport, by pointer id. A swipe is made by exactly two of them.
@@ -81,38 +123,86 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
   const gestureRef = useRef<Gesture | null>(null)
   const swipeEndedRef = useRef(false)
   const wheelLockedUntilRef = useRef(0)
+  const wheelGestureRef = useRef({ delta: 0, lastAt: 0 })
 
   const measure = useCallback(() => {
     const element = containerRef.current
     if (!element) return
-    setWidth(element.clientWidth)
-    const top = element.getBoundingClientRect().top
-    setAvailableHeight(Math.max(0, window.innerHeight - top - SLIDING_GRID_BOTTOM_RESERVE_PX))
-    // The tallest card of the first row stands for a row.
-    const firstRow = Array.from(element.querySelectorAll<HTMLElement>('[data-sliding-card]')).slice(0, 4)
-    if (firstRow.length > 0) {
-      setRowHeight(Math.max(...firstRow.map((card) => card.offsetHeight)) || FALLBACK_ROW_HEIGHT_PX)
-    }
-  }, [])
+    const rect = element.getBoundingClientRect(), layoutWidth = element.clientWidth
+    const scroller = element.closest<HTMLElement>('[data-app-main-body]')
+    const boundary = scroller?.getBoundingClientRect()
+    const scale = layoutWidth > 0 && rect.width > 0 ? rect.width / layoutWidth : 1
+    const boundaryLeft = boundary ? boundary.left + (scroller?.clientLeft ?? 0) * scale : 0
+    const boundaryRight = boundary ? boundaryLeft + scroller!.clientWidth * scale : window.innerWidth
+    setShadowBleed(gridShadowBleed({ left: rect.left, right: rect.right, renderedWidth: rect.width, layoutWidth, boundaryLeft, boundaryRight }))
+    setWidth(layoutWidth)
+    setAvailableHeight(gridAvailableLayoutHeight({ viewportHeight: window.innerHeight, top: rect.top, renderedWidth: rect.width, layoutWidth }))
+    const columns = columnsForWidth(layoutWidth, isListView)
+    const cards = Array.from(element.querySelectorAll<HTMLElement>('[data-sliding-card]'))
+    const heights: number[] = []
+    for (let index = 0; index < cards.length; index += columns) heights.push(Math.max(...cards.slice(index, index + columns).map(card => card.offsetHeight || FALLBACK_ROW_HEIGHT_PX)))
+    setRowHeights(current => current.length === heights.length && current.every((value, index) => value === heights[index]) ? current : heights)
+  }, [isListView])
 
-  useLayoutEffect(() => {
-    measure()
-  }, [measure, items.length, isListView])
-
-  useEffect(() => {
-    window.addEventListener('resize', measure)
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
-    if (observer && containerRef.current) observer.observe(containerRef.current)
-    return () => {
-      window.removeEventListener('resize', measure)
-      observer?.disconnect()
-    }
-  }, [measure])
+  // Also remeasure when surrounding panels move the grid without changing its own dimensions.
+  useLayoutEffect(() => { measure() })
 
   const columns = columnsForWidth(width, isListView)
-  const layout = slidingLayout({ itemCount: items.length, columns, rowHeight, gap, availableHeight })
+  const layout = slidingLayout({ itemCount: items.length, columns, rowHeight: FALLBACK_ROW_HEIGHT_PX, rowHeights, gap, availableHeight })
+
+  useEffect(() => {
+    let frame = 0
+    const schedule = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(measure) }
+    window.addEventListener('resize', schedule)
+    window.addEventListener('scroll', schedule, true)
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null
+    if (observer && containerRef.current) {
+      observer.observe(containerRef.current)
+      for (const card of containerRef.current.querySelectorAll<HTMLElement>('[data-sliding-card]')) observer.observe(card)
+    }
+    return () => {
+      window.removeEventListener('resize', schedule)
+      window.removeEventListener('scroll', schedule, true)
+      window.cancelAnimationFrame(frame)
+      observer?.disconnect()
+    }
+  }, [measure, items.length, layout.sliding, layout.pageSize])
+
   const currentPage = Math.min(page, Math.max(0, layout.pageCount - 1))
   const gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!layout.sliding || !viewport) return
+    // React wheel handlers are passive. Cancel native page scroll only when this
+    // grid can consume the gesture; release it at either end and for nested controls.
+    const handleWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || isSwiping || hasNestedWheelTarget(event.target, viewport)) return
+      const delta = wheelPageDelta(event, viewport.clientHeight)
+      if (!delta) return
+      const now = Date.now()
+      if (now < wheelLockedUntilRef.current) {
+        event.preventDefault()
+        return
+      }
+      const next = currentPage + Math.sign(delta)
+      if (next < 0 || next >= layout.pageCount) {
+        wheelGestureRef.current.delta = 0
+        return
+      }
+      event.preventDefault()
+      const gesture = wheelGestureRef.current
+      if (now - gesture.lastAt > WHEEL_GESTURE_GAP_MS || Math.sign(gesture.delta) !== Math.sign(delta)) gesture.delta = 0
+      gesture.delta += delta
+      gesture.lastAt = now
+      if (Math.abs(gesture.delta) < WHEEL_COMMIT_PX) return
+      gesture.delta = 0
+      wheelLockedUntilRef.current = now + WHEEL_PAGE_LOCK_MS
+      setPage(next)
+    }
+    viewport.addEventListener('wheel', handleWheel, { passive: false })
+    return () => viewport.removeEventListener('wheel', handleWheel)
+  }, [currentPage, layout.pageCount, layout.sliding, isSwiping])
 
   const goToPage = (next: number) => {
     setPage(Math.min(Math.max(0, next), Math.max(0, layout.pageCount - 1)))
@@ -188,14 +278,6 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
     }
   }
 
-  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (Math.abs(event.deltaX) < 20 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return
-    const now = Date.now()
-    if (now < wheelLockedUntilRef.current) return
-    wheelLockedUntilRef.current = now + WHEEL_PAGE_LOCK_MS
-    goToPage(currentPage + (event.deltaX > 0 ? 1 : -1))
-  }
-
   if (!layout.sliding) {
     return (
       <div ref={containerRef}>
@@ -221,14 +303,14 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
     <div ref={containerRef} className="space-y-3">
       <div
         ref={viewportRef}
-        className="overflow-hidden"
+        // Clip neighboring pages horizontally while letting card shadows fade vertically.
+        className="overflow-x-clip overflow-y-visible"
         // Vertical scrolling stays native; the two-finger horizontal swipe is handled here.
-        style={{ touchAction: 'pan-y' }}
+        style={{ touchAction: 'pan-y', marginInline: -shadowBleed, width: `calc(100% + ${shadowBleed * 2}px)` }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerEnd}
         onPointerCancel={handlePointerEnd}
-        onWheel={handleWheel}
         onClickCapture={handleClickCapture}
       >
         <div
@@ -242,7 +324,7 @@ export function SlidingCardGrid<T>({ items, getKey, renderItem, isListView = fal
             <div
               key={pageIndex}
               className="grid min-w-0 shrink-0 content-start"
-              style={{ width: `${100 / layout.pageCount}%`, gridTemplateColumns, gap }}
+              style={{ width: `${100 / layout.pageCount}%`, gridTemplateColumns, gap, paddingInline: shadowBleed }}
               aria-hidden={pageIndex !== currentPage}
             >
               {pageItems.map((item) => (

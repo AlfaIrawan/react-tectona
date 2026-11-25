@@ -15,7 +15,8 @@ type MembershipCacheEntry = {
 }
 
 let membershipCache: MembershipCacheEntry | null = null
-let membershipInflight: Promise<WacMemberListResponse> | null = null
+const membershipInflight = new Map<string, Promise<WacMemberListResponse>>()
+let membershipGeneration = 0
 
 export function peekCachedSubjectMemberships(
   subjectId: string,
@@ -31,7 +32,8 @@ export function peekCachedSubjectMemberships(
 
 export function invalidateSubjectMembershipsCache(): void {
   membershipCache = null
-  membershipInflight = null
+  membershipGeneration += 1
+  membershipInflight.clear()
 }
 
 export async function fetchSubjectMembershipsCached(
@@ -46,12 +48,17 @@ export async function fetchSubjectMembershipsCached(
     if (cached) return cached
   }
 
-  if (!force && membershipInflight) {
-    return membershipInflight
-  }
+  // A forced refresh skips settled data, not an equivalent request already in flight.
+  const key = JSON.stringify([TECTONA_WAC_APP_ID, subjectId, activeOnly])
+  const inflight = membershipInflight.get(key)
+  if (inflight) return inflight
+  const generation = membershipGeneration
 
   const request = fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly })
     .then((response) => {
+      if (generation !== membershipGeneration) {
+        throw new Error('Workspace membership request invalidated.')
+      }
       if (activeOnly) {
         membershipCache = {
           subjectId,
@@ -63,14 +70,10 @@ export async function fetchSubjectMembershipsCached(
       return response
     })
     .finally(() => {
-      if (membershipInflight === request) {
-        membershipInflight = null
-      }
+      if (membershipInflight.get(key) === request) membershipInflight.delete(key)
     })
 
-  if (!force && activeOnly) {
-    membershipInflight = request
-  }
+  membershipInflight.set(key, request)
 
   return request
 }

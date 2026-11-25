@@ -83,9 +83,9 @@ class NotificationRealtimeController {
     void (async () => {
       if (this.disposed || generation !== this.socketGeneration) return
       const session = (await ensureFreshSession()) ?? getSession()
-      if (this.disposed || generation !== this.socketGeneration || !session?.token) return
+      if (this.disposed || generation !== this.socketGeneration || !session) return
 
-      const url = createNotificationWebSocketUrl({ token: session.token })
+      const url = createNotificationWebSocketUrl({ token: session.token || undefined })
       const ws = new WebSocket(url)
       this.socket = ws
 

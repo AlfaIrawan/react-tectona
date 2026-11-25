@@ -46,6 +46,19 @@ export async function fetchIdentityUsers(params?: {
   return handleJson<IdentityUserListResponse>(res)
 }
 
+/** The sandbox identity service contains only this scenario's synthetic accounts. */
+export async function fetchWorkspaceManagementIdentityDirectory(): Promise<IdentityUserListResponse> {
+  const first = await fetchIdentityUsers({ limit: 500 })
+  if (!import.meta.env.DEV || !import.meta.env.VITE_WORKSPACE_SANDBOX) return first
+
+  const items = [...first.items]
+  for (let page = first; page.items.length === page.limit && page.limit > 0;) {
+    page = await fetchIdentityUsers({ limit: first.limit, offset: items.length })
+    items.push(...page.items)
+  }
+  return { ...first, items }
+}
+
 /** Fetch one canonical identity for workspace/app-scoped directory enrichment. */
 export async function fetchIdentityUser(identityRef: string): Promise<IdentityUserDto> {
   const ref = identityRef.trim()

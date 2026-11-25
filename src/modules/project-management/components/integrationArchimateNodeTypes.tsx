@@ -1,4 +1,8 @@
-import { Handle, NodeResizer, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps, type NodeTypes } from 'reactflow'
+import { useDiagramInteractions } from '../lib/diagramInteractionContext'
+import './diagramNodeAffordances.css'
+import { InlineDiagramNodeTitle } from './InlineDiagramNodeTitle'
+import { connectionAnchor, retainConnectionHandlePercents } from '@/modules/project-management/lib/diagramConnections'
+import { Handle, NodeResizer, NodeResizeControl, useNodeId, Position, useReactFlow, useStore, useUpdateNodeInternals, type NodeProps } from 'reactflow'
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Library, Link2 } from 'lucide-react'
 import {
@@ -42,37 +46,95 @@ function SelectionResizer({
   minHeight: number
   keepAspectRatio?: boolean
 }) {
+  const zoom = useStore(state => state.transform[2])
+  const nodeId = useNodeId()
+  const { beginResize, endResize } = useDiagramInteractions()
+  const onResizeStart = () => {
+    if (nodeId) beginResize(nodeId, { minWidth, minHeight, keepAspectRatio })
+  }
+  const handleStyle = { ...RESIZER_HANDLE_STYLE, width: 10 / zoom, height: 10 / zoom, borderWidth: 1.5 / zoom, borderRadius: 2 / zoom, zIndex: 40 }
   return (
-    <NodeResizer
-      isVisible={selected}
-      minWidth={minWidth}
-      minHeight={minHeight}
-      keepAspectRatio={keepAspectRatio}
-      lineStyle={RESIZER_LINE_STYLE}
-      handleStyle={RESIZER_HANDLE_STYLE}
-    />
+    <>
+      <NodeResizer
+        isVisible={selected}
+        onResizeStart={onResizeStart}
+        onResizeEnd={endResize}
+        minWidth={minWidth}
+        minHeight={minHeight}
+        keepAspectRatio={keepAspectRatio}
+        lineStyle={{ ...RESIZER_LINE_STYLE, borderWidth: 1 / zoom }}
+        handleStyle={handleStyle}
+      />
+      {selected && (['top', 'right', 'bottom', 'left'] as const).map(position => (
+        <NodeResizeControl
+          key={position}
+          position={position}
+          onResizeStart={onResizeStart}
+          onResizeEnd={endResize}
+          minWidth={minWidth}
+          minHeight={minHeight}
+          keepAspectRatio={keepAspectRatio}
+          style={handleStyle}
+        />
+      ))}
+    </>
   )
 }
 
-const HANDLE_SIZE_PX = 8
-const HANDLE_HALF_PX = HANDLE_SIZE_PX / 2
-
-function handlePlacement(side: 'top' | 'right' | 'bottom' | 'left', percent: number): CSSProperties {
-  const center = `calc(${percent}% - ${HANDLE_HALF_PX}px)`
-  const box: CSSProperties = {
-    width: HANDLE_SIZE_PX,
-    height: HANDLE_SIZE_PX,
+function handlePlacement(side: 'top' | 'right' | 'bottom' | 'left', percent: number, shape: 'rectangle' | 'ellipse' | 'diamond', zoom: number): CSSProperties {
+  const anchor = connectionAnchor(side, percent, shape)
+  // Registered geometry stays 8px for the existing centeredDiagramEndpoint contract.
+  // Only the visible dot scales, via CSS, independently of persisted anchors.
+  const size = 8
+  return {
+    width: size,
+    height: size,
     transform: 'none',
     margin: 0,
-  }
-  if (side === 'top') return { ...box, top: -HANDLE_HALF_PX, bottom: 'auto', left: center, right: 'auto' }
-  if (side === 'bottom') return { ...box, top: `calc(100% - ${HANDLE_HALF_PX}px)`, bottom: 'auto', left: center, right: 'auto' }
-  if (side === 'left') return { ...box, left: -HANDLE_HALF_PX, right: 'auto', top: center, bottom: 'auto' }
-  return { ...box, left: `calc(100% - ${HANDLE_HALF_PX}px)`, right: 'auto', top: center, bottom: 'auto' }
+    left: `calc(${anchor.x}% - ${size / 2}px)`,
+    top: `calc(${anchor.y}% - ${size / 2}px)`,
+    bottom: 'auto',
+    right: 'auto',
+    '--diagram-control-scale': 1 / zoom,
+  } as CSSProperties
 }
 
-function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; selected: boolean; layoutKey?: string }) {
+function ConnectionHandles({ nodeId, selected, layoutKey, shape = 'rectangle' }: { nodeId: string; selected: boolean; layoutKey?: string; shape?: 'rectangle' | 'ellipse' | 'diamond' }) {
   const updateNodeInternals = useUpdateNodeInternals()
+  const zoom = useStore(state => state.transform[2])
+  const connectable = useStore(state => state.nodesConnectable)
+  const { showConnectionArrows } = useDiagramInteractions()
+  const containerRef = useRef<HTMLSpanElement>(null)
+  const [nearestSide, setNearestSide] = useState<string | null>(null)
+  useEffect(() => {
+    const node = containerRef.current?.closest('.react-flow__node')
+    if (!node) return
+    const move = (event: Event) => {
+      const pointer = event as PointerEvent
+      const rect = node.getBoundingClientRect()
+      const centers = [
+        ['top', rect.left + rect.width / 2, rect.top - 25],
+        ['right', rect.right + 25, rect.top + rect.height / 2],
+        ['bottom', rect.left + rect.width / 2, rect.bottom + 25],
+        ['left', rect.left - 25, rect.top + rect.height / 2],
+      ] as const
+      const nearest = centers.reduce((best, center) =>
+        Math.hypot(pointer.clientX - center[1], pointer.clientY - center[2]) <
+        Math.hypot(pointer.clientX - best[1], pointer.clientY - best[2]) ? center : best)
+      setNearestSide(nearest[0])
+    }
+    const leave = () => setNearestSide(null)
+    node.addEventListener('pointermove', move)
+    node.addEventListener('pointerleave', leave)
+    return () => {
+      node.removeEventListener('pointermove', move)
+      node.removeEventListener('pointerleave', leave)
+    }
+  }, [])
+  const connectedHandleKey = useStore(state => state.edges.flatMap(edge => [
+    ...(edge.source === nodeId && edge.sourceHandle ? [edge.sourceHandle] : []),
+    ...(edge.target === nodeId && edge.targetHandle ? [edge.targetHandle] : []),
+  ]).join('|'))
   const measuredKey = useStore((state) => {
     const node = state.nodeInternals.get(nodeId)
     return `${Number(node?.width ?? 0)}x${Number(node?.height ?? 0)}`
@@ -82,20 +144,14 @@ function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; se
   const width = measuredWidth || layoutWidth
   const height = measuredHeight || layoutHeight
   const sizeKey = `${Math.round(width)}x${Math.round(height)}`
-  const sourceClass = [
-    '!m-0 !box-border !block !min-h-0 !min-w-0 !rounded-full !border !border-white !bg-sky-500 !p-0 !leading-none',
-    '!pointer-events-auto !z-30',
-    '!opacity-0 !transition-opacity !duration-150',
-    'group-hover:!opacity-100',
-    selected ? '!opacity-100' : '',
-  ].join(' ')
+  const sourceClass = `diagram-connection-point${selected ? ' diagram-connection-point-selected' : ''}`
   const targetClass = '!m-0 !box-border !block !min-h-0 !min-w-0 !rounded-full !border-0 !bg-transparent !p-0 !leading-none !pointer-events-none !opacity-0'
 
   useEffect(() => {
     updateNodeInternals(nodeId)
     const frame = window.requestAnimationFrame(() => updateNodeInternals(nodeId))
     return () => window.cancelAnimationFrame(frame)
-  }, [nodeId, sizeKey, updateNodeInternals])
+  }, [nodeId, sizeKey, shape, connectedHandleKey, zoom, updateNodeInternals])
 
   const sides: Array<{ side: 'top' | 'right' | 'bottom' | 'left'; position: Position }> = [
     { side: 'top', position: Position.Top },
@@ -106,11 +162,12 @@ function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; se
 
   return (
     <>
+      <span ref={containerRef} hidden />
       {sides.flatMap(({ side, position }) => {
         const length = side === 'top' || side === 'bottom' ? width : height
-        return connectionHandlePercentsForLength(length).flatMap((percent) => {
+        return retainConnectionHandlePercents(side, connectionHandlePercentsForLength(length), connectedHandleKey.split('|')).flatMap((percent) => {
           const idSuffix = percent === 50 ? side : `${side}-${percent}`
-          const offsetStyle = handlePlacement(side, percent)
+          const offsetStyle = handlePlacement(side, percent, shape, zoom)
           return [
             <Handle
               key={`target-${idSuffix}`}
@@ -125,12 +182,27 @@ function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; se
               id={`source-${idSuffix}`}
               type="source"
               position={position}
-              isConnectable
-              isConnectableStart
-              isConnectableEnd
+              isConnectable={connectable}
+              isConnectableStart={connectable}
+              isConnectableEnd={connectable}
               className={sourceClass}
               style={offsetStyle}
-            />,
+            >
+              {percent === 50 && connectable && showConnectionArrows ? (
+                <span
+                  className={`diagram-connection-arrow diagram-connection-arrow-${side} source nodrag nopan${nearestSide === side ? ' diagram-connection-arrow-nearest' : ''}`}
+                  data-handleid={`source-${idSuffix}`}
+                  data-nodeid={nodeId}
+                  data-handlepos={position}
+                  title={`Drag to connect from ${side}`}
+                  aria-label={`Drag to connect from ${side}`}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 8h10V3l8 9-8 9v-5H3z" />
+                  </svg>
+                </span>
+              ) : null}
+            </Handle>,
           ]
         })
       })}
@@ -138,7 +210,7 @@ function ConnectionHandles({ nodeId, selected, layoutKey }: { nodeId: string; se
   )
 }
 
-export function ArchimateElementNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+export function ArchimateElementNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const resolvedVisual = data.visual
   const layerFill = getArchimateLayerFillBackground(
     data.layer,
@@ -148,7 +220,7 @@ export function ArchimateElementNode({ id, data, selected, width, height }: Node
   const baseBoxStyle = buildIntegrationNodeBoxStyle(data.visual, data.layer)
   const boxStyle: CSSProperties = {
     ...baseBoxStyle,
-    ...(layerFill.background
+    ...(data.visual?.glass ? {} : layerFill.background
       ? { background: layerFill.background, backgroundColor: 'transparent' }
       : { backgroundColor: layerFill.backgroundColor ?? baseBoxStyle.backgroundColor }),
   }
@@ -156,8 +228,8 @@ export function ArchimateElementNode({ id, data, selected, width, height }: Node
 
   return (
     <div className="group relative h-full w-full">
-      <SelectionResizer selected={selected} minWidth={100} minHeight={56} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={`${width ?? 0}x${height ?? 0}`} />
+      <SelectionResizer selected={selected} minWidth={100} minHeight={56} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
+      <ConnectionHandles nodeId={id} selected={selected} />
 
       <div className="relative h-full w-full overflow-hidden border" style={boxStyle}>
         {notationImageUrl ? (
@@ -168,15 +240,15 @@ export function ArchimateElementNode({ id, data, selected, width, height }: Node
             className="pointer-events-none absolute right-2 top-2 z-[1] h-8 w-8 object-contain"
           />
         ) : null}
-        <div className="flex min-h-[78px] h-full w-full min-w-0 flex-col items-center justify-center px-4 py-4 pr-11 text-center">
+        <div className="flex min-h-0 h-full w-full min-w-0 flex-col items-center justify-center px-4 py-4 pr-11 text-center" style={{ justifyContent: buildIntegrationNodeTextStyle(data.textStyle).justifyContent }}>
           <p
             className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words text-[13px] font-semibold leading-tight [line-clamp:unset] [-webkit-line-clamp:unset]"
             style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: data.textStyle?.wordWrap !== false })}
           >
             {data.title}
           </p>
-          {data.description.map((line) => (
-            <p key={line} className="mt-1 text-[11px] leading-4 text-slate-600">
+          {data.description.map((line, index) => (
+            <p key={index} style={buildIntegrationNodeTextStyle(data.textStyle)} className="mt-1 text-[11px] leading-4 text-slate-600">
               {line}
             </p>
           ))}
@@ -187,7 +259,7 @@ export function ArchimateElementNode({ id, data, selected, width, height }: Node
   )
 }
 
-export function ArchimateBoundaryNode({ id, data, selected, width, height }: NodeProps<ArchimateBoundaryNodeData>) {
+export function ArchimateBoundaryNode({ id, data, selected }: NodeProps<ArchimateBoundaryNodeData>) {
   const boxStyle = buildIntegrationNodeBoxStyle({
     ...data.visual,
     lineStyle: data.visual?.lineStyle ?? 'dashed',
@@ -198,16 +270,16 @@ export function ArchimateBoundaryNode({ id, data, selected, width, height }: Nod
   })
   return (
     <div className="group relative h-full w-full">
-      <SelectionResizer selected={selected} minWidth={180} minHeight={120} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={`${width ?? 0}x${height ?? 0}`} />
-      <div className="h-full w-full border-2 px-4 py-3" style={boxStyle}>
-        <p className="boundary-chrome pointer-events-auto text-xs font-semibold text-slate-600">{data.title}</p>
+      <SelectionResizer selected={selected} minWidth={180} minHeight={120} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
+      <ConnectionHandles nodeId={id} selected={selected} />
+      <div className="flex h-full w-full flex-col border-2 px-4 py-3" style={{ ...boxStyle, justifyContent: data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle).justifyContent : undefined }}>
+        <p style={buildIntegrationNodeTextStyle(data.textStyle)} className="boundary-chrome pointer-events-auto text-xs font-semibold text-slate-600">{data.title}</p>
       </div>
     </div>
   )
 }
 
-export function ArchimateNoteNode({ id, data, selected, width, height }: NodeProps<ArchimateNoteNodeData>) {
+export function ArchimateNoteNode({ id, data, selected }: NodeProps<ArchimateNoteNodeData>) {
   const boxStyle = buildIntegrationNodeBoxStyle({
     ...data.visual,
     fillEnabled: data.visual?.fillEnabled ?? true,
@@ -218,12 +290,12 @@ export function ArchimateNoteNode({ id, data, selected, width, height }: NodePro
   })
   return (
     <div className="group relative h-full w-full">
-      <SelectionResizer selected={selected} minWidth={160} minHeight={60} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={`${width ?? 0}x${height ?? 0}`} />
-      <div className="h-full w-full border px-4 py-3" style={boxStyle}>
-        <p className="text-xs font-semibold text-slate-900">{data.title}</p>
-        {data.lines.map((line) => (
-          <p key={line} className="mt-1 text-[11px] leading-4 text-slate-600">
+      <SelectionResizer selected={selected} minWidth={160} minHeight={60} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
+      <ConnectionHandles nodeId={id} selected={selected} />
+      <div className="flex h-full w-full flex-col border px-4 py-3" style={{ ...boxStyle, justifyContent: data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle).justifyContent : undefined }}>
+        <p style={buildIntegrationNodeTextStyle(data.textStyle)} className="text-xs font-semibold text-slate-900">{data.title}</p>
+        {data.lines.map((line, index) => (
+          <p key={index} style={buildIntegrationNodeTextStyle(data.textStyle)} className="mt-1 text-[11px] leading-4 text-slate-600">
             {line}
           </p>
         ))}
@@ -234,9 +306,9 @@ export function ArchimateNoteNode({ id, data, selected, width, height }: NodePro
 
 export function ArchimateImageNode({ data, selected }: NodeProps<ArchimateImageNodeData>) {
   return (
-    <div className="group relative h-full w-full rounded-md bg-white shadow-sm">
+    <div className="group relative h-full w-full rounded-md bg-white shadow-sm" style={buildIntegrationNodeBoxStyle({ fillColor: '#ffffff', ...data.visual })}>
       <SelectionResizer selected={selected} minWidth={96} minHeight={72} keepAspectRatio />
-      <img src={data.src} alt={data.alt} draggable={false} className="pointer-events-none h-full w-full rounded-md border border-slate-200 object-contain" />
+      <img src={data.src} alt={data.alt} draggable={false} className="pointer-events-none h-full w-full object-contain" style={{ borderRadius: 'inherit' }} />
     </div>
   )
 }
@@ -246,7 +318,7 @@ const C4_INTERNAL_LINE = '#3C7FC0'
 const C4_EXTERNAL_FILL = '#999999'
 const C4_EXTERNAL_LINE = '#8A8A8A'
 
-export function C4ElementNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+export function C4ElementNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const { setNodes } = useReactFlow()
   const [editingField, setEditingField] = useState<'title' | 'description' | null>(null)
   const [draft, setDraft] = useState('')
@@ -255,8 +327,7 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
   const fill = data.visual?.fillColor || (external ? C4_EXTERNAL_FILL : C4_INTERNAL_FILL)
   const line = data.visual?.lineColor || (external ? C4_EXTERNAL_LINE : C4_INTERNAL_LINE)
   const isPerson = data.stereotype.toLowerCase().includes('person')
-  const isDatabase = data.notationId === 'ContainerDb' || data.notationId === 'SystemDb'
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
+  const isDatabase = data.notationId?.endsWith('Db') === true
 
   useEffect(() => {
     if (!editingField) return
@@ -305,8 +376,8 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
 
   return (
     <div className="group relative h-full w-full overflow-visible">
-      <SelectionResizer selected={selected} minWidth={140} minHeight={72} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <SelectionResizer selected={selected} minWidth={140} minHeight={72} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       {data.applicationCatalogName ? (
         <span
           title={`Application Catalog: ${data.applicationCatalogName}`}
@@ -333,17 +404,16 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
       <div
         className="flex h-full w-full flex-col items-center justify-center px-3 py-2 text-center text-white"
         style={{
-          background: fill,
-          border: `1.5px solid ${line}`,
-          borderRadius: isDatabase ? '50% / 18%' : 8,
-          boxShadow: '0 1px 4px rgba(15,23,42,0.18)',
+          ...buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: line, lineWidth: 1.5, shadow: true, ...data.visual }),
+          borderRadius: isDatabase ? '50% / 18%' : data.visual?.rounded === false ? 0 : 8,
           fontFamily: 'Arial, sans-serif',
+          justifyContent: buildIntegrationNodeTextStyle(data.textStyle).justifyContent,
         }}
       >
         <p className="text-[10px] italic leading-none opacity-90">{`<<${data.stereotype}>>`}</p>
         {editingField === 'title' ? (
           <input
-            ref={editorRef}
+            ref={(element) => { editorRef.current = element }}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => finishEditing(true)}
@@ -353,7 +423,8 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
           />
         ) : (
           <p
-            className="mt-1 cursor-text text-[13px] font-semibold leading-tight"
+            className="mt-1 w-full cursor-text text-[13px] font-semibold leading-tight"
+            style={data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle, '#ffffff') : undefined}
             title={data.diagramLink ? 'Double-click to open linked diagram' : 'Double-click to edit title'}
             onDoubleClick={(event) => {
               if (data.diagramLink) return
@@ -366,7 +437,7 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
         )}
         {editingField === 'description' ? (
           <textarea
-            ref={editorRef}
+            ref={(element) => { editorRef.current = element }}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onBlur={() => finishEditing(true)}
@@ -377,7 +448,8 @@ export function C4ElementNode({ id, data, selected, width, height }: NodeProps<A
           />
         ) : (
           <div
-            className="mt-0.5 cursor-text text-[10px] leading-4 opacity-95"
+            className="mt-0.5 w-full cursor-text text-[10px] leading-4 opacity-95"
+            style={data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle, '#ffffff') : undefined}
             title={data.diagramLink ? 'Double-click to open linked diagram' : 'Double-click to edit description'}
             onDoubleClick={(event) => {
               if (data.diagramLink) return
@@ -425,7 +497,7 @@ function ExternalNodeLabel({
   const offsetY = live?.offsetY ?? resolved.offsetY
   const boxWidth = live?.boxWidth ?? resolved.boxWidth
   const boxHeight = live?.boxHeight ?? resolved.boxHeight
-  const wrapLabel = resolved.wordWrap || boxWidth > 0 || boxHeight > 0
+  const wrapLabel = resolved.wordWrap
 
   const commit = (next: { offsetX: number; offsetY: number; boxWidth: number; boxHeight: number }) => {
     setNodes((nodes) => nodes.map((node) => {
@@ -440,7 +512,7 @@ function ExternalNodeLabel({
             offsetY: next.offsetY,
             boxWidth: next.boxWidth,
             boxHeight: next.boxHeight,
-            wordWrap: next.boxWidth > 0 || next.boxHeight > 0 || Boolean(node.data.textStyle?.wordWrap),
+            wordWrap: node.data.textStyle?.wordWrap !== false,
           },
         },
       }
@@ -522,10 +594,14 @@ function ExternalNodeLabel({
     >
       <div
         ref={labelBoxRef}
+        data-diagram-node-label=""
         role="button"
         tabIndex={0}
         style={{
           boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: resolved.verticalAlign === 'top' ? 'flex-start' : resolved.verticalAlign === 'bottom' ? 'flex-end' : 'center',
           width: boxWidth > 0 ? boxWidth : 'max-content',
           minWidth: 48,
           height: boxHeight > 0 ? boxHeight : 'auto',
@@ -536,8 +612,8 @@ function ExternalNodeLabel({
           background: selected ? 'rgba(224, 242, 254, 0.92)' : 'transparent',
           color: resolved.fontColorEnabled ? resolved.fontColor : '#334155',
           fontFamily: resolved.fontFamily,
-          fontSize: Math.max(10, resolved.fontSize - 1),
-          fontWeight: resolved.bold ? 600 : 400,
+          fontSize: resolved.fontSize,
+          fontWeight: resolved.bold ? 700 : 400,
           fontStyle: resolved.italic ? 'italic' : 'normal',
           textDecoration: resolved.underline ? 'underline' : 'none',
           textAlign: resolved.align,
@@ -556,7 +632,7 @@ function ExternalNodeLabel({
         onPointerUp={end}
         onPointerCancel={end}
       >
-        {title}
+        <div style={{ width: '100%', minWidth: 0 }}><InlineDiagramNodeTitle nodeId={nodeId} value={title} multiline /></div>
       </div>
       {selected ? (
         <>
@@ -593,12 +669,12 @@ function ExternalNodeLabel({
   )
 }
 
-export function BpmnElementNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
+export function BpmnElementNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const type = data.notationId
   const kind = classifyBpmnType(type)
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
   const stroke = bpmnResolvedLineColor(type, data.visual?.lineColor)
   const fill = data.visual?.fillColor || '#ffffff'
+  const bpmnBoxStyle = buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: stroke, lineWidth: kind.eventPhase === 'end' ? 4 : kind.taskMarker === 'call' ? 3 : 2, lineStyle: kind.eventSubprocess ? 'dashed' : 'solid', ...data.visual })
   const lockSquare = isBpmnSquareShape(type)
   const isEvent = kind.family === 'event'
   const isGateway = kind.family === 'gateway'
@@ -611,15 +687,16 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         selected={selected}
         minWidth={lockSquare ? minSize : isAnnotation ? 80 : kind.family === 'pool' || kind.family === 'lane' ? 160 : 120}
         minHeight={lockSquare ? minSize : isAnnotation ? 40 : kind.family === 'pool' || kind.family === 'lane' ? 64 : 56}
-        keepAspectRatio={lockSquare}
+        keepAspectRatio={lockSquare || Boolean(data.arrange?.constrainProportions)}
       />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <ConnectionHandles nodeId={id} selected={selected} shape={isEvent ? 'ellipse' : isGateway ? 'diamond' : 'rectangle'} />
       {isEvent ? (
         <div className="flex h-full w-full items-center justify-center">
           <div
-            className="relative flex aspect-square h-[88%] w-[88%] items-center justify-center rounded-full bg-white"
+            className="relative flex aspect-square h-full w-full items-center justify-center rounded-full bg-white"
             style={{
-              border: kind.eventPhase === 'end' ? `4px solid ${stroke}` : `2px solid ${stroke}`,
+              ...bpmnBoxStyle,
+              borderRadius: '50%',
               boxShadow: kind.eventPhase === 'intermediate' ? `inset 0 0 0 2px ${stroke}` : undefined,
             }}
           >
@@ -635,7 +712,7 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
         </div>
       ) : isGateway ? (
         <div className="flex h-full w-full items-center justify-center">
-          <div className="relative aspect-square h-[78%] w-[78%] rotate-45 border-2 bg-white" style={{ borderColor: stroke }}>
+          <div className="relative aspect-square h-[70.710678%] w-[70.710678%] rotate-45 border-2 bg-white" style={{ ...bpmnBoxStyle, borderRadius: 0 }}>
             <svg viewBox="0 0 24 24" className="absolute inset-[18%] -rotate-45" aria-hidden>
               <BpmnGatewayMarkerIcon kind={kind.gateway ?? 'exclusive'} color={stroke} />
             </svg>
@@ -643,40 +720,38 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
           <ExternalNodeLabel nodeId={id} selected={selected} title={data.title} textStyle={data.textStyle} />
         </div>
       ) : isAnnotation ? (
-        <div className="relative h-full w-full bg-white/80 py-1 pl-2 pr-1">
+        <div className="relative h-full w-full bg-white/80 py-1 pl-2 pr-1" style={bpmnBoxStyle}>
           <span className="absolute bottom-0 left-0 top-0 w-[10px] border-y-2 border-l-2 border-slate-900" />
           <p
             className="min-h-0 min-w-0 w-full max-h-full overflow-visible whitespace-pre-wrap break-words pl-2 text-[12px] leading-4 text-slate-800 [line-clamp:unset] [-webkit-line-clamp:unset]"
-            style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
+            style={buildIntegrationNodeTextStyle(data.textStyle)}
           >
-            {data.title}
+            <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
           </p>
         </div>
       ) : kind.family === 'pool' || kind.family === 'lane' ? (
-        <div className="flex h-full w-full overflow-hidden border-2 bg-white/70" style={{ borderColor: stroke }}>
+        <div className="flex h-full w-full overflow-hidden border-2 bg-white/70" style={bpmnBoxStyle}>
           <div className="flex w-7 shrink-0 items-center justify-center border-r-2 bg-slate-50" style={{ borderColor: stroke }}>
-            <p className="rotate-180 truncate text-[11px] font-semibold tracking-wide text-slate-700" style={{ writingMode: 'vertical-rl' }}>
-              {data.title}
+            <p className="rotate-180 truncate text-[11px] font-semibold tracking-wide text-slate-700" style={{ ...buildIntegrationNodeTextStyle(data.textStyle), writingMode: 'vertical-rl' }}>
+              <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
             </p>
           </div>
         </div>
       ) : kind.family === 'group' ? (
-        <div className="h-full w-full rounded-md border-2 border-dashed border-slate-500 bg-transparent px-2 py-1">
+        <div className="h-full w-full rounded-md border-2 border-dashed border-slate-500 bg-transparent px-2 py-1" style={buildIntegrationNodeBoxStyle({ fillEnabled: false, lineStyle: 'dashed', ...data.visual })}>
           <p
             className="min-w-0 w-full overflow-visible whitespace-pre-wrap break-words text-[11px] font-medium text-slate-600"
-            style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
+            style={buildIntegrationNodeTextStyle(data.textStyle)}
           >
-            {data.title}
+            <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
           </p>
         </div>
       ) : (
         <div
           className="relative flex h-full min-h-0 w-full min-w-0 flex-col justify-center overflow-hidden rounded-[10px] border-2 px-3 py-2 text-center"
           style={{
-            borderColor: stroke,
-            background: fill,
-            borderStyle: kind.eventSubprocess ? 'dashed' : 'solid',
-            borderWidth: kind.taskMarker === 'call' ? 3 : 2,
+            ...bpmnBoxStyle,
+            justifyContent: buildIntegrationNodeTextStyle(data.textStyle).justifyContent,
           }}
         >
           {kind.taskMarker && kind.taskMarker !== 'none' ? (
@@ -689,9 +764,9 @@ export function BpmnElementNode({ id, data, selected, width, height }: NodeProps
           ) : null}
           <p
             className="min-h-0 min-w-0 w-full max-h-full overflow-hidden break-words text-[12px] font-medium leading-4 text-slate-900 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:4]"
-            style={buildIntegrationNodeTextStyle({ ...data.textStyle, wordWrap: true })}
+            style={buildIntegrationNodeTextStyle(data.textStyle)}
           >
-            {data.title}
+            <InlineDiagramNodeTitle nodeId={id} value={data.title} multiline />
           </p>
         </div>
       )}
@@ -727,11 +802,12 @@ export function ArchimateLegendNode() {
   )
 }
 
-function classMember(raw: string): { label: string; isMethod: boolean } {
+function classMember(raw: string, inferType = true): { label: string; isMethod: boolean } {
   const text = raw.trim().replace(/^[+\-#~]\s*/, '')
   if (text.includes('(')) return { label: text, isMethod: true }
   const typed = text.match(/^([^:]+):\s*(.+)$/)
   if (typed) return { label: `${typed[1].trim()} : ${typed[2].trim()}`, isMethod: false }
+  if (!inferType) return { label: text, isMethod: false }
   const typeName = /(?:^id|_id)$/i.test(text) ? 'Id' : 'String'
   return { label: `${text} : ${typeName}`, isMethod: false }
 }
@@ -746,28 +822,39 @@ function UmlClassGlyph() {
   )
 }
 
-export function UmlClassNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
-  const members = data.description.map(classMember).filter((member) => member.label)
+/** Typography only: compartment rows must not inherit title transforms or box geometry. */
+function memberTypography(textStyle: ArchimateElementNodeData['textStyle']): CSSProperties | undefined {
+  if (!textStyle) return undefined
+  const style = buildIntegrationNodeTextStyle(textStyle)
+  return {
+    fontFamily: style.fontFamily, fontSize: style.fontSize, color: style.color,
+    fontWeight: style.fontWeight, fontStyle: style.fontStyle, textDecoration: style.textDecoration,
+    whiteSpace: style.whiteSpace, overflowWrap: style.overflowWrap, wordBreak: style.wordBreak,
+  }
+}
+
+export function UmlClassNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
+  const members = data.description.map(raw => classMember(raw, data.umlStereotype !== 'field_sketch')).filter((member) => member.label)
   const attributes = members.filter((member) => !member.isMethod)
   const methods = members.filter((member) => member.isMethod)
   const border = selected ? '#2E86C1' : '#7F8C9B'
   const fill = selected ? '#E8F4FC' : '#FFFFFF'
   return (
     <div className="group relative h-full w-full overflow-visible">
-      <SelectionResizer selected={selected} minWidth={140} minHeight={34} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <SelectionResizer selected={selected} minWidth={140} minHeight={34} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       <div
         className="flex h-full w-full flex-col overflow-hidden text-slate-900"
-        style={{ background: fill, border: `1px solid ${border}`, borderRadius: 7, fontFamily: 'Segoe UI, Arial, sans-serif' }}
+        style={{ ...buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: border, rounded: true, ...data.visual }), fontFamily: 'Segoe UI, Arial, sans-serif' }}
       >
         <div className="flex items-center gap-1.5 px-2 py-1.5" style={{ borderBottom: members.length ? '1px solid #C5CED6' : undefined }}>
           <UmlClassGlyph />
           <div className="min-w-0 flex-1 text-center">
+            {data.umlStereotype ? <div className="text-[10px] font-normal leading-[14px] text-slate-500">{`<<${data.umlStereotype}>>`}</div> : null}
             {data.stereotype === 'interface' || data.stereotype === 'enumeration' ? (
               <div className="text-[10px] font-normal leading-3 text-slate-500">«{data.stereotype}»</div>
             ) : null}
-            <div className="text-[12px] font-bold leading-4">{data.title}</div>
+            <div style={data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle) : undefined} className="text-[12px] font-bold leading-4"><InlineDiagramNodeTitle nodeId={id} value={data.title} /></div>
           </div>
           <span className="w-3.5 shrink-0" />
         </div>
@@ -776,7 +863,7 @@ export function UmlClassNode({ id, data, selected, width, height }: NodeProps<Ar
             {attributes.map((member, index) => (
               <p key={`${member.label}-${index}`} className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 shrink-0 rounded-[2px] bg-sky-500" />
-                <span>{member.label}</span>
+                <span className="min-w-0" style={memberTypography(data.textStyle)}>{member.label}</span>
               </p>
             ))}
           </div>
@@ -786,7 +873,7 @@ export function UmlClassNode({ id, data, selected, width, height }: NodeProps<Ar
             {methods.map((member, index) => (
               <p key={`${member.label}-${index}`} className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
-                <span>{member.label}</span>
+                <span className="min-w-0" style={memberTypography(data.textStyle)}>{member.label}</span>
               </p>
             ))}
           </div>
@@ -796,39 +883,40 @@ export function UmlClassNode({ id, data, selected, width, height }: NodeProps<Ar
   )
 }
 
-function erdColumn(raw: string): { name: string; label: string; pk: boolean; fk: boolean } {
+function erdColumn(raw: string, inferForeignKey = true): { name: string; label: string; pk: boolean; fk: boolean } {
   const pk = /^\*/.test(raw.trim()) || /<<\s*PK\s*>>/i.test(raw)
   const markedFk = /<<\s*FK\s*>>/i.test(raw)
   const cleaned = raw.replace(/^\*\s*/, '').replace(/<<[^>]+>>/g, '').trim()
   const typed = cleaned.match(/^([^:]+):\s*(.+)$/)
   const name = (typed ? typed[1] : cleaned).trim()
   const typeName = typed ? typed[2].trim() : ''
-  const fk = markedFk || (!pk && /_id$/i.test(name) && !/^id$/i.test(name))
+  const fk = markedFk || (inferForeignKey && !pk && /_id$/i.test(name) && !/^id$/i.test(name))
   return { name, label: typeName ? `${name} : ${typeName}` : name, pk, fk }
 }
 
-export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData>) {
-  const layoutKey = `${width ?? 0}x${height ?? 0}`
+export function ErdEntityNode({ id, data, selected }: NodeProps<ArchimateElementNodeData>) {
   const fill = data.visual?.fillColor || '#FFF4CC'
   const stroke = data.visual?.lineColor || '#C4A35A'
-  const columns = data.description.map(erdColumn).filter((column) => column.name)
+  const columns = data.description.map(raw => erdColumn(raw, data.umlStereotype !== 'field_sketch')).filter((column) => column.name)
   return (
     <div className="group relative h-full w-full overflow-visible">
-      <SelectionResizer selected={selected} minWidth={150} minHeight={64} />
-      <ConnectionHandles nodeId={id} selected={selected} layoutKey={layoutKey} />
+      <SelectionResizer selected={selected} minWidth={150} minHeight={64} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
+      <ConnectionHandles nodeId={id} selected={selected} />
       <div
-        className="flex h-full w-full flex-col text-left text-slate-800"
-        style={{ background: fill, border: `1.5px solid ${stroke}`, fontFamily: 'Arial, Helvetica, sans-serif' }}
+        className="flex h-full w-full min-h-0 flex-col overflow-hidden text-left text-slate-800"
+        style={{ ...buildIntegrationNodeBoxStyle({ fillColor: fill, lineColor: stroke, lineWidth: 1.5, rounded: false, ...data.visual }), fontFamily: 'Arial, Helvetica, sans-serif' }}
       >
-        <div className="px-2 py-1.5 text-center text-[13px] font-bold" style={{ borderBottom: `1.5px solid ${stroke}` }}>
-          {data.title}
+        <div className="shrink-0 break-words px-2 py-1.5 text-center text-[13px] font-bold" style={{ ...(data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle) : {}), borderBottom: `1.5px solid ${stroke}` }}>
+          {data.umlStereotype ? <div className="text-[10px] font-normal leading-[14px]">{`<<${data.umlStereotype}>>`}</div> : null}
+          <InlineDiagramNodeTitle nodeId={id} value={data.title} />
         </div>
-        <div className="px-2 py-1 text-[11px] leading-[18px]">
+        <div data-erd-column-compartment="" className="nowheel min-h-0 flex-1 overflow-auto px-2 py-1 text-[11px] leading-[18px]">
           {columns.map((column, index) => (
             <p
               key={`${column.name}-${index}`}
-              className={column.fk ? 'font-bold' : undefined}
-              style={{ textDecoration: column.pk ? 'underline' : undefined }}
+              title={column.label}
+              className={column.fk ? 'break-words font-bold' : 'break-words'}
+              style={{ ...memberTypography(data.textStyle), fontWeight: column.fk ? 700 : memberTypography(data.textStyle)?.fontWeight, textDecoration: column.pk ? 'underline' : memberTypography(data.textStyle)?.textDecoration }}
             >
               {column.label}
             </p>
@@ -839,14 +927,15 @@ export function ErdEntityNode({ id, data, selected, width, height }: NodeProps<A
   )
 }
 
-export const integrationArchimateNodeTypes: NodeTypes = {
-  archimateElement: ArchimateElementNode,
-  archimateBoundary: ArchimateBoundaryNode,
-  archimateNote: ArchimateNoteNode,
-  archimateImage: ArchimateImageNode,
-  archimateLegend: ArchimateLegendNode,
-  c4Element: C4ElementNode,
-  umlClass: UmlClassNode,
-  erdEntity: ErdEntityNode,
-  bpmnElement: BpmnElementNode,
+export function UmlUseCaseNode({ id, data, selected, width, height }: NodeProps<ArchimateElementNodeData> & { width?: number; height?: number }) {
+  const actor = data.notationId === 'actor'
+  const boundary = data.notationId === 'system-boundary'
+  return <div className="group relative h-full w-full">
+    <SelectionResizer selected={selected} minWidth={80} minHeight={60} keepAspectRatio={Boolean(data.arrange?.constrainProportions)} />
+    {!boundary && <ConnectionHandles nodeId={id} selected={selected} layoutKey={`${width}x${height}`} shape={actor ? 'rectangle' : 'ellipse'} />}
+    <div className="flex h-full w-full flex-col items-center text-center text-sm" style={{ ...buildIntegrationNodeBoxStyle({ fillColor: boundary ? '#ffffff22' : '#ffffff', lineColor: '#475569', ...data.visual }), ...(actor ? { borderWidth: 0 } : {}), borderRadius: actor || boundary ? 0 : '50%', justifyContent: boundary ? 'flex-start' : 'center', padding: 8 }}>
+      {actor && <svg aria-label="Actor" width="52" height="72" viewBox="0 0 52 72" fill="none" stroke={data.visual?.lineColor || '#475569'} strokeWidth="2"><circle cx="26" cy="11" r="9"/><path d="M26 20V46M8 31H44M26 46L10 69M26 46L42 69"/></svg>}
+      <span style={data.textStyle ? buildIntegrationNodeTextStyle(data.textStyle) : undefined}><InlineDiagramNodeTitle nodeId={id} value={data.title} /></span>
+    </div>
+  </div>
 }

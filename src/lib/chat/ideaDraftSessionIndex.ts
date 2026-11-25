@@ -22,7 +22,8 @@ export function indexIdeaDraftSessions(
   if (!ownerId) return []
   const indexed = new Map<string, IdeaDraftBrainstormPointer>()
   for (const session of sessions) {
-    if (session.ownerId !== ownerId || (workspaceIds && !workspaceIds.includes(session.workspaceId ?? ''))) continue
+    if (session.ownerId !== ownerId || (workspaceIds && !workspaceIds.includes(session.workspaceId ?? '')
+      && !workspaceIds.includes(session.sourceWorkspaceId ?? ''))) continue
     const key = `${session.workspaceId ?? ''}:${session.draftSessionId ?? `legacy:${session.jobId}`}`
     const previous = indexed.get(key)
     if (!previous) { indexed.set(key, session); continue }

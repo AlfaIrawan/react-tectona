@@ -59,6 +59,7 @@ const Dialog = ({ open: controlledOpen, onOpenChange, children }: DialogProps) =
         {/* Backdrop */}
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+          data-theme-overlay
           onClick={() => setOpen(false)}
         />
         {/* Dialog Content — wrapper shrinks to child width so DialogContent's
@@ -117,6 +118,7 @@ const DialogContent = React.forwardRef<
   return (
     <div
       ref={ref}
+      data-theme-surface={surface === 'glass' ? 'dialog' : 'dialog-solid'}
       className={cn(
         surface === 'glass' ? 'liquid-glass-enterprise-panel' : 'bg-card',
         'rounded-2xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto',

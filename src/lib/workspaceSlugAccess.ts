@@ -1,3 +1,4 @@
+import { WorkspaceApiError, type WorkspaceAccessDependency } from '@/lib/workspaceAccessWarning'
 import { getSession } from '@/auth/authService'
 import { hasOrganizationAdminAccess, hasPlatformAdminAccess } from '@/lib/auth/platformAccess'
 import { fetchSubjectMemberships, TECTONA_WAC_APP_ID } from '@/lib/api/workspaceAccessControlApi'
@@ -19,6 +20,7 @@ import {
 export type WorkspaceSlugAccessResult =
   | { allowed: true; slug: SlugResolveResponse; workspace: WorkspaceOrgWorkspaceDto }
   | { allowed: false; reason: 'invalid_slug' | 'forbidden' | 'unauthenticated' }
+  | { allowed: false; reason: 'unavailable'; dependency: WorkspaceAccessDependency }
 
 function sessionRoles(): string[] {
   const session = getSession()
@@ -44,9 +46,18 @@ export async function evaluateWorkspaceSlugAccess(slug: string): Promise<Workspa
   let resolved: SlugResolveResponse
   try {
     resolved = await resolveSlug(normalizedSlug)
-  } catch {
-    return { allowed: false, reason: 'invalid_slug' }
+  } catch (error) {
+    if (error instanceof WorkspaceApiError) {
+      if (error.status === 401) return { allowed: false, reason: 'unauthenticated' }
+      if (error.status === 403) return { allowed: false, reason: 'forbidden' }
+      if (error.workspaceSlugNotFound) return { allowed: false, reason: 'invalid_slug' }
+    }
+    return { allowed: false, reason: 'unavailable', dependency: 'workspace-directory' }
   }
+  if (!resolved?.workspace_id || !resolved.slug) {
+    return { allowed: false, reason: 'unavailable', dependency: 'workspace-directory' }
+  }
+  if (getSession()?.user.id !== session.user.id) return { allowed: false, reason: 'unauthenticated' }
 
   const isPlatformAdmin = hasPlatformAdminAccess(sessionRoles(), session?.user.role)
   const isOrganizationAdmin = hasOrganizationAdminAccess(sessionRoles())
@@ -79,11 +90,32 @@ export async function evaluateWorkspaceSlugAccess(slug: string): Promise<Workspa
     email: session.user.email,
   }
 
-  const [memberships, directoryMemberships, workspaces] = await Promise.all([
-    fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly: true }).catch(() => ({ items: [] })),
-    fetchIdentityWorkspaceOrgMemberships(subjectId).catch(() => []),
-    fetchAllWorkspaceOrgWorkspaces().catch(() => [] as WorkspaceOrgWorkspaceDto[]),
+  const check = async <T,>(dependency: WorkspaceAccessDependency, read: Promise<T>): Promise<T> => {
+    try {
+      return await read
+    } catch (cause) {
+      throw { dependency, cause }
+    }
+  }
+  const reads = Promise.all([
+    check('workspace-access', fetchSubjectMemberships(TECTONA_WAC_APP_ID, subjectId, { activeOnly: true })),
+    check('workspace-directory', fetchIdentityWorkspaceOrgMemberships(subjectId)),
+    check('workspace-directory', fetchAllWorkspaceOrgWorkspaces()),
   ])
+  let memberships: Awaited<ReturnType<typeof fetchSubjectMemberships>>
+  let directoryMemberships: Awaited<ReturnType<typeof fetchIdentityWorkspaceOrgMemberships>>
+  let workspaces: Awaited<ReturnType<typeof fetchAllWorkspaceOrgWorkspaces>>
+  try {
+    ;[memberships, directoryMemberships, workspaces] = await reads
+  } catch (failure) {
+    if (getSession()?.user.id !== session.user.id) return { allowed: false, reason: 'unauthenticated' }
+    const failed = failure as { dependency?: WorkspaceAccessDependency; cause?: unknown }
+    if (failed.cause instanceof WorkspaceApiError && failed.cause.status === 401) {
+      return { allowed: false, reason: 'unauthenticated' }
+    }
+    return { allowed: false, reason: 'unavailable', dependency: failed.dependency ?? 'unknown' }
+  }
+  if (getSession()?.user.id !== session.user.id) return { allowed: false, reason: 'unauthenticated' }
 
   const workspace =
     workspaces.find((item) => item.id === resolved.workspace_id)

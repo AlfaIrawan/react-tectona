@@ -1,7 +1,5 @@
-import {
-  normalizeGanttProjectName,
-  type PlanningGanttItem,
-} from '@/modules/planning-scheduling/components/PlanningSvarGantt'
+import type { PlanningGanttItem } from '@/modules/planning-scheduling/components/PlanningSvarGantt'
+import { normalizeGanttProjectName } from '@/modules/planning-scheduling/lib/planningGanttProjectName'
 import type { WorkItemSourceKind } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 
 type WorkItemExternalLink = {

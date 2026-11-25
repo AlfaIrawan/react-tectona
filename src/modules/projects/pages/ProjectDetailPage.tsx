@@ -47,7 +47,7 @@ import {
   type WorkItemApiModel,
 } from '@/lib/api/workApi'
 import { syncJiraAll, syncMondayAll } from '@/lib/api/workIntegrationApi'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { enrichProjectWithIdentityNames, fetchIdentityDisplayNameMap } from '../lib/projectMemberIdentity'
 import { ProjectDetailHeaderFields } from '../components/ProjectDetailHeaderFields'
 import { ProjectAssistantSidebarCard } from '../components/ProjectAssistantSidebarCard'
@@ -405,9 +405,7 @@ function MondayTaskPickerDialog({
 
         {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
         <DialogFooter>
-          <DialogClose asChild>
-            <Button type="button" variant="outline" disabled={saving}>Cancel</Button>
-          </DialogClose>
+          <Button type="button" variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button type="button" onClick={() => void handleConfirm()} disabled={saving || loading || selectedIds.size === 0}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Add selected tasks
@@ -513,7 +511,6 @@ function ProjectDetailSidebar({
   sectionBadgeCounts?: Partial<Record<ProjectPanelKey, number>>
   unavailableSections?: ProjectPanelKey[]
 }) {
-  const addSectionButtonRef = useRef<HTMLButtonElement>(null)
   const asideRef = useRef<HTMLElement>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
 
@@ -544,8 +541,10 @@ function ProjectDetailSidebar({
     if (oldIndex === -1 || newIndex === -1) return
     onReorderSections(arrayMove(navSections, oldIndex, newIndex))
   }
-  const [catalogOpen, setCatalogOpen] = useState(false)
   const [catalogAnchor, setCatalogAnchor] = useState<HTMLElement | null>(null)
+  const clearCatalogAnchorOnDetach = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) setCatalogAnchor(null)
+  }, [])
 
   const hasAvailableSections = useMemo(
     () =>
@@ -554,12 +553,6 @@ function ProjectDetailSidebar({
       ),
     [navSections, unavailableSections],
   )
-
-  useEffect(() => {
-    if (catalogOpen && !hasAvailableSections) {
-      setCatalogOpen(false)
-    }
-  }, [catalogOpen, hasAvailableSections])
 
   return (
     <>
@@ -609,14 +602,11 @@ function ProjectDetailSidebar({
           {hasAvailableSections ? (
             <Tooltip content="Add section" side="left" size="compact" sideOffset={6}>
               <Button
-                ref={addSectionButtonRef}
+                ref={clearCatalogAnchorOnDetach}
                 type="button"
                 variant="ghost"
                 aria-label="Add project section"
-                onClick={() => {
-                  setCatalogAnchor(addSectionButtonRef.current)
-                  setCatalogOpen(true)
-                }}
+                onClick={(event) => setCatalogAnchor(event.currentTarget)}
                 className={cn(
                   'h-9 w-full justify-start gap-2 rounded-lg border border-dashed border-primary/25 text-primary hover:bg-primary/10 hover:text-primary',
                   collapsed && 'justify-center px-0',
@@ -641,11 +631,11 @@ function ProjectDetailSidebar({
     </aside>
 
     <ProjectSectionCatalogPopover
-      open={catalogOpen}
-      anchorEl={catalogAnchor ?? addSectionButtonRef.current}
+      open={hasAvailableSections && catalogAnchor !== null}
+      anchorEl={catalogAnchor}
       navSections={navSections}
       unavailableSections={unavailableSections}
-      onClose={() => setCatalogOpen(false)}
+      onClose={() => setCatalogAnchor(null)}
       onAddSection={(key) => {
         onAddSection(key)
         onNavigatePanel(key)
@@ -1517,9 +1507,7 @@ export function ProjectDetailPage() {
             </div>
           ) : null}
           <DialogFooter className="border-t border-border/70 px-5 py-3">
-            <DialogClose asChild>
-              <Button type="button" variant="outline" className="h-9">Cancel</Button>
-            </DialogClose>
+            <Button type="button" variant="outline" className="h-9" onClick={() => documentRevisionPrompt?.resolve(false)}>Cancel</Button>
             <Button
               type="button"
               className="h-9 bg-amber-600 text-white hover:bg-amber-700"

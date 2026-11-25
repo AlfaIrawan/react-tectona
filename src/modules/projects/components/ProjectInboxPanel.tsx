@@ -68,6 +68,7 @@ export function ProjectInboxPanel({
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const deferredSearch = useDeferredValue(searchQuery.trim().toLowerCase())
+  const [pageScope, setPageScope] = useState({ search: deferredSearch, projectId: project.id })
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<(typeof PROJECT_LIST_PAGE_SIZE_OPTIONS)[number]>(25)
   const [rowsMeta, setRowsMeta] = useState<ProjectWorkItemTableRowsMeta>(EMPTY_ROWS_META)
@@ -109,15 +110,15 @@ export function ProjectInboxPanel({
     [inboxRoutes, pendingItems],
   )
 
-  useEffect(() => {
+  // Reset scope before the table can clamp a page from the previous scope.
+  if (pageScope.search !== deferredSearch || pageScope.projectId !== project.id) {
+    setPageScope({ search: deferredSearch, projectId: project.id })
     setPage(1)
-  }, [deferredSearch, project.id])
+  }
 
-  useEffect(() => {
-    if (loading || filteredItems.length === 0) {
-      setRowsMeta(EMPTY_ROWS_META)
-    }
-  }, [filteredItems.length, loading])
+  if ((loading || filteredItems.length === 0) && rowsMeta !== EMPTY_ROWS_META) {
+    setRowsMeta(EMPTY_ROWS_META)
+  }
 
   useEffect(() => {
     if (!isFullscreen) return
@@ -134,10 +135,7 @@ export function ProjectInboxPanel({
   }, [isFullscreen])
 
   useLayoutEffect(() => {
-    if (isFullscreen) {
-      setPanelHeightPx(null)
-      return
-    }
+    if (isFullscreen) return
 
     const panelEl = panelRef.current
     if (!panelEl) return
@@ -163,7 +161,7 @@ export function ProjectInboxPanel({
       } else {
         acceptInboxWorkItem(project.id, item.id)
       }
-      if (usesApiItems && (item.status === 'Backlog' || item.status === 'Blocked')) {
+      if (usesApiItems && item.status === 'Backlog') {
         await patchWorkItem(item.id, { status: 'To Do' })
         onWorkItemsChange?.()
       }
@@ -240,7 +238,10 @@ export function ProjectInboxPanel({
                 aria-pressed={isFullscreen}
                 aria-label={isFullscreen ? 'Exit inbox fullscreen' : 'Expand inbox to fullscreen'}
                 title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'}
-                onClick={() => setIsFullscreen((prev) => !prev)}
+                onClick={() => {
+                  if (!isFullscreen) setPanelHeightPx(null)
+                  setIsFullscreen(!isFullscreen)
+                }}
                 className={cn(
                   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted/40 hover:text-foreground',
                   listToolbarFocusClass,

@@ -152,17 +152,46 @@ export async function submitJoinRequestByWorkspaceId(
   return submitAccessRequest(TECTONA_AUTHZ_APP_ID, payload)
 }
 
+function personalWorkspaceSlugFromEmail(email: string): { slug: string; displayName: string } {
+  const local = email.split('@')[0]?.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'personal'
+  const displayName = local
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ') || 'Personal'
+  return { slug: `${local}-personal`.slice(0, 48), displayName }
+}
+
+/** Email-verify users may not have a personal workspace yet. Create one so admin approval can proceed. */
+async function ensureCorporatePersonalWorkspace(input: {
+  email: string
+  workspaceId?: string | null
+}): Promise<{ workspaceId: string; orgWorkspaceId: string | null }> {
+  const progress = await fetchCorporateOnboardingProgress(input.email, TECTONA_AUTHZ_APP_ID)
+  const orgWorkspaceId = progress.default_workspace_id?.trim() || null
+  const existing = input.workspaceId?.trim() || progress.personal_workspace_id?.trim()
+  if (existing) return { workspaceId: existing, orgWorkspaceId }
+  if (!progress.organization_id) {
+    throw new Error('Personal workspace not found. Create your personal workspace first.')
+  }
+  const { slug, displayName } = personalWorkspaceSlugFromEmail(input.email)
+  const created = await createOrgPersonalWorkspaceOnboardingForUser({
+    email: input.email,
+    organizationId: progress.organization_id,
+    displayName,
+    slug,
+  })
+  return { workspaceId: created.workspace_id, orgWorkspaceId }
+}
+
 /** Dev / interim: activate personal workspace access without inbox confirmation. */
 export async function activateCorporateOnboardingWithoutEmail(input: {
   email: string
   subjectId: string
   workspaceId?: string | null
 }): Promise<OnboardingStatusResponse> {
-  const progress = await fetchCorporateOnboardingProgress(input.email, TECTONA_AUTHZ_APP_ID)
-  const workspaceId = input.workspaceId?.trim() || progress.personal_workspace_id?.trim()
-  if (!workspaceId) {
-    throw new Error('Personal workspace not found. Create your personal workspace first.')
-  }
+  const ensured = await ensureCorporatePersonalWorkspace(input)
+  const workspaceId = ensured.workspaceId
   await confirmEmailVerifiedOnboarding({
     appId: TECTONA_AUTHZ_APP_ID,
     workspaceId,
@@ -179,12 +208,9 @@ export async function submitCorporateOnboardingForAdminApproval(input: {
   email: string
   message?: string
 }): Promise<OnboardingStatusResponse> {
-  const progress = await fetchCorporateOnboardingProgress(input.email, TECTONA_AUTHZ_APP_ID)
-  const workspaceId = input.workspaceId?.trim() || progress.personal_workspace_id?.trim()
-  const orgWorkspaceId = input.orgWorkspaceId?.trim() || progress.default_workspace_id?.trim() || null
-  if (!workspaceId) {
-    throw new Error('Personal workspace not found. Create your personal workspace first.')
-  }
+  const ensured = await ensureCorporatePersonalWorkspace(input)
+  const workspaceId = ensured.workspaceId
+  const orgWorkspaceId = input.orgWorkspaceId?.trim() || ensured.orgWorkspaceId
   await requestCorporateOnboardingAdminApproval({
     appId: TECTONA_AUTHZ_APP_ID,
     workspaceId,
@@ -219,12 +245,9 @@ export async function switchCorporateOnboardingToAdminApproval(input: {
   email: string
   message?: string
 }): Promise<OnboardingStatusResponse> {
-  const progress = await fetchCorporateOnboardingProgress(input.email, TECTONA_AUTHZ_APP_ID)
-  const workspaceId = input.workspaceId?.trim() || progress.personal_workspace_id?.trim()
-  const orgWorkspaceId = progress.default_workspace_id?.trim() || null
-  if (!workspaceId) {
-    throw new Error('Personal workspace not found. Create your personal workspace first.')
-  }
+  const ensured = await ensureCorporatePersonalWorkspace(input)
+  const workspaceId = ensured.workspaceId
+  const orgWorkspaceId = ensured.orgWorkspaceId
   setCorporateOnboardingFinishMethod(input.subjectId, 'admin')
   clearCorporateEmailVerificationPending(input.subjectId)
   const status = await switchWacCorporateOnboardingToAdminApproval({

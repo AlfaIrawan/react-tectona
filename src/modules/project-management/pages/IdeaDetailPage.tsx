@@ -1,57 +1,41 @@
+import { readSelectedSourceReferences, supportsReadOnlyTechnicalPreview } from '@/lib/chat/technicalDiagramHandoff'
 
 import { getSession } from '@/auth/authService'
 import { createNotification, TECTONA_APP_ID } from '@/lib/api/notificationApi'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { LucideIcon } from 'lucide-react'
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
   ArrowLeft,
   Bot,
-  Brain,
   Briefcase,
   Building2,
   Check,
   ChevronLeft,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   ClipboardList,
   Copy,
   Cpu,
-  CircleHelp,
   DollarSign,
   Download,
-  Eraser,
   ExternalLink,
   FileText,
   FileStack,
   Files,
   Gauge,
   GitBranch,
-  IndentDecrease,
-  IndentIncrease,
   ImageDown,
   Layers,
-  List,
-  PaintBucket,
-  ListChevronsUpDown,
-  ListOrdered,
   ListTree,
   MoveRight,
-  Type,
   RefreshCcw,
   Send,
   Sparkles,
-  Strikethrough,
-  Subscript,
-  Superscript,
-  Table,
   Boxes,
   Database,
   Target,
@@ -62,7 +46,6 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
-  Plus,
   Folder,
   FolderPlus,
   PencilLine,
@@ -98,7 +81,11 @@ import {
   YAxis,
 } from 'recharts'
 import { Breadcrumb } from '@/components/ui/breadcrumb'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { useMobileLayout } from '@/hooks/useMobileLayout'
+import { useCommunicationViewport } from '@/hooks/useCommunicationViewport'
+import { MobileIdeaSectionNav } from '../components/MobileIdeaSectionNav'
+import { ideaDocsFolderErrorMessage } from '../lib/ideaDocsFolderError'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -149,14 +136,9 @@ import {
   type IdeaIntakeAnswer,
   type IdeaIntakeAnswers,
   type IdeaIntakeFollowup,
-  type RuntimeSummaryDecisionSignal,
-  type RuntimeSummaryKpiCard,
-  type RuntimeSummaryReadinessSignal,
   type RuntimeSummaryResponse,
-  type RuntimeSummaryStrategicFramingItem,
 } from '@/lib/api/tectonaAgentRuntimeApi'
 import {
-  createProjectDocument,
   deleteDocument,
   getDocumentRevisionFillPayload,
   instantiateTemplateFromProject,
@@ -193,6 +175,7 @@ import {
   type PartPayload,
   type TemplatePart,
   type TemplatePartChoice,
+  preserveSrdTicketFills,
 } from '@/modules/project-management/lib/templatePartSelection'
 import { PartCommentRail, TECTONA_MENTION } from '@/modules/project-management/components/PartCommentRail'
 import {
@@ -245,10 +228,11 @@ import {
   PROJECT_PANEL_MIN_HEIGHT_PX,
 } from '@/modules/projects/lib/projectPanelLayout'
 import { Label } from '@/components/ui/label'
+import { EditableSequenceDiagram } from '@/modules/project-management/components/EditableSequenceDiagram'
+import { DiagramSyncIndicator, diagramSyncKey } from '@/modules/project-management/components/DiagramSyncIndicator'
 import {
   extractScoringDimensions,
   getIdeaById,
-  patchIdea,
   getPersistentIdeaSummary,
   getPersistentIdeaIntegration,
   upsertPersistentIdeaIntegration,
@@ -257,14 +241,15 @@ import {
   getPersistentIdeaC4Architecture,
   upsertPersistentIdeaC4Architecture,
   getPersistentIdeaProcessDiagram,
+  getIdeaDocumentDiagramSources,
   upsertPersistentIdeaProcessDiagram,
+  syncIdeaProcessDiagramDocuments,
   submitDiagramArchitectureReview,
   decideDiagramArchitectureReview,
   type ScoreDimensionApi,
   type ScoringResponseApi,
   type IdeaSectionKey,
   upsertPersistentIdeaSummary,
-  toBackendStatus,
   toDisplayStatus,
   type IdeaApi,
   type IdeaSummaryPersistent,
@@ -278,8 +263,10 @@ import {
   loadPublishedIdeaSectionPolicy,
   loadViewerGroupWorkspaceNames,
   templateAllowedByWorkflow,
+  templateDocumentKind,
   type IdeaDocumentWorkflowGate,
 } from '@/modules/project-management/lib/ideaDocumentWorkflowGate'
+import { ideaDocumentMatchesApproval, ideaDocumentType } from '@/modules/project-management/lib/ideaDocumentKind'
 import { DiagramSurfaceMenu, DiagramSurfaceMenuButton, useDiagramSurfaceMenu } from '@/components/DiagramSurfaceMenu'
 import { workspaceScopedPath } from '@/lib/workspaceRouting'
 import {
@@ -292,6 +279,8 @@ import { useTectonaPageContextReporter } from '@/lib/chat/useTectonaPageContextR
 import { AssistantMermaidBlock } from '@/modules/core-shell/components/AssistantMermaidBlock'
 import {
   brainstormProcessPersistKey,
+  TECHNICAL_DIAGRAM_SLOTS,
+  technicalDiagramGallery,
   extractProcessDiagramsFromText,
   latestRevisedProcessDiagrams,
   latestValidatedTechnicalDiagrams,
@@ -316,6 +305,8 @@ import { reviewerDisplayName as displayNameOfUser } from '@/modules/project-mana
 import { IdeaTitleEditor } from '@/modules/project-management/components/IdeaTitleEditor'
 import { describeEmailDeliveries, IdeaApprovalBanner, useIdeaApprovalStatus } from '@/modules/project-management/components/IdeaApprovalBanner'
 import { docApprovalState, useIdeaDocApprovals } from '@/modules/project-management/lib/ideaDocApprovals'
+import { useIdeaContentLock } from '@/modules/project-management/hooks/useIdeaContentLock'
+import { updateIdeaContentRevision } from '@/lib/api/workflowAutomationApi'
 import {
   approveWorkflowRun,
   continueWorkflowAfterGeneratedDocument,
@@ -376,13 +367,14 @@ import {
   getIdeaPanelCatalogEntry,
   applyIdeaSectionOverrides,
   ideaDiagramTypesFor,
+  isIdeaDiagramOwner,
   ideaMenuForWorkflowAudience,
   resolveIdeaNavSections,
   type IdeaPanelKey,
   type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
-import { ideaAudienceMatches, parseEmailRecipientBy, sendUrdForBusinessReview, urdReviewSummaryText } from '@/modules/project-management/lib/urdReviewHeads'
+import { ideaAudienceMatches, parseEmailRecipientBy } from '@/modules/project-management/lib/urdReviewHeads'
 import { readPersistedIdeaNavTop, useIdeaNavSectionsStore } from '@/modules/project-management/store/ideaNavSectionsStore'
 import { DEFAULT_RIGHT_DRAWER_WIDTH, useRightDrawerStore } from '@/stores/right-drawer-store'
 
@@ -398,6 +390,7 @@ type Idea = {
   riskSummary?: string
   type: IdeaType
   submittedBy: string
+  createdBy?: string
   workspace?: string
   project_id?: string | null
   tags: string[]
@@ -430,12 +423,6 @@ type BrdTemplate = {
 }
 
 type PanelKey = IdeaPanelKey
-
-type BrdSection = {
-  key: string
-  title: string
-  content: string
-}
 
 const IDEA_TYPES: IdeaType[] = ['Innovation', 'Improvement', 'Request', 'Transformation', 'Issue']
 const WORKSPACE_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -571,13 +558,6 @@ function ideaDocTypeLabel(templateCode: string | null | undefined): string {
   return (templateCode ?? '').split('-', 1)[0]?.trim().toUpperCase() || 'DOC'
 }
 
-function ideaDocumentType(doc: DocumentResponse): string | null {
-  const metadata = doc.metadata ?? {}
-  const candidate = metadata.doc_type_label || metadata.template_code || doc.document_type_code
-  const label = typeof candidate === 'string' ? ideaDocTypeLabel(candidate) : ''
-  return ['URD', 'BRD', 'FSD'].includes(label) ? label : null
-}
-
 function ideaDocFileName(label: string, title: string): string {
   const safe = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
   return `${label} - ${safe}`.slice(0, 250) + '.docx'
@@ -623,6 +603,7 @@ function ideaFromApi(api: IdeaApi): Idea {
     riskSummary: api.risk_summary ?? undefined,
     type,
     submittedBy: api.owner_id?.trim() ?? '',
+    createdBy: api.created_by?.trim() || undefined,
     workspace: api.workspace_id ?? undefined,
     project_id: api.project_id ?? null,
     tags: api.tags,
@@ -698,87 +679,6 @@ function extractSupportingDocumentsFromText(text: string): string[] {
   }
 
   return items.slice(0, 40)
-}
-
-const DEFAULT_SUMMARY: RuntimeSummaryResponse = {
-  summary_title: 'Sistem deteksi dini keterlambatan persetujuan KPR multi finance',
-  executive_brief:
-    'Inisiatif ini membangun lapisan peringatan dini berbasis AI yang menggabungkan sinyal SLA dokumen, beban reviewer, dan bottleneck dependensi lintas tim agar intervensi dapat dilakukan sebelum keterlambatan menjadi kritikal.',
-  core_pressure:
-    'Banyak kasus KPR melewati SLA karena sinyal keterlambatan terlambat terlihat dan prioritas eskalasi antar fungsi belum konsisten.',
-  strategic_response:
-    'Terapkan sinyal AI untuk memunculkan early warning dan rekomendasi aksi sehingga tim operasional bisa bertindak sebelum antrean memburuk.',
-  value_thesis:
-    'Menurunkan pelanggaran SLA persetujuan, mempercepat keputusan eskalasi, dan meningkatkan konsistensi layanan pada seluruh entitas multi finance.',
-  decision_signal: {
-    overall_score: '75',
-    decision_bias: 'Accelerate',
-    decision_bias_detail: 'Suitable for conversion into structured backlog and delivery planning.',
-    priority: 'Medium Priority',
-  },
-  board_note:
-    'AI assessment indicates strong business leverage with manageable delivery risk, making this proposal a credible candidate for executive-backed prioritization.',
-  kpi_cards: [
-    {
-      label: 'Penurunan Pelanggaran SLA',
-      value: '-20%',
-      detail: 'Target pengurangan kasus approval KPR yang melewati SLA.',
-    },
-    {
-      label: 'Lead Time Intervensi',
-      value: '+2.4w',
-      detail: 'Tambahan waktu respons sebelum keterlambatan masuk kategori kritikal.',
-    },
-    {
-      label: 'Cakupan Keputusan',
-      value: 'Lintas Entitas',
-      detail: 'Dampak lintas PMO, Operasi, Risk, Legal, dan Finance Governance.',
-    },
-    {
-      label: 'Postur Eksekusi',
-      value: 'Ready',
-      detail: 'Cukup matang untuk backlog shaping dan elaborasi BRD.',
-    },
-  ],
-  strategic_framing: [
-    {
-      title: 'Visibilitas Multi Finance',
-      detail: 'Mengkonsolidasikan sinyal keterlambatan persetujuan KPR dari berbagai sistem menjadi satu tampilan operasional.',
-    },
-    {
-      title: 'Disiplin Operasional',
-      detail: 'Meningkatkan kualitas pengendalian proses approval sebelum dampak keterlambatan meluas ke tahap pencairan.',
-    },
-    {
-      title: 'Kesesuaian Model Operasi',
-      detail: 'Selaras dengan alur intake terstruktur, konversi backlog, dan checkpoint governance yang sudah ada.',
-    },
-  ],
-  governance_readiness: {
-    title: 'Signals supporting next-stage approval',
-    badge: 'Reviewable',
-  },
-  readiness_signals: [
-    {
-        title: 'Business case ready for review',
-        detail: 'The value proposition narrative is aligned for cross-functional decision making.',
-      tone: 'positive',
-    },
-    {
-        title: 'Integration dependencies need early validation',
-        detail: 'Data source confirmation and delivery orchestration should be validated in the BRD phase.',
-      tone: 'warning',
-    },
-    {
-        title: 'Stakeholder adoption path is credible',
-        detail: 'PMO, Operations, Risk, Legal, and Finance Governance are clearly defined as target users.',
-      tone: 'positive',
-    },
-  ],
-  confidence_score: 0,
-  evidence: [],
-  warnings: [],
-  correlation_id: '',
 }
 
 const EMPTY_RUNTIME_SUMMARY: RuntimeSummaryResponse = {
@@ -875,111 +775,6 @@ function weightedIntakeScore(idea: Idea): number | null {
   const { businessValue, effort, risk, roi } = idea.scoring
   return businessValue * 3 + roi * 3 + (11 - effort) * 2 + (11 - risk) * 2
 }
-
-function buildIdeaSummaryFallback(idea: Idea): RuntimeSummaryResponse {
-  const totalScore = weightedIntakeScore(idea)
-  const priority = totalScore == null
-    ? 'Pending scoring'
-    : totalScore >= 80
-      ? 'High Priority'
-      : totalScore >= 60
-        ? 'Medium Priority'
-        : 'Low Priority'
-  const decisionBias = totalScore == null
-    ? 'Awaiting scores'
-    : totalScore >= 80
-      ? 'Accelerate'
-      : totalScore >= 60
-        ? 'Shape First'
-        : 'Refine First'
-  const executionPosture = idea.scoring.effort <= 5 && idea.scoring.risk <= 5 ? 'Ready' : idea.scoring.effort <= 7 && idea.scoring.risk <= 7 ? 'Controlled' : 'Caution'
-  const workspaceLabel = idea.workspace?.trim() || 'Cross-functional'
-  const tagsLabel = idea.tags.length > 0 ? idea.tags.slice(0, 3).join(', ') : 'Priority initiative'
-
-  return {
-    summary_title: idea.title,
-    executive_brief: `This initiative focuses on ${idea.description.charAt(0).toLowerCase()}${idea.description.slice(1)}. The panel is currently using a local fallback generated from idea data because the AI runtime is not yet available.`,
-    core_pressure: `The main need is in the ${tagsLabel} area, with business pressure to improve decision quality, progress visibility, and execution consistency in a ${workspaceLabel} context.`,
-    strategic_response: 'Run structured backlog shaping, validate key dependencies, then continue to BRD elaboration so business narrative, execution controls, and implementation readiness stay aligned.',
-    value_thesis: `Expected value comes from improving business value ${idea.scoring.businessValue}/10 and ROI ${idea.scoring.roi}/10, while keeping effort ${idea.scoring.effort}/10 and risk ${idea.scoring.risk}/10 manageable.`,
-    decision_signal: {
-      overall_score: totalScore == null ? '' : String(totalScore),
-      decision_bias: decisionBias,
-      decision_bias_detail: totalScore == null
-        ? 'Intake scores are still empty, so no composite overall score is calculated.'
-        : 'This local fallback is generated directly from the active idea attributes and intake scores.',
-      priority,
-    },
-    board_note: `The local fallback summary indicates this proposal is currently in ${idea.status} status and still needs the AI runtime for richer evidence-first analysis.`,
-    kpi_cards: [
-      {
-        label: 'Business Value',
-        value: `${idea.scoring.businessValue}/10`,
-        detail: 'Business impact signal from current intake scoring.',
-      },
-      {
-        label: 'ROI Signal',
-        value: `${idea.scoring.roi}/10`,
-        detail: 'Indicates potential value leverage and payback.',
-      },
-      {
-        label: 'Execution Context',
-        value: workspaceLabel,
-        detail: 'Primary workspace or domain affected.',
-      },
-      {
-        label: 'Execution Posture',
-        value: executionPosture,
-        detail: 'Derived locally from available effort and risk scoring.',
-      },
-    ],
-    strategic_framing: [
-      {
-        title: 'Context from Intake',
-        detail: idea.description,
-      },
-      {
-        title: 'Current Stage',
-        detail: `The idea is currently at ${idea.status} stage and waiting for runtime enrichment for a fuller executive narrative.`,
-      },
-      {
-        title: 'Primary Tags',
-        detail: tagsLabel,
-      },
-    ],
-    governance_readiness: {
-      title: 'Signals supporting next-stage approval',
-      badge: totalScore != null && totalScore >= 60 ? 'Reviewable' : 'Needs Refinement',
-    },
-    readiness_signals: [
-      {
-        title: 'Intake data is available',
-        detail: 'Title, description, status, tags, and core scoring are available to generate a local fallback.',
-        tone: 'positive',
-      },
-      {
-        title: 'AI runtime is not yet synchronized',
-        detail: 'Evidence-first narrative is not available yet, so the panel temporarily uses a local idea-based summary.',
-        tone: 'warning',
-      },
-      {
-        title: 'Regeneration needed after runtime recovery',
-        detail: 'Run regenerate so summary, KPIs, and board note come from the live runtime.',
-        tone: 'warning',
-      },
-    ],
-    confidence_score: 0,
-    evidence: [],
-    warnings: [],
-    correlation_id: '',
-  }
-}
-
-const FALLBACK_KPI_CARDS: RuntimeSummaryKpiCard[] = DEFAULT_SUMMARY.kpi_cards
-const FALLBACK_DECISION_SIGNAL: RuntimeSummaryDecisionSignal = DEFAULT_SUMMARY.decision_signal
-const FALLBACK_STRATEGIC_FRAMING: RuntimeSummaryStrategicFramingItem[] = DEFAULT_SUMMARY.strategic_framing
-const FALLBACK_READINESS_SIGNALS: RuntimeSummaryReadinessSignal[] = DEFAULT_SUMMARY.readiness_signals
-const FALLBACK_GOVERNANCE_READINESS = DEFAULT_SUMMARY.governance_readiness
 
 type SummaryWarningTone = 'critical' | 'degraded' | 'info'
 
@@ -1216,71 +1011,6 @@ function parseScoringGenerationError(error: unknown): string {
   return 'Scoring analysis failed. Please try again.'
 }
 
-function stripCodeFence(value: string): string {
-  return value
-    .replace(/^```(?:json|markdown|text)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim()
-}
-
-function extractBalancedJsonObject(value: string, startIndex: number): string | null {
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = startIndex; i < value.length; i += 1) {
-    const ch = value[i]
-    if (inString) {
-      if (escaped) {
-        escaped = false
-      } else if (ch === '\\') {
-        escaped = true
-      } else if (ch === '"') {
-        inString = false
-      }
-      continue
-    }
-    if (ch === '"') {
-      inString = true
-      continue
-    }
-    if (ch === '{') depth += 1
-    if (ch === '}') {
-      depth -= 1
-      if (depth === 0) return value.slice(startIndex, i + 1)
-    }
-  }
-  return null
-}
-
-function extractJsonObject(value: string): string | null {
-  const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fenced?.[1]) {
-    const fromFence = extractBalancedJsonObject(fenced[1].trim(), fenced[1].trim().indexOf('{'))
-    if (fromFence) return fromFence
-  }
-
-  const stripped = stripCodeFence(value)
-  if (!stripped) return null
-  const first = stripped.indexOf('{')
-  if (first === -1) return null
-  return extractBalancedJsonObject(stripped, first)
-}
-
-function isFallbackLikeRuntimeAnswer(answer: string, warnings: string[] = []): boolean {
-  const haystack = `${answer}\n${warnings.join('\n')}`.toLowerCase()
-  return [
-    'llm_fallback_used',
-    'llm_fallback_reason',
-    'upstream_auth',
-    'billing_disabled',
-    'primary_unavailable',
-    'saya dapat membantu',
-    'i can help',
-    'ringkasan keputusan',
-    'kesjapan eksekusi',
-  ].some((marker) => haystack.includes(marker))
-}
-
 function agentConfidencePercent(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     if (value >= 0 && value <= 1) return Math.round(value * 100)
@@ -1292,136 +1022,6 @@ function agentConfidencePercent(value: unknown): number {
     if (Number.isFinite(parsed)) return agentConfidencePercent(parsed)
   }
   return 0
-}
-
-function parseRuntimeScoringAnalysis(answer: string): RuntimeScoringAnalysis {
-  const jsonText = extractJsonObject(answer)
-  if (!jsonText) {
-    throw new Error('Scoring analysis did not return valid JSON.')
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(jsonText)
-  } catch {
-    try {
-      parsed = JSON.parse(jsonText.replace(/,\s*([}\]])/g, '$1'))
-    } catch {
-      throw new Error('Scoring analysis returned malformed JSON.')
-    }
-  }
-
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Scoring analysis payload is invalid.')
-  }
-
-  const payload = parsed as Record<string, unknown>
-  const status = payload.status === 'ok' ? 'ok' : payload.status === 'insufficient_data' ? 'insufficient_data' : null
-  if (!status) {
-    throw new Error('Scoring analysis status is missing.')
-  }
-
-  const toText = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
-  const missingFields = Array.isArray(payload.missing_fields)
-    ? payload.missing_fields.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : []
-  const kpiCards = Array.isArray(payload.kpi_cards)
-    ? payload.kpi_cards
-        .map((item) => {
-          if (!item || typeof item !== 'object') return null
-          const record = item as Record<string, unknown>
-          const label = toText(record.label)
-          const value = toText(record.value)
-          const detail = toText(record.detail)
-          if (!label || !value || !detail) return null
-          return { label, value, detail }
-        })
-        .filter((item): item is RuntimeScoringCard => item !== null)
-    : []
-
-  return {
-    status,
-    summary_title: toText(payload.summary_title),
-    executive_brief: toText(payload.executive_brief),
-    priority: toText(payload.priority),
-    overall_score: toText(payload.overall_score),
-    score_posture: toText(payload.score_posture),
-    decision_bias: toText(payload.decision_bias),
-    decision_bias_detail: toText(payload.decision_bias_detail),
-    primary_strength: toText(payload.primary_strength),
-    primary_strength_detail: toText(payload.primary_strength_detail),
-    execution_posture: toText(payload.execution_posture),
-    execution_posture_detail: toText(payload.execution_posture_detail),
-    main_watchpoint: toText(payload.main_watchpoint),
-    main_watchpoint_detail: toText(payload.main_watchpoint_detail),
-    recommended_action: toText(payload.recommended_action),
-    commentary: toText(payload.commentary),
-    positive_signal_title: toText(payload.positive_signal_title),
-    positive_signal_detail: toText(payload.positive_signal_detail),
-    watchpoint_signal_title: toText(payload.watchpoint_signal_title),
-    watchpoint_signal_detail: toText(payload.watchpoint_signal_detail),
-    labels_id: payload.labels_id && typeof payload.labels_id === 'object' ? (payload.labels_id as Record<string, string>) : {},
-    missing_fields: missingFields,
-    kpi_cards: kpiCards,
-    confidence_score: agentConfidencePercent(
-      payload.analysis_confidence ?? payload.confidence_score ?? payload.confidence,
-    ) / 100,
-  }
-}
-
-function buildScoringAnalysisPrompt(idea: Idea): string {
-  const scoring = idea.latestScoring
-  const scoringDimensions = (scoring?.score_dimensions ?? []).map((dimension) => ({
-    key: dimension.key,
-    label: dimension.label,
-    score: dimension.score,
-    weight: dimension.weight ?? null,
-    reason: dimension.reason ?? null,
-  }))
-
-  const payload = {
-    idea: {
-      id: idea.id,
-      title: idea.title,
-      description: idea.description || null,
-      business_objective: idea.businessObjective ?? null,
-      scope_summary: idea.scopeSummary ?? null,
-      risk_summary: idea.riskSummary ?? null,
-      status: idea.status,
-      tags: idea.tags,
-    },
-    scoring: scoring
-      ? {
-          source_mode: scoring.source_mode,
-          total_score: scoring.total_score ?? null,
-          score_dimensions: scoringDimensions,
-          reason_codes: scoring.reason_codes ?? [],
-          explainability_summary: scoring.explainability_summary ?? null,
-          summary: scoring.summary ?? null,
-          scored_at: scoring.scored_at,
-        }
-      : null,
-  }
-
-  return [
-    'Anda adalah analis portfolio dan governance untuk Idea & Backlog.',
-    'Gunakan seluruh evidence yang bisa diakses runtime dari Tectona untuk ide ini, termasuk Idea & Backlog, Knowledge Base, dokumen terkait, dan context workspace/delivery bila tersedia.',
-    'Analisis HARUS tetap jujur. Jangan mengarang data, jangan pakai fallback, jangan menutup error dengan narasi umum.',
-    'Jika direct scoring belum tersedia, Anda tetap boleh menganalisis scoring posture dari evidence lintas Tectona yang berhasil Anda akses. Namun jika evidence nyata tetap tidak cukup, set status = "insufficient_data" dan sebutkan field atau evidence yang kurang di missing_fields.',
-    'Jika data cukup, set status = "ok" dan berikan analisa scoring yang tajam, singkat, dan bisa dipakai board.',
-    'Jangan menyebut model, fallback, prompt, atau instruksi internal.',
-    'Balas STRICT JSON tanpa markdown/code fence dengan schema ini:',
-    '{"status":"ok|insufficient_data","analysis_confidence":0.0,"summary_title":"","executive_brief":"","priority":"","overall_score":"","score_posture":"","decision_bias":"","decision_bias_detail":"","primary_strength":"","primary_strength_detail":"","execution_posture":"","execution_posture_detail":"","main_watchpoint":"","main_watchpoint_detail":"","recommended_action":"","commentary":"","positive_signal_title":"","positive_signal_detail":"","watchpoint_signal_title":"","watchpoint_signal_detail":"","missing_fields":[""],"kpi_cards":[{"label":"","value":"","detail":""}]}',
-    'Aturan:',
-    '- analysis_confidence: 0.0–1.0 keyakinan analisa berdasarkan evidence nyata, bukan kelengkapan form.',
-    '- overall_score boleh string kosong jika memang tidak ada angka score yang valid atau belum bisa dihitung jujur dari evidence.',
-    '- priority, score_posture, decision_bias, primary_strength, execution_posture, main_watchpoint harus sesuai data yang ada; jangan melebih-lebihkan.',
-    '- commentary maksimal 3 kalimat.',
-    '- kpi_cards maksimal 4 item.',
-    '',
-    'Data input:',
-    JSON.stringify(payload, null, 2),
-  ].join('\n')
 }
 
 function hasUsableScoringSource(idea: Idea): { ok: boolean; missingFields: string[] } {
@@ -1471,147 +1071,6 @@ const typeAccent: Record<IdeaType, string> = {
   Transformation: '#f59e0b',
   Issue: '#f43f5e',
 }
-
-const INITIAL_BRD_SECTIONS: BrdSection[] = [
-  {
-    key: 'document-control',
-    title: 'Kontrol dokumen',
-    content:
-      'Document ID: BRD-IDEA-3105. Versi: 0.9 (Draft). Pemilik: Komite Intake Multi Finance. Siklus review: mingguan hingga siap handoff ke eksekusi.',
-  },
-  {
-    key: 'revision-history',
-    title: 'Riwayat revisi',
-    content:
-      'v0.7: Draft awal dari konteks intake. v0.8: Menambah batasan integrasi lintas entitas multi finance. v0.9: Memperjelas kebutuhan fungsional dan kriteria penerimaan.',
-  },
-  {
-    key: 'stakeholders-raci',
-    title: 'Stakeholder dan RACI',
-    content:
-      'Business owner: Head Operasi Kredit Multi Finance. Accountable: Komite Intake Multi Finance. Responsible: Tim Delivery Tectona dan Tim Integrasi. Consulted: Risk, Legal, Finance Controller, Enterprise Architecture. Informed: PMO dan Lead Delivery domain.',
-  },
-  {
-    key: 'executive-summary',
-    title: 'Ringkasan eksekutif',
-    content:
-      'Inisiatif pembangunan sistem deteksi dini keterlambatan persetujuan KPR pada lingkungan multi finance agar keputusan intervensi dapat dilakukan lebih cepat, konsisten, dan terukur.',
-  },
-  {
-    key: 'business-background',
-    title: 'Latar belakang bisnis',
-    content:
-      'Saat ini sinyal keterlambatan persetujuan KPR tersebar di banyak sistem (dokumen, underwriting, legal, dan cabang), sehingga eskalasi sering terlambat dan SLA lintas entitas tidak stabil.',
-  },
-  {
-    key: 'business-case',
-    title: 'Business case dan hipotesis nilai',
-    content:
-      'Outcome utama: penurunan kasus lewat SLA, peningkatan kecepatan keputusan eskalasi, dan penurunan rework operasional. Nilai bisnis datang dari proses persetujuan yang lebih cepat dan konsisten di seluruh entitas multi finance.',
-  },
-  {
-    key: 'problem-statement',
-    title: 'Pernyataan masalah',
-    content:
-      'Pengambilan keputusan masih reaktif sehingga tindakan mitigasi terlambat, volume eskalasi meningkat, dan prediksi pencapaian SLA menjadi kurang andal.',
-  },
-  {
-    key: 'current-state',
-    title: 'Analisis kondisi saat ini (as-is)',
-    content:
-      'Pemantauan antrean dan SLA masih dilakukan manual di beberapa dashboard terpisah. Dampaknya adalah keterlambatan visibilitas, interpretasi tidak seragam antar tim, dan tidak ada standar waktu intervensi.',
-  },
-  {
-    key: 'target-state',
-    title: 'Kondisi target (to-be)',
-    content:
-      'Sistem terpadu berbasis AI menyediakan skor risiko keterlambatan, rekomendasi aksi prioritas, serta evidence audit yang terintegrasi dari intake ide hingga konversi backlog dan eksekusi.',
-  },
-  {
-    key: 'objectives',
-    title: 'Tujuan',
-    content:
-      'Menurunkan pelanggaran SLA persetujuan KPR, mempercepat respons eskalasi lintas fungsi, dan memberi rekomendasi proaktif untuk PMO, Operasi, Risk, dan Finance Governance.',
-  },
-  {
-    key: 'scope-in-out',
-    title: 'Ruang lingkup (in/out)',
-    content:
-      'In scope: akuisisi sinyal SLA, scoring risiko keterlambatan, dashboard operasional, dan orkestrasi eskalasi. Out of scope: perubahan inti transaksi LOS/ERP pada fase pertama.',
-  },
-  {
-    key: 'functional-requirements',
-    title: 'Kebutuhan fungsional',
-    content:
-      'Membangun layanan prediksi keterlambatan, aturan prioritas alert, dan alur keputusan eskalasi yang dapat dikonversi otomatis menjadi epic-story-task di workspace delivery.',
-  },
-  {
-    key: 'data-requirements',
-    title: 'Kebutuhan data',
-    content:
-      'Data wajib mencakup SLA dokumen, durasi approval per tahap, antrean reviewer, status dependensi legal/risk, dan histori outcome persetujuan KPR. Ambang kualitas data dan frekuensi refresh harus ditetapkan.',
-  },
-  {
-    key: 'reporting-requirements',
-    title: 'Kebutuhan pelaporan dan dashboard',
-    content:
-      'Dashboard wajib menampilkan tren skor risiko keterlambatan, faktor penyebab utama, unit/cabang terdampak, rekomendasi aksi, serta jejak audit waktu keputusan.',
-  },
-  {
-    key: 'non-functional-requirements',
-    title: 'Kebutuhan non-fungsional',
-    content:
-      'Mendukung akses API aman, rekomendasi yang dapat diaudit, latensi pembaruan mendekati real-time, dan ketersediaan layanan tinggi.',
-  },
-  {
-    key: 'security-compliance',
-    title: 'Kebutuhan keamanan dan kepatuhan',
-    content:
-      'Kontrol akses berbasis peran, auditability keputusan, serta pengelolaan data harus selaras dengan kebijakan enterprise, regulasi internal, dan standar kontrol audit.',
-  },
-  {
-    key: 'assumptions',
-    title: 'Asumsi',
-    content:
-      'Data historis SLA cukup representatif dan seluruh entitas multi finance bersedia mengadopsi checkpoint review yang seragam.',
-  },
-  {
-    key: 'dependencies',
-    title: 'Dependensi',
-    content:
-      'Ketergantungan utama: API Gateway, pipeline Data Platform, endpoint integrasi LOS/CRM/Legal, serta sinkronisasi workflow ke workspace eksekusi.',
-  },
-  {
-    key: 'constraints',
-    title: 'Batasan',
-    content:
-      'Rollout awal wajib memakai kontrak integrasi yang sudah ada dan cadence governance saat ini, tanpa perubahan skema transaksi inti pada fase pertama.',
-  },
-  {
-    key: 'risk-mitigation',
-    title: 'Risiko dan rencana mitigasi',
-    content:
-      'Risiko utama mencakup drift model, adopsi proses yang tidak seragam, dan latensi integrasi lintas sistem. Mitigasi dilakukan melalui monitoring model, rollout bertahap, dan fallback checkpoint manual.',
-  },
-  {
-    key: 'success-metrics',
-    title: 'Metrik keberhasilan (KPI)',
-    content:
-      'Target KPI: menurunkan kasus pelanggaran SLA persetujuan KPR sebesar 20%, meningkatkan ketepatan prioritas eskalasi, dan menambah waktu intervensi rata-rata sebelum kasus kritikal.',
-  },
-  {
-    key: 'acceptance-criteria',
-    title: 'Kriteria penerimaan',
-    content:
-      'Solusi dinyatakan diterima saat skor risiko terhasilkan stabil, rekomendasi dapat ditelusuri end-to-end, dashboard dipakai pada review rutin, dan perbaikan KPI baseline terbukti terukur.',
-  },
-  {
-    key: 'implementation-plan',
-    title: 'Rencana implementasi dan rollout',
-    content:
-      'Fase 1: integrasi data SLA lintas sistem dan baseline scoring. Fase 2: dashboard operasional dan workflow eskalasi rekomendasi. Fase 3: adopsi lintas entitas multi finance dan optimasi berkelanjutan.',
-  },
-]
 
 function confidenceClass(value: number) {
   if (value >= 90) return 'text-emerald-700 bg-emerald-50 border-emerald-200'
@@ -1708,16 +1167,6 @@ function buildScoreDataFromIdea(idea: Idea): ScoringDimensionRow[] {
       barTrackClass: theme.barTrackClass,
     }
   })
-}
-
-function scoringBarFill(item: ScoringDimensionRow, hasNumericScoring: boolean): string {
-  if (hasNumericScoring && item.score > 0) return item.fill
-  return item.fillMuted
-}
-
-function scoringBarWidth(item: ScoringDimensionRow, hasNumericScoring: boolean): string {
-  if (hasNumericScoring && item.score > 0) return `${(item.score / 10) * 100}%`
-  return '12%'
 }
 
 type ScoringEvidenceItem = {
@@ -1948,27 +1397,20 @@ function buildCostBenefitQualitativeLevers(
 function buildCostBenefitScenarioBands(
   benefitAnalysis: GenerateBenefitAnalysisResponse | null,
 ): BenefitScenarioBand[] {
-  const extended = benefitAnalysis as GenerateBenefitAnalysisResponse & {
-    scenarios?: Array<{
-      name?: string
-      scenario_name?: string
-      roi_percentage?: number
-      description?: string
-      label?: string
-    }>
-  }
-
-  const scenarios = extended?.scenarios ?? []
-  if (scenarios.length === 0) return []
-
-  return scenarios.slice(0, 3).map((scenario, index) => {
-    const name = scenario.name || scenario.scenario_name || scenario.label || `Scenario ${index + 1}`
-    const roi = scenario.roi_percentage
-    return {
+  return (benefitAnalysis?.scenarios ?? []).slice(0, 3).flatMap((scenario, index) => {
+    if (!scenario || typeof scenario !== 'object') return []
+    const name = [
+      'name' in scenario ? scenario.name : undefined,
+      'scenario_name' in scenario ? scenario.scenario_name : undefined,
+      'label' in scenario ? scenario.label : undefined,
+    ].find((value): value is string => typeof value === 'string' && value.length > 0)
+      ?? `Scenario ${index + 1}`
+    const roi = 'roi_percentage' in scenario ? scenario.roi_percentage : undefined
+    return [{
       name,
       roiLabel: typeof roi === 'number' && roi > 0 ? `${roi.toFixed(0)}% ROI (hipotesis)` : 'Qualitative band',
-      description: scenario.description,
-    }
+      description: 'description' in scenario && typeof scenario.description === 'string' ? scenario.description : undefined,
+    }]
   })
 }
 
@@ -2362,7 +1804,7 @@ type DiagramStudioSession = {
   ideaId: string
   diagramKey: string
   diagramSource?: string
-  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd' | 'use-case'
   savedGraph?: C4CanvasGraph
   onPersistGraph?: (graph: C4CanvasGraph) => void
   title: string
@@ -2426,6 +1868,9 @@ function DiagramGalleryCard({
   isRegenerating,
   onGenerateDraft,
   onGenerateAlternative,
+  onRetryLoad,
+  syncStatus,
+  onRetrySync,
   onOpenStudio,
   c4DrilldownTargets,
   onOpenC4Drilldown,
@@ -2434,7 +1879,7 @@ function DiagramGalleryCard({
   ideaId: string
   diagramKey: string
   diagramSource?: string
-  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd'
+  diagramFormat?: 'plantuml' | 'bpmn' | 'c4' | 'class' | 'erd' | 'use-case'
   savedGraph?: C4CanvasGraph
   onPersistGraph?: (graph: C4CanvasGraph) => void
   title: string
@@ -2450,13 +1895,17 @@ function DiagramGalleryCard({
   isRegenerating: boolean
   onGenerateDraft?: () => void
   onGenerateAlternative?: () => void
+  onRetryLoad?: () => void
+  syncStatus?: string
+  onRetrySync?: () => void
   onOpenStudio: (session: DiagramStudioSession) => void
   c4DrilldownTargets?: C4DiagramDrilldownTarget[]
   onOpenC4Drilldown?: (diagramKey: string) => void
   className?: string
 }) {
-  const renderedPreview = usePlantUmlPngPreview(renderAsImage ? diagramSource : null)
-  const previewSrc = renderAsImage ? renderedPreview.objectUrl : imageSrc
+  const savedImage = savedGraph?.canvasPngBase64 ? `data:image/png;base64,${savedGraph.canvasPngBase64}` : null
+  const renderedPreview = usePlantUmlPngPreview(renderAsImage && !savedImage ? diagramSource : null)
+  const previewSrc = renderAsImage ? savedImage || renderedPreview.objectUrl : imageSrc
   const previewLoading = renderAsImage ? renderedPreview.isLoading : imageLoading
   const previewError = renderAsImage ? renderedPreview.error : imageError
   const hasDiagram = Boolean(previewSrc || (!renderAsImage && diagramSource))
@@ -2495,11 +1944,26 @@ function DiagramGalleryCard({
           <Icon className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
           <span className="text-sm font-semibold text-foreground">{title}</span>
         </div>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <DiagramSyncIndicator status={syncStatus} onRetry={onRetrySync} />
         {typeof confidence === 'number' && confidence > 0 ? (
           <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence))}>
             {confidence}%
           </Badge>
         ) : null}
+        {onRetryLoad && (
+          <button
+            type="button"
+            onClick={onRetryLoad}
+            disabled={isRegenerating}
+            title="Retry loading diagram"
+            aria-label={`Retry loading ${title}`}
+            className="shrink-0 rounded-md p-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCcw className="h-4 w-4" aria-hidden />
+          </button>
+        )}
+        </div>
       </div>
       <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
       <div className="relative mt-2 aspect-[16/10] overflow-hidden rounded-lg border border-border/30 bg-slate-50">
@@ -2547,7 +2011,7 @@ function DiagramGalleryCard({
             ) : imageError || generationError ? (
               <span className="text-rose-600">{imageError || generationError}</span>
             ) : missing ? (
-              "AI couldn't produce a diagram — not enough evidence in this idea yet"
+              'Diagram belum tersedia.'
             ) : (
               'No diagram yet'
             )}
@@ -2606,94 +2070,11 @@ function IdeaDocSourceDiagramPreview({ diagram }: { diagram: ExtractedProcessDia
         <AssistantMermaidBlock
           source={diagram.source}
           notation={isTechnicalViewSource(diagram.source) ? 'plantuml' : 'bpmn'}
+          diagramKind={diagram.kind}
           className="my-0 shadow-none"
         />
       </div>
     </figure>
-  )
-}
-
-function CollapsiblePanel({
-  panelKey,
-  title,
-  description,
-  isOpen,
-  onToggle,
-  showToggle = true,
-  confidence,
-  statusBadge,
-  headerActions,
-  fillHeight = false,
-  immersive = false,
-  children,
-}: {
-  panelKey: PanelKey
-  title: string
-  description: string
-  isOpen: boolean
-  onToggle: (key: PanelKey) => void
-  showToggle?: boolean
-  confidence?: number
-  statusBadge?: { label: string; className: string }
-  headerActions?: React.ReactNode
-  fillHeight?: boolean
-  immersive?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <Card
-      className={cn(
-        'liquid-glass-enterprise-panel rounded-2xl border-border/30 shadow-sm',
-        fillHeight && 'flex h-full min-h-0 flex-col overflow-hidden',
-        immersive && 'overflow-hidden',
-      )}
-    >
-      {!immersive && (
-      <CardHeader className={cn('pb-3', fillHeight && 'shrink-0')}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base leading-tight text-slate-900">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-border/40 bg-white/90">
-                <Sparkles className="h-3 w-3 text-slate-600" />
-              </span>
-              {title}
-            </CardTitle>
-            <CardDescription className="mt-0.5 leading-tight">{description}</CardDescription>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            {statusBadge ? (
-              <Badge variant="outline" className={cn('text-[10px] font-semibold', statusBadge.className)}>
-                {statusBadge.label}
-              </Badge>
-            ) : typeof confidence === 'number' ? (
-              <Badge variant="outline" className={cn('text-[10px] font-semibold', confidenceClass(confidence))}>
-                Confidence {confidence}%
-              </Badge>
-            ) : null}
-            {headerActions}
-            {showToggle && (
-              <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => onToggle(panelKey)}>
-                {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </Button>
-            )}
-          </div>
-        </div>
-      </CardHeader>
-      )}
-      {isOpen && (
-        <CardContent
-          className={cn(
-            immersive && 'min-h-0 flex-1 overflow-hidden p-0',
-            !immersive &&
-              fillHeight &&
-              'min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
-          )}
-        >
-          {children}
-        </CardContent>
-      )}
-    </Card>
   )
 }
 
@@ -2898,7 +2279,7 @@ function renderIdeaPanelWithOptionalFullscreen(
     // intended: those menus render above it, the way "fullscreen content, chrome-level UI on top"
     // is supposed to work.
     return (
-      <div className="fixed inset-x-0 top-12 bottom-0 z-50 flex min-h-0 w-screen flex-col overflow-hidden bg-background">
+      <div className="idea-detail-fullscreen fixed inset-x-0 top-12 bottom-0 z-50 flex min-h-0 w-screen flex-col overflow-hidden bg-background">
         {panel}
       </div>
     )
@@ -2912,6 +2293,7 @@ type IdeaDetailSidebarProps = {
   activePanel: PanelKey
   onNavigatePanel: (key: PanelKey) => void
   menuSections: PanelKey[]
+  menuOrderLocked: boolean
   onReorderMenuSections: (orderedKeys: PanelKey[]) => void
   actionControlMode: ActionControlSidebarMode
   actionControlGroups: IdeaActionControlGroup[]
@@ -3209,45 +2591,6 @@ function ActionControlGroupCard({
   )
 }
 
-function BrdTemplateHeader({
-  ideaId,
-  title,
-  reviewer,
-  priority,
-  version,
-  page,
-  totalPages,
-}: {
-  ideaId: string
-  title: string
-  reviewer: string
-  priority: string
-  version: string
-  page: number
-  totalPages: number
-}) {
-  return (
-    <div className="border border-slate-500">
-      <div className="grid grid-cols-[1.15fr_2fr] border-b border-slate-500">
-        <div className="border-r border-slate-500 px-2 py-1 text-[10px] leading-4 text-slate-700 font-['Arial',sans-serif]">
-          <p>BRD #: {ideaId}</p>
-          <p>Priority: {priority}</p>
-          <p>Date: {new Date().toLocaleDateString('en-GB')}</p>
-          <p>Version: {version}</p>
-        </div>
-        <div className="px-2 py-1 text-center font-['Arial',sans-serif]">
-          <p className="text-[28px] font-semibold leading-8 text-slate-700">Business Requirement Document</p>
-          <p className="mt-1 text-[14px] leading-5 text-sky-700">
-            System Name: <span className="font-semibold">{title}</span>
-          </p>
-        </div>
-      </div>
-      <div className="px-2 py-1 text-right text-[10px] text-slate-600 font-['Arial',sans-serif]">
-        Page {page} of {totalPages} {String.fromCharCode(0xb7)} Owner: {reviewer}
-      </div>
-    </div>
-  )
-}
 /*
 function BrdCanvasText({
   value,
@@ -3435,16 +2778,19 @@ function SortableIdeaNavItem({
   collapsed,
   active,
   onNavigate,
+  orderLocked,
 }: {
   sectionKey: PanelKey
   collapsed: boolean
   active: boolean
   onNavigate: (key: PanelKey) => void
+  orderLocked: boolean
 }) {
   const item = getIdeaPanelCatalogEntry(sectionKey)
   const Icon = item.icon
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sectionKey,
+    disabled: orderLocked,
   })
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -3464,7 +2810,7 @@ function SortableIdeaNavItem({
         )}
         title={collapsed ? item.label : undefined}
       >
-        {!collapsed && (
+        {!collapsed && !orderLocked && (
           <span
             {...attributes}
             {...listeners}
@@ -3488,6 +2834,7 @@ function IdeaDetailSidebar({
   activePanel,
   onNavigatePanel,
   menuSections,
+  menuOrderLocked,
   onReorderMenuSections,
   actionControlMode,
   actionControlGroups,
@@ -3513,6 +2860,7 @@ function IdeaDetailSidebar({
   publishedAtLabel,
   onWidthChange,
 }: IdeaDetailSidebarProps) {
+  const isMobile = useMobileLayout()
   const asideRef = useRef<HTMLElement>(null)
   const activeMenu = getIdeaPanelCatalogEntry(activePanel)
   const isEditable = actionControlMode === 'editable'
@@ -3532,7 +2880,7 @@ function IdeaDetailSidebar({
   useLayoutEffect(() => {
     const el = asideRef.current
     if (el) onWidthChange(el.getBoundingClientRect().width)
-  }, [collapsed, onWidthChange])
+  }, [collapsed, onWidthChange, isMobile])
 
   useEffect(() => {
     const el = asideRef.current
@@ -3543,15 +2891,25 @@ function IdeaDetailSidebar({
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [onWidthChange])
+  }, [onWidthChange, isMobile])
 
   const handleMenuDragEnd = (event: DragEndEvent) => {
+    if (menuOrderLocked) return
     const { active, over } = event
     if (!over || active.id === over.id) return
     const oldIndex = menuSections.indexOf(active.id as PanelKey)
     const newIndex = menuSections.indexOf(over.id as PanelKey)
     if (oldIndex === -1 || newIndex === -1) return
     onReorderMenuSections(arrayMove(menuSections, oldIndex, newIndex))
+  }
+
+  if (isMobile) {
+    return <MobileIdeaSectionNav
+      sections={menuSections.map((key) => ({ key, label: getIdeaPanelCatalogEntry(key).label }))}
+      active={activePanel} onChange={onNavigatePanel}
+      publishing={isPublishingToOrganization}
+      publish={showManualPublishFooter ? { disabled: !canPublishToOrganization, hint: publishShareHint, onClick: onPublishToOrganization, publishedAt: publishedAtLabel } : undefined}
+    />
   }
 
   return (
@@ -3591,6 +2949,7 @@ function IdeaDetailSidebar({
                 <SortableIdeaNavItem
                   key={sectionKey}
                   sectionKey={sectionKey}
+                  orderLocked={menuOrderLocked}
                   collapsed={collapsed}
                   active={activePanel === sectionKey}
                   onNavigate={onNavigatePanel}
@@ -3777,6 +3136,8 @@ const IDEA_DOC_GENERATE_STEPS = [
 const IDEA_DOC_GENERATE_STEP_INTERVAL_MS = 2200
 
 export function IdeaDetailPage() {
+  const isMobileLayout = useMobileLayout()
+  const detailViewport = useCommunicationViewport(isMobileLayout)
   const { ideaId } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -3793,12 +3154,7 @@ export function IdeaDetailPage() {
   const [identityUserNameById, setIdentityUserNameById] = useState<Record<string, string>>({})
   const [reviewerMemberships, setReviewerMemberships] = useState<WacMembershipDto[]>([])
   const [isReviewerOptionsLoading, setIsReviewerOptionsLoading] = useState(false)
-  const [reviewerOptionsError, setReviewerOptionsError] = useState('')
-  const [isMetaPatchSaving, setIsMetaPatchSaving] = useState(false)
-  const [metaPatchInlineError, setMetaPatchInlineError] = useState<string | null>(null)
-  const [metaPatchLastSavedAt, setMetaPatchLastSavedAt] = useState<Date | null>(null)
-  const lastMetaToastRef = useRef<{ key: string; at: number } | null>(null)
-
+  const [, setReviewerOptionsError] = useState('')
   const { options: userWorkspaceOptions } = useUserWorkspaceOptions()
 
   const [brdPages, setBrdPages] = useState<string[]>([''])
@@ -3807,6 +3163,14 @@ export function IdeaDetailPage() {
   const [ideaGeneratedDocs, setIdeaGeneratedDocs] = useState<DocumentResponse[]>([])
   const [ideaDocHistoryTarget, setIdeaDocHistoryTarget] = useState<DocumentResponse | null>(null)
   const [ideaDocsReloadKey, setIdeaDocsReloadKey] = useState(0)
+  const [contentReviewEnabled, setContentReviewEnabled] = useState(true)
+  const [contentRevisionBusy, setContentRevisionBusy] = useState(false)
+  const [creatorDiagramsEnabled, setCreatorDiagramsEnabled] = useState(false)
+  const [contentSubmitting, setContentSubmitting] = useState(false)
+  const ideaContentLock = useIdeaContentLock(idea.id, ideaDocsReloadKey, contentReviewEnabled)
+  const contentLocked = ideaContentLock.locked || contentSubmitting
+  const contentLockedRef = useRef(contentLocked)
+  contentLockedRef.current = contentLocked
   const [ideaDocApprovalTarget, setIdeaDocApprovalTarget] = useState<
     { item: RepositoryItem; mode: 'submit' | 'approve' | 'reject' } | null
   >(null)
@@ -3842,9 +3206,11 @@ export function IdeaDetailPage() {
   const [isIntegrationPanelFullscreen, setIsIntegrationPanelFullscreen] = useState(false)
   const integrationPreviewMenu = useDiagramSurfaceMenu()
   const [diagramStudio, setDiagramStudio] = useState<DiagramStudioSession | null>(null)
+  const studioSavedImage = diagramStudio?.savedGraph?.canvasPngBase64 ? `data:image/png;base64,${diagramStudio.savedGraph.canvasPngBase64}` : null
   const studioPlantUmlPreview = usePlantUmlPngPreview(
-    diagramStudio?.renderAsImage ? diagramStudio.diagramSource : null,
+    diagramStudio?.renderAsImage && diagramStudio.diagramKey !== 'brainstorm-sequence' && !studioSavedImage ? diagramStudio.diagramSource : null,
   )
+  const studioImageSrc = studioSavedImage || studioPlantUmlPreview.objectUrl
   const [isDiagramExportMenuOpen, setIsDiagramExportMenuOpen] = useState(false)
   const [isIntegrationExportMenuOpen, setIsIntegrationExportMenuOpen] = useState(false)
   const [isIntegrationHistoryOpen, setIsIntegrationHistoryOpen] = useState(false)
@@ -3887,7 +3253,6 @@ export function IdeaDetailPage() {
   const [ideaDocSourceTab, setIdeaDocSourceTab] = useState<'brainstorm' | 'summary'>('brainstorm')
   const [ideaDocSourceMode, setIdeaDocSourceMode] = useState<'preview' | 'edit'>('preview')
   const [ideaDocGenerateBusy, setIdeaDocGenerateBusy] = useState(false)
-  const [urdSendBusy, setUrdSendBusy] = useState(false)
   const [ideaDocGenerateStepIndex, setIdeaDocGenerateStepIndex] = useState(0)
   const ideaDocGenerateTimerRef = useRef<number | null>(null)
   type IdeaDocFolderStackEntry = { id: string; name: string }
@@ -3895,6 +3260,8 @@ export function IdeaDetailPage() {
   const [ideaDocSubfolders, setIdeaDocSubfolders] = useState<DocumentFolder[]>([])
   const [ideaDocFolderCreateBusy, setIdeaDocFolderCreateBusy] = useState(false)
   const [ideaDocFolderInitBusy, setIdeaDocFolderInitBusy] = useState(false)
+  const [ideaDocFolderError, setIdeaDocFolderError] = useState<string | null>(null)
+  const [ideaDocFolderRetry, setIdeaDocFolderRetry] = useState(0)
   const [ideaDocFolderContextMenu, setIdeaDocFolderContextMenu] = useState<{
     folder: DocumentFolder
     x: number
@@ -3910,13 +3277,14 @@ export function IdeaDetailPage() {
   // the current and the chosen earlier versions held (see templatePartSelection).
   const ideaDocRegenerateTarget = useMemo(() => {
     if (!selectedIdeaDocGenerateTemplate) return null
-    const label = ideaDocTypeLabel(selectedIdeaDocGenerateTemplate.template_code)
+    const label = templateDocumentKind(selectedIdeaDocGenerateTemplate)
     return ideaGeneratedDocs
       .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === label)
       .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0] ?? null
   }, [idea.id, ideaGeneratedDocs, selectedIdeaDocGenerateTemplate])
   const ideaDocParts = useMemo(
-    () => templateParts(selectedIdeaDocGenerateTemplate?.metadata?.agent_schema as TemplateAgentSchema | undefined),
+    () => templateParts(selectedIdeaDocGenerateTemplate?.metadata?.agent_schema as TemplateAgentSchema | undefined,
+      selectedIdeaDocGenerateTemplate ? templateDocumentKind(selectedIdeaDocGenerateTemplate) : undefined),
     [selectedIdeaDocGenerateTemplate],
   )
   const ideaDocRegenerateVersion = ideaDocRegenerateTarget?.current_version_no || 1
@@ -4085,7 +3453,6 @@ export function IdeaDetailPage() {
   const brdContentNormalizationRef = useRef(false)
   const [brdHeaders, setBrdHeaders] = useState<string[]>([''])
   const brdHeadersRef = useRef<string[]>([''])
-  const [editingHeaderIndex, setEditingHeaderIndex] = useState<number | null>(null)
   // Use the same minimum as the ResizeObserver clamp to avoid a one-time re-render
   // that can steal the caret on the first keystroke in the body.
   const [brdHeaderHeights, setBrdHeaderHeights] = useState<number[]>([18])
@@ -4097,19 +3464,18 @@ export function IdeaDetailPage() {
   const brdWordCountRaf = useRef<number | null>(null)
   const brdWordCountUpdateFnRef = useRef<(count: number) => void>(() => {})
   const [brdActivePageIndex, setBrdActivePageIndex] = useState(0)
-  const [brdZoom, setBrdZoom] = useState(0.9)
+  const [, setBrdZoom] = useState(0.9)
   const brdViewportRef = useRef<HTMLDivElement | null>(null)
-  const [brdMaxZoomFit, setBrdMaxZoomFit] = useState(1.5)
-  const [brdFontFamily, setBrdFontFamily] = useState<"Aptos" | "Arial" | "Calibri" | "Times New Roman">('Aptos')
-  const [brdFontSize, setBrdFontSize] = useState<11 | 12 | 14 | 15 | 16 | 18>(12)
-  const [brdLineHeight, setBrdLineHeight] = useState<1.5 | 1.7 | 2>(1.7)
-  const [brdLayoutPolishMode, setBrdLayoutPolishMode] = useState<'conservative' | 'aggressive'>(() => {
+  const [, setBrdMaxZoomFit] = useState(1.5)
+  const [brdFontFamily] = useState<"Aptos" | "Arial" | "Calibri" | "Times New Roman">('Aptos')
+  const [brdFontSize] = useState<11 | 12 | 14 | 15 | 16 | 18>(12)
+  const [brdLineHeight] = useState<1.5 | 1.7 | 2>(1.7)
+  const [brdLayoutPolishMode] = useState<'conservative' | 'aggressive'>(() => {
     const raw = localStorage.getItem(IDEA_DETAIL_BRD_POLISH_MODE_STORAGE_KEY)
     return raw === 'conservative' || raw === 'aggressive' ? raw : 'aggressive'
   })
   const brdLastFocusedPage = useRef<number>(0)
   const [brdTextColor, setBrdTextColor] = useState('#0f172a')
-  const brdTextColorInputRef = useRef<HTMLInputElement | null>(null)
   const brdTextColorButtonRef = useRef<HTMLButtonElement | null>(null)
   const [brdTextColorMenuOpen, setBrdTextColorMenuOpen] = useState(false)
   const brdTextColorMenuRef = useRef<HTMLDivElement | null>(null)
@@ -4157,7 +3523,7 @@ export function IdeaDetailPage() {
   const [brdExportOpen, setBrdExportOpen] = useState(false)
   const brdExportMenuRef = useRef<HTMLDivElement | null>(null)
   const brdExportButtonRef = useRef<HTMLButtonElement | null>(null)
-  const [brdExportMenuPos, setBrdExportMenuPos] = useState<{ top: number; right: number } | null>(null)
+  const [, setBrdExportMenuPos] = useState<{ top: number; right: number } | null>(null)
   const BRD_TEMPLATE_STORAGE_KEY = 'tectona_brd_templates_v1'
   const BRD_TEMPLATE_SELECTED_KEY = 'tectona_brd_templates_selected_v1'
   const defaultBrdTemplates: BrdTemplate[] = useMemo(
@@ -4175,9 +3541,7 @@ export function IdeaDetailPage() {
   )
   const [brdTemplates, setBrdTemplates] = useState<BrdTemplate[]>(defaultBrdTemplates)
   const [brdSelectedTemplateId, setBrdSelectedTemplateId] = useState<string>('blank')
-  const [manageBrdTemplatesOpen, setManageBrdTemplatesOpen] = useState(false)
-  const [editingTemplate, setEditingTemplate] = useState<BrdTemplate | null>(null)
-  const [collapsed, setCollapsed] = useState<Record<PanelKey, boolean>>({
+  const [, setCollapsed] = useState<Record<PanelKey, boolean>>({
     summary: true,
     scoring: true,
     impact: true,
@@ -4219,8 +3583,8 @@ export function IdeaDetailPage() {
     conversion: 0,
     document: 0,
   })
-  const isBrdGenerating = regenerating.brd
-  const [isBrdRenderLocked, setIsBrdRenderLocked] = useState(false)
+  const [isBrdGenerating, setIsBrdGenerating] = useState(false)
+  const [isBrdRenderLocked] = useState(false)
   const isBrdRenderLockedRef = useRef(false)
 
   const isUnknownIdentityToken = useCallback((value: string | null | undefined) => {
@@ -4610,11 +3974,6 @@ export function IdeaDetailPage() {
     return [...ids]
   }, [reviewerMemberships])
 
-  const reviewerDisplayName = useMemo(
-    () => resolveIdentityDisplayName(idea.reviewer),
-    [idea.reviewer, resolveIdentityDisplayName]
-  )
-
   const [resolvedWorkspaceName, setResolvedWorkspaceName] = useState<string | null>(null)
 
   useEffect(() => {
@@ -4682,13 +4041,14 @@ export function IdeaDetailPage() {
     confidence_score: 0.89,
     warnings: [],
   })
-  const [brdWarnings, setBrdWarnings] = useState<string[]>([])
-  const [brdLastRefreshedAt, setBrdLastRefreshedAt] = useState<Date | null>(null)
+  const [, setBrdWarnings] = useState<string[]>([])
+  const [, setBrdLastRefreshedAt] = useState<Date | null>(null)
 
   // Loader for BRD (mirrors loadRuntimeSummary)
   const loadRuntimeBrd = useCallback(async (
     options: { forceRefresh?: boolean } = {},
   ) => {
+    setIsBrdGenerating(true)
     try {
       const response = await generateIdeaBrd({
         idea_id: idea.id,
@@ -4737,6 +4097,8 @@ export function IdeaDetailPage() {
       setBrdLastRefreshedAt(new Date())
       setConfidence((prev) => ({ ...prev, brd: 72 }))
       return fallback
+    } finally {
+      setIsBrdGenerating(false)
     }
   }, [
     idea.description,
@@ -4776,7 +4138,7 @@ export function IdeaDetailPage() {
   const runtimeIntegrationAnalysisRef = useRef(runtimeIntegrationAnalysis)
   runtimeIntegrationAnalysisRef.current = runtimeIntegrationAnalysis
   const [integrationLoaded, setIntegrationLoaded] = useState(false)
-  const [integrationMissing, setIntegrationMissing] = useState(false)
+  const [, setIntegrationMissing] = useState(false)
   const [integrationWarnings, setIntegrationWarnings] = useState<string[]>([])
   const [integrationGenerationError, setIntegrationGenerationError] = useState<string | null>(null)
   const [integrationBootstrapRecord, setIntegrationBootstrapRecord] = useState<IntegrationGraphRecord | null>(null)
@@ -4818,7 +4180,6 @@ export function IdeaDetailPage() {
     [],
   )
   const [integrationBootstrapKey, setIntegrationBootstrapKey] = useState(0)
-  const [integrationBriefExpanded, setIntegrationBriefExpanded] = useState(false)
   // What the integration view still misses: elements without a relation, read live from the canvas,
   // and the generator's other checks (data owner, step performer) while the view is unedited.
   const integrationChecks = useMemo(() => {
@@ -4838,8 +4199,13 @@ export function IdeaDetailPage() {
         .map((warning) => warning.slice('INTEGRATION_CHECK: '.length))
     return [...unrelated, ...generated]
   }, [integrationLatestGraph, integrationWarnings])
+  const persistCanonicalCanvasRef = useRef<(key: string, graph: C4CanvasGraph) => void>(() => undefined)
   const persistIntegrationGraph = useCallback(
     (graph: IntegrationGraphRecord, change?: IntegrationGraphChange | { source: 'restored'; note: string }) => {
+      if (contentLockedRef.current) return Promise.reject(new Error('Idea content is locked for approval.'))
+      if (graph.canvasPngBase64 || graph.canvasExportError) {
+        persistCanonicalCanvasRef.current('brainstorm-archimate', { ...graph, source: graph.plantumlSource })
+      }
       const current = runtimeIntegrationAnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -4889,6 +4255,8 @@ export function IdeaDetailPage() {
   c4Level2AnalysisRef.current = c4Level2Analysis
   const persistC4Canvas = useCallback(
     (level: C4ArchitectureLevel, graph: C4CanvasGraph) => {
+      if (contentLockedRef.current) return
+      persistCanonicalCanvasRef.current(level === 'L1' ? 'brainstorm-c4-level-1' : 'brainstorm-c4-level-2', graph)
       const current = level === 'L1' ? c4Level1AnalysisRef.current : c4Level2AnalysisRef.current
       const currentReview = current.architectureReview
       const actor = {
@@ -5026,7 +4394,7 @@ export function IdeaDetailPage() {
       : existing?.submittedBy && existing.submittedBy !== actor.id
         ? [existing.submittedBy]
         : []
-    const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+    const linkUrl = workspaceScopedPath(tenant?.slug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
     void Promise.allSettled(recipients.map((userId) => createNotification({
       app_id: TECTONA_APP_ID,
       user_id: userId,
@@ -5044,7 +4412,7 @@ export function IdeaDetailPage() {
       created_from: 'tectona-architecture-review',
     })))
     setDiagramStudio((studio) => studio?.diagramKey === `c4-level-${level === 'L1' ? '1' : '2'}` ? { ...studio, savedGraph: nextAnalysis.canvasGraph, diagramSource: nextAnalysis.plantumlSource } : studio)
-  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
+  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.slug])
   const saveNonC4ArchitectureReview = useCallback(async (
     target: 'integration' | 'bpmn-high',
     action: C4ReviewAction,
@@ -5074,8 +4442,8 @@ export function IdeaDetailPage() {
       throw new Error('Only the person who submitted this version can cancel its review.')
     }
     const source = target === 'integration'
-      ? current.plantumlSource
-      : current.canvasGraph?.source || current.bpmnXml
+      ? runtimeIntegrationAnalysisRef.current.plantumlSource
+      : bpmnHighAnalysisRef.current.canvasGraph?.source || bpmnHighAnalysisRef.current.bpmnXml
     const review = buildArchitectureReview(existing, action, actor, trimmedComment, { source })
     if (target === 'integration') {
       const next = { ...runtimeIntegrationAnalysisRef.current, architectureReview: review }
@@ -5100,7 +4468,7 @@ export function IdeaDetailPage() {
     const recipients = action === 'submit'
       ? architectureReviewerIds.filter((id) => id !== actor.id)
       : existing?.submittedBy && existing.submittedBy !== actor.id ? [existing.submittedBy] : []
-    const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
+    const linkUrl = workspaceScopedPath(tenant?.slug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
     void Promise.allSettled(recipients.map((userId) => createNotification({
       app_id: TECTONA_APP_ID,
       user_id: userId,
@@ -5112,7 +4480,7 @@ export function IdeaDetailPage() {
       created_by: actor.id,
       created_from: 'tectona-architecture-review',
     })))
-  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.workspaceSlug])
+  }, [architectureReviewerIds, currentArchitectureMembership, currentArchitectureTeamName, currentUserDisplayName, currentUserId, idea.id, idea.title, idea.version, runtimeUserId, tenant?.workspaceId, tenant?.slug])
   const c4Level1Preview = usePlantUmlPngPreview(
     c4Level1Analysis.plantumlSource ? normalizeC4PlantUml(c4Level1Analysis.plantumlSource, 'L1') : null,
   )
@@ -5168,11 +4536,36 @@ export function IdeaDetailPage() {
   }
   const [processDetailsByKey, setProcessDetailsByKey] = useState<Record<string, ProcessDetailState>>({})
   const [brainstormCanvasByKey, setBrainstormCanvasByKey] = useState<Record<string, C4CanvasGraph>>({})
+  const [diagramSourcesLoading, setDiagramSourcesLoading] = useState(true)
+  const [diagramSourceErrors, setDiagramSourceErrors] = useState<Record<string, string>>({})
+  const [diagramSourcesReloadKey, setDiagramSourcesReloadKey] = useState(0)
+  const [processDocumentSync, setProcessDocumentSync] = useState<Record<string, string>>({})
+  const processSaveOutcomeRef = useRef<Record<string, string>>({})
+  useEffect(() => {
+    const pending = (event: Event) => {
+      const detail = (event as CustomEvent<{ ideaId: string; diagramKey: string }>).detail
+      if (detail?.ideaId !== idea.id) return
+      const key = diagramSyncKey(detail.diagramKey)
+      if (key.startsWith('brainstorm-') || key === 'high') setProcessDocumentSync(current => ({ ...current, [key]: 'pending' }))
+    }
+    window.addEventListener('tectona-diagram-content-pending', pending)
+    return () => window.removeEventListener('tectona-diagram-content-pending', pending)
+  }, [idea.id])
+  const processSaveQueue = useRef<Promise<void>>(Promise.resolve())
+  const processSaveRevision = useRef<Record<string, number>>({})
+  const processSaveFingerprint = useRef<Record<string, string>>({})
+  const processSaveIdeaId = useRef(idea.id)
+  processSaveIdeaId.current = idea.id
+  useEffect(() => {
+    processSaveRevision.current = {}
+    processSaveFingerprint.current = {}
+    setProcessDocumentSync({})
+  }, [idea.id])
   const bpmnHighAnalysisRef = useRef(bpmnHighAnalysis)
   const processDetailsByKeyRef = useRef(processDetailsByKey)
   bpmnHighAnalysisRef.current = bpmnHighAnalysis
   processDetailsByKeyRef.current = processDetailsByKey
-  const [isFreshIdea, setIsFreshIdea] = useState(() => {
+  const [, setIsFreshIdea] = useState(() => {
     if (typeof window === 'undefined') return false
     try {
       const isFresh = !!window.sessionStorage.getItem(`tectona-fresh-idea-${initialIdea.id}`)
@@ -5230,7 +4623,6 @@ export function IdeaDetailPage() {
     ].join('\n')
   }
 
-  const [brdSections, setBrdSections] = useState<BrdSection[]>(INITIAL_BRD_SECTIONS)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const stored = localStorage.getItem(IDEA_DETAIL_SIDEBAR_STORAGE_KEY)
     return stored ? JSON.parse(stored) : false
@@ -5239,12 +4631,12 @@ export function IdeaDetailPage() {
   const setRightDrawerOpen = useRightDrawerStore((s) => s.setOpen)
   const setRightDrawerWidth = useRightDrawerStore((s) => s.setWidth)
   useEffect(() => {
-    setRightDrawerOpen(true)
+    setRightDrawerOpen(!isMobileLayout)
     return () => {
       setRightDrawerOpen(false)
       setRightDrawerWidth(DEFAULT_RIGHT_DRAWER_WIDTH)
     }
-  }, [setRightDrawerOpen, setRightDrawerWidth])
+  }, [setRightDrawerOpen, setRightDrawerWidth, isMobileLayout])
   const [activePanel, setActivePanel] = useState<PanelKey>(() => readPersistedIdeaNavTop(idea.id))
   const [navStoreHydrated, setNavStoreHydrated] = useState(() => useIdeaNavSectionsStore.persist.hasHydrated())
   const userChosePanelRef = useRef(false)
@@ -5254,6 +4646,7 @@ export function IdeaDetailPage() {
   const reorderIdeaMenuSections = useIdeaNavSectionsStore((state) => state.reorderSections)
   const savedMenuSections = useIdeaNavSectionsStore((state) => state.sectionsByIdea[idea.id])
   const [workflowSectionVisibility, setWorkflowSectionVisibility] = useState<IdeaSectionVisibilityMap>({})
+  const [workflowSectionOrder, setWorkflowSectionOrder] = useState<PanelKey[] | undefined>()
   // Who still sees hidden sections and which diagram types, from the workflow's Idea trigger.
   const [workflowSectionAudience, setWorkflowSectionAudience] = useState<IdeaSectionAudience | null>(null)
   // False until the workflow's section rules are read: showing the full menu first and then
@@ -5277,6 +4670,8 @@ export function IdeaDetailPage() {
       .then(async (policy) => {
         if (cancelled) return
         setWorkflowRequestDocumentKinds(policy.requestDocumentKinds)
+        setContentReviewEnabled(Boolean(policy.contentReviewEnabled))
+        setCreatorDiagramsEnabled(Boolean(policy.creatorDiagramsEnabled))
         // The idea's own changes: "Set Section Visibility" nodes its newest run of that workflow passed.
         const runs = policy.workflowId ? await listIdeaWorkflowRuns(idea.id).catch(() => []) : []
         const overrides = runs.find((run) => run.workflow_id === policy.workflowId)?.idea_sections
@@ -5303,6 +4698,7 @@ export function IdeaDetailPage() {
         )
         if (cancelled) return
         if (policy.audience.values.length === 0) {
+          setWorkflowSectionOrder(policy.sectionOrder)
           setWorkflowSectionVisibility(sections.visibility)
           setWorkflowSectionAudience(sections.audience)
           setIdeaSectionPolicyReady(true)
@@ -5318,6 +4714,7 @@ export function IdeaDetailPage() {
         })
         if (!cancelled) {
           setWorkflowSectionVisibility(matches ? sections.visibility : {})
+          setWorkflowSectionOrder(matches ? policy.sectionOrder : undefined)
           setWorkflowSectionAudience(matches ? sections.audience : null)
           setIdeaSectionPolicyReady(true)
         }
@@ -5325,6 +4722,7 @@ export function IdeaDetailPage() {
       .catch(() => {
         if (!cancelled) {
           setWorkflowSectionVisibility({})
+          setWorkflowSectionOrder(undefined)
           setWorkflowSectionAudience(null)
           setWorkflowRequestDocumentKinds([])
           setIdeaSectionPolicyReady(true)
@@ -5349,15 +4747,19 @@ export function IdeaDetailPage() {
       ])
       .filter((label): label is string => Boolean(label))
   }, [currentUserId, reviewerMemberships])
+  const isDiagramOwner = isIdeaDiagramOwner(currentUserId, idea.submittedBy, idea.createdBy)
+  const showCreatorDiagrams = isDiagramOwner && creatorDiagramsEnabled
   const diagramTypes = useMemo(
-    () => ideaDiagramTypesFor(viewerTeamLabels, workflowSectionAudience),
-    [viewerTeamLabels, workflowSectionAudience],
+    () => ideaDiagramTypesFor(viewerTeamLabels, workflowSectionAudience, isDiagramOwner),
+    [viewerTeamLabels, workflowSectionAudience, isDiagramOwner],
   )
   const showTechnicalDiagrams = diagramTypes.technical
   const showBpmnDiagrams = diagramTypes.bpmn
   const menuSections = useMemo(
-    () => ideaMenuForWorkflowAudience(savedMenuSections, workflowSectionVisibility, viewerTeamLabels, workflowSectionAudience),
-    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility],
+    () => ideaMenuForWorkflowAudience(savedMenuSections,
+      workflowSectionVisibility,
+      viewerTeamLabels, workflowSectionAudience, workflowSectionOrder, showCreatorDiagrams, isDiagramOwner),
+    [savedMenuSections, viewerTeamLabels, workflowSectionAudience, workflowSectionVisibility, workflowSectionOrder, showCreatorDiagrams, isDiagramOwner],
   )
   useEffect(() => {
     userChosePanelRef.current = false
@@ -5542,15 +4944,6 @@ export function IdeaDetailPage() {
     idea.description,
   ])
   useTectonaPageContextReporter(location.pathname, ideaPageContext)
-
-  const metaSavedAtLabel = useMemo(() => {
-    if (!metaPatchLastSavedAt) return null
-    return metaPatchLastSavedAt.toLocaleTimeString('id-ID', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-  }, [metaPatchLastSavedAt])
 
   const reviewerOptions = useMemo((): IdeaReviewerOption[] => {
     const dedup = new Map<string, IdeaReviewerOption>()
@@ -5782,6 +5175,7 @@ export function IdeaDetailPage() {
     runtimeUserId,
     idea.tags,
     idea.title,
+    idea.version,
     idea.workspace,
   ])
 
@@ -5806,7 +5200,7 @@ export function IdeaDetailPage() {
           // New official scores (an approved "Score this idea"): the AI readout
           // was written without them, so it is regenerated from the scores.
           if ((api.latest_scoring?.scored_at ?? null) !== (idea.latestScoring?.scored_at ?? null)) {
-            void loadRuntimeScoringRef.current(refreshed, { forceRefresh: true })
+            void loadRuntimeScoringRef.current(refreshed)
           }
           const persistentSummary = await getPersistentIdeaSummary(idea.id)
           if (persistentSummary) {
@@ -5850,10 +5244,7 @@ export function IdeaDetailPage() {
     }
   }, [idea.id])
 
-  const loadRuntimeScoring = useCallback(async (
-    sourceIdea: Idea = idea,
-    options: { forceRefresh?: boolean } = {},
-  ) => {
+  const loadRuntimeScoring = useCallback(async (sourceIdea: Idea = idea) => {
     setScoringGenerationError(null)
 
     const scoringSourceCheck = hasUsableScoringSource(sourceIdea)
@@ -6118,8 +5509,8 @@ export function IdeaDetailPage() {
               }
             }
             if (!regenerate) {
-              applyIntegrationState(analysis, record, sourceIdea.id)
-              return
+            applyIntegrationState(analysis, record, sourceIdea.id)
+            return
             }
           }
         } catch (error) {
@@ -6216,7 +5607,7 @@ export function IdeaDetailPage() {
             // Legacy/failed L1 records can remain marked insufficient even after the
             // idea has enough evidence. Do not let that empty record permanently
             // suppress the first automatic generation while L2 can still succeed.
-            if (storedAnalysis.status === 'ok' && hasRenderableDiagram) {
+            if (storedAnalysis.canvasGraph?.userCustomized || (storedAnalysis.status === 'ok' && hasRenderableDiagram)) {
               applyC4ArchitectureState(level, storedAnalysis)
               return
             }
@@ -6498,6 +5889,7 @@ export function IdeaDetailPage() {
 
   const persistBpmnCanvas = useCallback(
     (processKey: string, graph: C4CanvasGraph) => {
+      if (contentLockedRef.current) return
       const applyCanvas = (current: RuntimeProcessDiagramAnalysis): RuntimeProcessDiagramAnalysis => {
         const currentReview = current.architectureReview
         const actor = {
@@ -6520,25 +5912,41 @@ export function IdeaDetailPage() {
       if (processKey === 'high') {
         const next = applyCanvas(bpmnHighAnalysisRef.current)
         setBpmnHighAnalysis(next)
-        void upsertPersistentIdeaProcessDiagram(idea.id, 'high', {
-          ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'),
-          version: idea.version,
-        }).catch((error) => {
-          setBpmnHighGenerationError(error instanceof Error ? error.message : 'PROCESS_DIAGRAM_PERSIST_FAILED')
-        })
-        return
       }
-      if (processKey.startsWith('brainstorm-')) {
+      if (processKey.startsWith('brainstorm-') || processKey === 'high') {
+        const fingerprint = JSON.stringify(graph)
+        if (processSaveFingerprint.current[processKey] === fingerprint) {
+          setProcessDocumentSync(current => ({ ...current, [processKey]: processSaveOutcomeRef.current[processKey] || 'pending' }))
+          return
+        }
+        processSaveFingerprint.current[processKey] = fingerprint
+        processSaveOutcomeRef.current[processKey] = 'pending'
+        const revision = (processSaveRevision.current[processKey] ?? 0) + 1
+        processSaveRevision.current[processKey] = revision
         const next = applyCanvas({
           ...emptyRuntimeProcessDiagramAnalysis(),
           status: 'ok',
           bpmnXml: graph.source || '',
         })
         setBrainstormCanvasByKey((current) => ({ ...current, [processKey]: next.canvasGraph ?? graph }))
-        void upsertPersistentIdeaProcessDiagram(idea.id, processKey, {
-          ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'),
-          version: idea.version,
-        }).catch(() => undefined)
+        setProcessDocumentSync((current) => ({ ...current, [processKey]: 'pending' }))
+        processSaveQueue.current = processSaveQueue.current.catch(() => undefined).then(async () => {
+          if (processSaveIdeaId.current !== idea.id || processSaveRevision.current[processKey] !== revision) return
+          try {
+            const saved = await upsertPersistentIdeaProcessDiagram(idea.id, processKey, {
+              ...buildPersistentProcessDiagramPayload(next, runtimeUserId || 'tectona-agent'), version: idea.version,
+            })
+            if (processSaveIdeaId.current !== idea.id || processSaveRevision.current[processKey] !== revision) return
+            const sync = saved.process_json.document_sync as { status?: string } | undefined
+            processSaveOutcomeRef.current[processKey] = sync?.status === 'synced' ? 'synced' : 'failed'
+            setProcessDocumentSync((current) => ({ ...current, [processKey]: sync?.status === 'synced' ? 'synced' : 'failed' }))
+            setIdeaDocsReloadKey((key) => key + 1)
+          } catch {
+            if (processSaveIdeaId.current !== idea.id || processSaveRevision.current[processKey] !== revision) return
+            processSaveFingerprint.current[processKey] = ''
+            setProcessDocumentSync((current) => ({ ...current, [processKey]: 'save_failed' }))
+          }
+        })
         return
       }
       const current = processDetailsByKeyRef.current[processKey]
@@ -6565,6 +5973,29 @@ export function IdeaDetailPage() {
     },
     [idea.id, idea.version, runtimeUserId, setProcessDetailState],
   )
+
+  persistCanonicalCanvasRef.current = persistBpmnCanvas
+
+  const retryDiagramSync = (key: string) => {
+    if (contentLockedRef.current) return
+    const graph = brainstormCanvasByKey[key]
+    if (processDocumentSync[key] === 'save_failed' && graph) {
+      processSaveFingerprint.current[key] = ''
+      persistBpmnCanvas(key, graph)
+      return
+    }
+    setProcessDocumentSync(current => ({ ...current, [key]: 'pending' }))
+    void syncIdeaProcessDiagramDocuments(idea.id, key).then(saved => {
+      if (processSaveIdeaId.current !== idea.id) return
+      const sync = saved.process_json.document_sync as { status?: string } | undefined
+      const status = sync?.status === 'synced' ? 'synced' : 'failed'
+      processSaveOutcomeRef.current[key] = status
+      setProcessDocumentSync(current => ({ ...current, [key]: status }))
+      setIdeaDocsReloadKey(value => value + 1)
+    }).catch(() => {
+      if (processSaveIdeaId.current === idea.id) setProcessDocumentSync(current => ({ ...current, [key]: 'failed' }))
+    })
+  }
 
   const loadRuntimeProcessDetail = useCallback(
     async (
@@ -6746,7 +6177,7 @@ export function IdeaDetailPage() {
           const api = await getIdeaById(ideaId)
           hydratedIdea = ideaFromApi(api)
           if (!cancelled) {
-            setIdea(hydratedIdea)
+          setIdea(hydratedIdea)
             setResolvedIdeaId(hydratedIdea.id)
           }
         } catch {
@@ -6773,7 +6204,7 @@ export function IdeaDetailPage() {
             forceRefresh: wasFreshIdea,
             autoGenerateIfMissing: wasFreshIdea,
           }),
-          loadRuntimeScoringRef.current(hydratedIdea, { forceRefresh: wasFreshIdea }),
+          loadRuntimeScoringRef.current(hydratedIdea),
           loadRuntimeBenefitRef.current(hydratedIdea),
           loadRuntimeConversionRef.current(hydratedIdea),
           loadRuntimeIntegrationRef.current(hydratedIdea),
@@ -6878,18 +6309,10 @@ export function IdeaDetailPage() {
     }
   }, [idea.scoring, totalScore])
 
-  const brdContentLookup = useMemo<Record<string, string>>(() => {
-    return brdSections.reduce<Record<string, string>>((acc, section) => {
-      acc[section.key] = section.content
-      return acc
-    }, {})
-  }, [brdSections])
-
   const scoreData = useMemo(() => buildScoreDataFromIdea(idea), [idea])
   const hasNumericScoring = scoreData.some((item) => item.score > 0)
 
   const scoringEvidenceItems = useMemo(() => buildScoringEvidenceChecklist(idea), [idea])
-  const showScoringFrameworkDraft = !scoringLoaded || scoringMissing
   const scoringPendingReason = hasNumericScoring
     ? null
     : `Awaiting evidence · ${scoringEvidenceItems.filter((item) => item.complete).length}/${scoringEvidenceItems.length}`
@@ -7010,36 +6433,63 @@ export function IdeaDetailPage() {
       : description
     return latestValidatedTechnicalDiagrams(corpus)
   }, [brainstormPointer, idea.description, idea.title])
+  const technicalGallery = useMemo(
+    () => technicalDiagramGallery(validatedTechnicalDiagrams, brainstormCanvasByKey),
+    [validatedTechnicalDiagrams, brainstormCanvasByKey],
+  )
 
   useEffect(() => {
     let cancelled = false
-    const keys = brainstormProcessDiagrams.map((diagram, index) => brainstormProcessPersistKey(diagram.label, index))
-    if (!keys.length) {
-      setBrainstormCanvasByKey({})
-      return
-    }
+    setDiagramSourcesLoading(true)
+    setDiagramSourceErrors({})
+    setBrainstormCanvasByKey({})
+    const keys = [...new Set([
+      ...brainstormProcessDiagrams.map((diagram, index) => brainstormProcessPersistKey(diagram.label, index)),
+      ...TECHNICAL_DIAGRAM_SLOTS.map(slot => slot.persistKey),
+      'brainstorm-archimate', 'high',
+    ])]
     void Promise.all(
       keys.map(async (key) => {
         try {
           const persistent = await getPersistentIdeaProcessDiagram(idea.id, key)
           const graph = persistent ? runtimeProcessDiagramFromPersistent(persistent).canvasGraph : undefined
+          const sync = persistent?.process_json.document_sync as { status?: string } | undefined
+          if (!cancelled && sync?.status) setProcessDocumentSync((current) => ({
+            ...current, [key]: sync.status === 'pending' ? 'failed' : sync.status!,
+          }))
           return [key, graph] as const
-        } catch {
+        } catch (error) {
+          if (!cancelled) setDiagramSourceErrors(current => ({ ...current, [key]: error instanceof Error ? error.message : 'Diagram could not be loaded.' }))
           return [key, undefined] as const
         }
       }),
-    ).then((entries) => {
+    ).then(async (entries) => {
       if (cancelled) return
       const next: Record<string, C4CanvasGraph> = {}
       for (const [key, graph] of entries) {
-        if (graph?.nodes?.length) next[key] = graph
+        if (graph?.nodes?.length || graph?.source?.trim()) next[key] = graph!
       }
+      try {
+        const recovered = await getIdeaDocumentDiagramSources(idea.id)
+        for (const slot of TECHNICAL_DIAGRAM_SLOTS) {
+          if (!next[slot.persistKey]?.source && recovered[slot.persistKey]) {
+            next[slot.persistKey] = { nodes: [], edges: [], source: recovered[slot.persistKey] }
+          }
+        }
+      } catch (error) {
+        if (!cancelled) setDiagramSourceErrors(current => ({ ...current, ...Object.fromEntries(
+          TECHNICAL_DIAGRAM_SLOTS.filter(slot => !next[slot.persistKey]?.source).map(slot => [slot.persistKey,
+            error instanceof Error ? error.message : 'Document diagram sources could not be loaded.']),
+        ) }))
+      }
+      if (cancelled) return
       setBrainstormCanvasByKey(next)
+      setDiagramSourcesLoading(false)
     })
     return () => {
       cancelled = true
     }
-  }, [brainstormProcessDiagrams, idea.id])
+  }, [brainstormProcessDiagrams, idea.id, diagramSourcesReloadKey, tenant?.workspaceId])
 
   useEffect(() => {
     if (activePanel !== 'document') return
@@ -7542,6 +6992,7 @@ export function IdeaDetailPage() {
   }, [isConversionPanelFullscreen])
 
   const ideaDocCurrentFolder = ideaDocFolderStack[ideaDocFolderStack.length - 1] ?? null
+  const ideaDocCurrentFolderId = ideaDocCurrentFolder?.id
   const isIdeaDocAtProjectRoot = ideaDocFolderStack.length <= 1
   const ideaDocsInCurrentFolder = useMemo(() => {
     if (!ideaDocCurrentFolder) return ideaGeneratedDocs
@@ -7561,7 +7012,7 @@ export function IdeaDetailPage() {
       const item = mapDocumentToRepositoryItem(doc, idea.title)
       const label = ideaDocumentType(doc)
       const displayName = label
-        ? `${label} - ${doc.title.replace(/^(?:URD|BRD|FSD)\s*[-:]\s*/i, '')}`
+        ? `${label} - ${doc.title.replace(/^(?:URD|BRD|FSD|SRD)\s*[-:]\s*/i, '')}`
         : (item.displayName || item.name)
       return {
         ...item,
@@ -7617,6 +7068,7 @@ export function IdeaDetailPage() {
     if (resolvedIdeaId !== idea.id) return
     let cancelled = false
     setIdeaDocFolderInitBusy(true)
+    setIdeaDocFolderError(null)
     void (async () => {
       try {
         const existing = await resolveExistingIdeaDocsFolder({ ideaId: idea.id, workspaceId: idea.workspace, documents: ideaGeneratedDocs })
@@ -7645,13 +7097,7 @@ export function IdeaDetailPage() {
         if (!cancelled) {
           setIdeaDocFolderStack([])
           setIdeaDocSubfolders([])
-          addToast({
-            title: 'Failed to load idea docs folder',
-            description: error instanceof Error && /workspace access forbidden/i.test(error.message)
-              ? 'Project service denied access to this idea workspace. Existing documents remain available; workspace permissions must be checked before creating folders.'
-              : error instanceof Error ? error.message : '',
-            variant: 'error',
-          })
+          setIdeaDocFolderError(ideaDocsFolderErrorMessage(error))
         }
       } finally {
         if (!cancelled) setIdeaDocFolderInitBusy(false)
@@ -7662,13 +7108,13 @@ export function IdeaDetailPage() {
     }
   // Folder resolution only changes when a document moves, not when its content or version changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePanel, addToast, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject, ideaDocsLoadedScope, ideaDocsFolderSignature, resolvedIdeaId])
+  }, [activePanel, idea.id, idea.project_id, idea.workspace, resolveIdeaTargetProject, ideaDocsLoadedScope, ideaDocsFolderSignature, resolvedIdeaId, ideaDocFolderRetry])
 
   useEffect(() => {
-    if (activePanel !== 'document' || !ideaDocCurrentFolder) return
+    if (activePanel !== 'document' || ideaDocCurrentFolderId === undefined) return
     let cancelled = false
     void fetchDocumentFolders({
-      parent_id: ideaDocCurrentFolder.id,
+      parent_id: ideaDocCurrentFolderId,
       page: 1,
       page_size: 100,
     })
@@ -7681,7 +7127,7 @@ export function IdeaDetailPage() {
     return () => {
       cancelled = true
     }
-  }, [activePanel, ideaDocCurrentFolder?.id])
+  }, [activePanel, ideaDocCurrentFolderId])
 
   const openIdeaDocSubfolder = useCallback((folder: DocumentFolder) => {
     setIdeaDocFolderStack((prev) => [...prev, { id: folder.id, name: folder.name }])
@@ -7921,7 +7367,7 @@ export function IdeaDetailPage() {
     } catch (error) {
       addToast({ title: 'Revisi approved belum dapat dimuat', description: error instanceof Error ? error.message : '', variant: 'error' })
     }
-  }, [addToast, idea.description, idea.id, idea.title, ideaDocTemplates, refreshIdeaDocWorkflowGate])
+  }, [addToast, idea.description, idea.id, idea.title, idea.workspace, ideaDocTemplates, refreshIdeaDocWorkflowGate])
 
   // A notification or email about a comment links here with ?generate=<template>&part=<key>: open
   // the Generate dialog on that template and select the part (its comments show beside it).
@@ -8003,7 +7449,7 @@ export function IdeaDetailPage() {
     const documentAuthor = (currentUserDisplayName || submittedByDisplayName).trim()
     const generatedOn = new Date().toISOString().slice(0, 10)
     const previousDocument = ideaGeneratedDocs
-      .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === ideaDocTypeLabel(template.template_code))
+      .filter((document_) => document_.metadata?.idea_id === idea.id && ideaDocumentType(document_) === templateDocumentKind(template))
       .sort((a, b) => new Date(b.updated_date || b.created_date).getTime() - new Date(a.updated_date || a.created_date).getTime())[0]
     const generationVersion = (previousDocument?.current_version_no ?? 0) + 1
     const sourceWithProvenance = [
@@ -8018,7 +7464,7 @@ export function IdeaDetailPage() {
         : '',
       sourceText,
     ].filter(Boolean).join('\n\n')
-    const docTypeLabel = ideaDocTypeLabel(template.template_code)
+    const docTypeLabel = templateDocumentKind(template)
 
     // The template-fill service cannot infer BRD/URD requirements from the short idea summary.
     // Send every document visible in this Idea Docs section as named evidence, with the latest
@@ -8131,7 +7577,7 @@ export function IdeaDetailPage() {
         collections: (filled.payload.collections ?? {}) as Record<string, unknown>,
         diagrams: filled.rendered_diagrams ?? {},
       }
-      const written = partial
+      const merged = partial
         ? mergePartChoices({
           parts: ideaDocParts,
           choices: ideaDocPartChoices,
@@ -8141,6 +7587,7 @@ export function IdeaDetailPage() {
           drafts: ideaDocCommentDrafts,
         }).payload
         : generatedParts
+      const written = docTypeLabel === 'SRD' ? preserveSrdTicketFills(merged, generatedParts) : merged
 
       const created = await instantiateTemplateFromProject(storageProjectId, template.id, {
         title: idea.title.slice(0, 255),
@@ -8180,6 +7627,7 @@ export function IdeaDetailPage() {
       })
 
       setIdeaGeneratedDocs((prev) => [created, ...prev.filter((doc) => doc.id !== created.id)])
+      setDiagramSourcesReloadKey(key => key + 1)
       // The accepted comment texts are in this version now: their threads become history.
       const appliedThreads = ideaDocPartComments.filter((thread) => thread.status === 'accepted' && draftKeys.includes(thread.part_key))
       void Promise.allSettled(appliedThreads.map((thread) =>
@@ -8232,7 +7680,6 @@ export function IdeaDetailPage() {
     addToast,
     currentUserDisplayName,
     currentUserId,
-    idea.description,
     idea.id,
     idea.title,
     idea.workspace,
@@ -8262,67 +7709,6 @@ export function IdeaDetailPage() {
       }
     }
   }, [])
-
-  const sendUrdToHeads = useCallback(async () => {
-    if (urdSendBusy) return
-    setUrdSendBusy(true)
-    try {
-      const summary = urdReviewSummaryText([
-        runtimeSummary.executive_brief,
-        runtimeSummary.core_pressure,
-        runtimeSummary.strategic_response,
-        runtimeSummary.value_thesis,
-        runtimeSummary.board_note,
-      ]) || (idea.description || idea.title).trim()
-      const linkUrl = workspaceScopedPath(tenant?.workspaceSlug ?? null, `/idea-backlog/${idea.id}`, tenant?.workspaceId)
-      const result = await sendUrdForBusinessReview({
-        ideaId: idea.id,
-        ideaTitle: idea.title,
-        summaryText: summary,
-        linkUrl,
-        createdBy: currentUserId || runtimeUserId || 'unknown',
-        workspaceId: idea.workspace,
-      })
-      if (result.notified.length === 0) {
-        addToast({
-          title: 'Reviewers were not found',
-          description: `Set the job title to ${result.missing.join(' and ')}.`,
-          variant: 'warning',
-        })
-        return
-      }
-      addToast({
-        title: 'URD sent for review',
-        description: result.mailErrors.length
-          ? `Notification sent to ${result.notified.join(' and ')}. Email: ${result.mailErrors.join('; ')}`
-          : `Email and notification sent to ${result.notified.join(' and ')}.`,
-        variant: result.mailErrors.length ? 'warning' : 'success',
-      })
-    } catch (error) {
-      addToast({
-        title: 'Could not send the URD review',
-        description: error instanceof Error ? error.message : '',
-        variant: 'error',
-      })
-    } finally {
-      setUrdSendBusy(false)
-    }
-  }, [
-    addToast,
-    currentUserId,
-    idea.description,
-    idea.id,
-    idea.title,
-    runtimeSummary.board_note,
-    runtimeSummary.core_pressure,
-    runtimeSummary.executive_brief,
-    runtimeSummary.strategic_response,
-    runtimeSummary.value_thesis,
-    runtimeUserId,
-    tenant?.workspaceId,
-    tenant?.workspaceSlug,
-    urdSendBusy,
-  ])
 
   const openIdeaDocContextMenu = useCallback((event: { clientX: number; clientY: number }, item: RepositoryItem) => {
     const menuWidth = 224
@@ -8541,245 +7927,6 @@ export function IdeaDetailPage() {
     isBrdRenderLockedRef.current = isBrdRenderLocked
   }, [isBrdRenderLocked])
 
-  const togglePanel = (key: PanelKey) => {
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
-  }
-
-  const regeneratePanel = (key: PanelKey) => {
-    setRegenerating((prev) => ({ ...prev, [key]: true }))
-
-    if (key === 'summary') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          await loadRuntimeSummary('llm_first', { forceRefresh: true, autoGenerateIfMissing: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'scoring') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current idea snapshot if refresh fails
-          }
-          await loadRuntimeScoringRef.current(refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'costBenefit') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          await loadRuntimeBenefitRef.current(idea)
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          if (elapsedMs < 700) {
-            await new Promise((resolve) => window.setTimeout(resolve, 700 - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'conversion') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          await loadRuntimeConversionRef.current(idea)
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          if (elapsedMs < 700) {
-            await new Promise((resolve) => window.setTimeout(resolve, 700 - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'integration') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current snapshot
-          }
-          await loadRuntimeIntegrationRef.current(refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'c4Level1' || key === 'c4Level2') {
-      const level: C4ArchitectureLevel = key === 'c4Level1' ? 'L1' : 'L2'
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current snapshot
-          }
-          await loadRuntimeC4ArchitectureRef.current(level, refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    if (key === 'bpmnHigh') {
-      void (async () => {
-        const startedAt = Date.now()
-        try {
-          let refreshedIdea = idea
-          try {
-            const api = await getIdeaById(idea.id)
-            refreshedIdea = ideaFromApi(api)
-            setIdea(refreshedIdea)
-          } catch {
-            // keep current snapshot
-          }
-          await loadRuntimeProcessDiagramRef.current(refreshedIdea, { forceRefresh: true })
-        } finally {
-          const elapsedMs = Date.now() - startedAt
-          const minLoadingMs = 700
-          if (elapsedMs < minLoadingMs) {
-            await new Promise((resolve) => window.setTimeout(resolve, minLoadingMs - elapsedMs))
-          }
-          setRegenerating((prev) => ({ ...prev, [key]: false }))
-        }
-      })()
-      return
-    }
-
-    window.setTimeout(() => {
-      setConfidence((prev) => {
-        const next = Math.min(98, Math.max(70, prev[key] + (Math.random() > 0.5 ? 1 : -1) * 3))
-        return { ...prev, [key]: next }
-      })
-      setRegenerating((prev) => ({ ...prev, [key]: false }))
-    }, 900)
-  }
-
-  const addMetaToast = useCallback((
-    key: string,
-    toast: { variant: 'success' | 'error'; title: string; description: string }
-  ) => {
-    const now = Date.now()
-    const recent = lastMetaToastRef.current
-    if (recent && recent.key === key && now - recent.at < 1200) return
-    lastMetaToastRef.current = { key, at: now }
-    addToast(toast)
-  }, [addToast])
-
-  const persistIdeaMetaPatch = useCallback(async (patch: { status?: IdeaStatus; reviewer?: string }) => {
-    setIsMetaPatchSaving(true)
-    const baseVersion = idea.version
-    try {
-      const updated = await patchIdea(idea.id, {
-        status_code: patch.status ? toBackendStatus(patch.status) : undefined,
-        assignee_id: patch.reviewer,
-        version: baseVersion,
-      })
-      setIdea(ideaFromApi(updated))
-      return { ok: true as const }
-    } catch (firstError) {
-      try {
-        const latest = await getIdeaById(idea.id)
-        const retried = await patchIdea(idea.id, {
-          status_code: patch.status ? toBackendStatus(patch.status) : undefined,
-          assignee_id: patch.reviewer,
-          version: latest.version,
-        })
-        setIdea(ideaFromApi(retried))
-        return { ok: true as const }
-      } catch (retryError) {
-        console.warn('[IdeaDetail] failed to persist status/reviewer update', retryError || firstError)
-        const message =
-          retryError instanceof Error
-            ? retryError.message
-            : firstError instanceof Error
-              ? firstError.message
-              : 'Failed to persist idea updates.'
-        return { ok: false as const, message }
-      }
-    } finally {
-      setIsMetaPatchSaving(false)
-    }
-  }, [idea.id, idea.version])
-
-  const quickUpdateReviewer = (reviewer: string) => {
-    if (isMetaPatchSaving || reviewer === idea.reviewer) return
-    const previousReviewer = idea.reviewer
-    setMetaPatchInlineError(null)
-    setIdea((prev) => ({ ...prev, reviewer }))
-    void persistIdeaMetaPatch({ status: idea.status, reviewer }).then((result) => {
-      if (result.ok) {
-        setMetaPatchLastSavedAt(new Date())
-        setMetaPatchInlineError(null)
-        addMetaToast('reviewer:ok', {
-          variant: 'success',
-          title: 'Reviewer updated',
-          description: 'Reviewer assignment has been saved.',
-        })
-        return
-      }
-      setIdea((prev) => ({ ...prev, reviewer: previousReviewer }))
-      setMetaPatchInlineError(result.message)
-      addMetaToast('reviewer:error', {
-        variant: 'error',
-        title: 'Reviewer update failed',
-        description: result.message,
-      })
-    })
-  }
-
   const updateActivePanelActionGroups = useCallback((groups: IdeaActionControlGroup[]) => {
     persistActionControlStore({
       ...actionControlStore,
@@ -8989,12 +8136,6 @@ export function IdeaDetailPage() {
     tenant?.orgId,
   ])
 
-  const updateBrdSection = (sectionKey: string, nextContent: string) => {
-    setBrdSections((prev) =>
-      prev.map((section) => (section.key === sectionKey ? { ...section, content: nextContent } : section))
-    )
-  }
-
   const navigateToPanel = (panel: PanelKey) => {
     userChosePanelRef.current = true
     appliedInitialPanelForIdea.current = idea.id
@@ -9005,18 +8146,12 @@ export function IdeaDetailPage() {
   }
 
   const BRD_PAGE_WIDTH_PX = 794
-  const BRD_PAGE_HEIGHT_PX = 1123
-  const BRD_PAGE_PADDING_X_PX = 64 * 2
-  const BRD_CONTENT_WIDTH_PX = BRD_PAGE_WIDTH_PX - BRD_PAGE_PADDING_X_PX
   const BRD_CONTENT_HEIGHT_PX = 995
-  const BRD_HEADER_TOP_PX = 24
   const BRD_HEADER_BODY_GAP_PX = 6
   const BRD_BOTTOM_PADDING_PX = 40 // Safety margin at bottom to prevent overflow
   const BRD_ZOOM_MIN = 0.5
   const BRD_ZOOM_MAX = 1.5
   const BRD_ZOOM_STEP = 0.05
-  const BRD_PAGE_GAP_PX = 24
-
   useEffect(() => {
     brdPagesRef.current = brdPages
   }, [brdPages])
@@ -9035,7 +8170,6 @@ export function IdeaDetailPage() {
       brdHeadersRef.current = next
       return next
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brdPages.length])
 
   useEffect(() => {
@@ -9052,7 +8186,6 @@ export function IdeaDetailPage() {
       brdHeaderHeightsRef.current = next
       return next
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brdPages.length])
 
   useEffect(() => {
@@ -9070,7 +8203,6 @@ export function IdeaDetailPage() {
     recalc()
     window.addEventListener('resize', recalc)
     return () => window.removeEventListener('resize', recalc)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const countWords = (text: string) => {
@@ -9079,8 +8211,6 @@ export function IdeaDetailPage() {
     return trimmed.split(/\s+/g).filter(Boolean).length
   }
 
-  /** True when serialized page body includes a table (store innerHTML, not innerText). */
-  const brdBodyHasTableMarkup = (s: string) => /<\s*table[\s>]/i.test(s)
   const brdBodyHasHtmlMarkup = (s: string) => /<\s*[a-z][^>]*>/i.test(s)
 
   const escapeBrdHtml = (text: string) => {
@@ -9186,14 +8316,14 @@ export function IdeaDetailPage() {
   const isBrdListItemStartLine = (line: string) => {
     const trimmed = line.trim()
     if (!trimmed) return false
-    return /^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â– â–âœ“âž¤]|\d+[.)]|[A-Za-z][.)]|[ivxlcdm]+[.)])\s+/i.test(trimmed)
+    return /^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â–\u00a0â–âœ“âž¤]|\d+[.)]|[A-Za-z][.)]|[ivxlcdm]+[.)])\s+/i.test(trimmed)
   }
 
   const getBrdListItemMeta = (line: string): { listType: 'ul' | 'ol'; listClassName?: string; content: string } | null => {
     const trimmed = line.trim()
     if (!trimmed) return null
 
-    const unorderedMatch = trimmed.match(/^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â– â–âœ“âž¤])\s+(.+)$/)
+    const unorderedMatch = trimmed.match(/^(?:[-*â€¢â–ªâ—¦â€£â—â—‹â–\u00a0â–âœ“âž¤])\s+(.+)$/)
     if (unorderedMatch) {
       const content = unorderedMatch[1].trim()
       return { listType: 'ul', listClassName: 'brd-editor-ul', content: content }
@@ -9483,215 +8613,6 @@ export function IdeaDetailPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const generateBrdCoverPage = () => {
-    const coverHtml = `
-      <div style="display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100%; text-align: center; padding: 80px 60px;">
-        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-          <div style="font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 3px; margin-bottom: 40px; font-weight: 500; font-family: 'Aptos', 'Calibri', Arial, sans-serif;">Business Requirements Document</div>
-          <h1 style="font-size: 48px; font-weight: 700; color: #0f172a; margin: 0; line-height: 1.2; margin-bottom: 50px; font-family: 'Aptos', 'Calibri', Arial, sans-serif; letter-spacing: -0.5px;">${escapeBrdHtml(idea.title)}</h1>
-        </div>
-        <div style="flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; width: 100%;">
-          <div style="border-top: 1px solid #e2e8f0; padding-top: 30px; text-align: center;">
-            <div style="font-size: 13px; color: #64748b; font-family: 'Aptos', 'Calibri', Arial, sans-serif; letter-spacing: 0.3px;">Submitted by</div>
-            <div style="font-size: 14px; font-weight: 500; color: #0f172a; margin-top: 8px; font-family: 'Aptos', 'Calibri', Arial, sans-serif;">${escapeBrdHtml(submittedByDisplayName)}</div>
-          </div>
-        </div>
-      </div>
-    `
-    return coverHtml.trim()
-  }
-
-  const extractBrdHeadings = (pages: string[]): Array<{ level: number; text: string; pageNum: number }> => {
-    const headings: Array<{ level: number; text: string; pageNum: number }> = []
-
-    const stripMarkdownHeadingPrefix = (text: string) => text.trim().replace(/^#{1,6}\s+/, '')
-
-    const inferTocLevel = (text: string, fallbackLevel: number) => {
-      const trimmed = stripMarkdownHeadingPrefix(text)
-      if (/^(?:[IVXLCDM]{2,}|[IVX])\.\s+/i.test(trimmed)) return 2
-      if (/^[A-Z]\.\s+/.test(trimmed)) return 3
-      if (/^\d+\.\d+\.\d+\s+/.test(trimmed)) return 4
-      if (/^\d+\.\d+\s+/.test(trimmed)) return 3
-      return fallbackLevel
-    }
-
-    pages.forEach((pageContent, pageIdx) => {
-      if (!pageContent) return
-
-      if (brdBodyHasHtmlMarkup(pageContent)) {
-        const container = document.createElement('div')
-        container.innerHTML = pageContent
-        Array.from(container.querySelectorAll('h2, h3, h4')).forEach((el) => {
-          const domLevel = parseInt(el.tagName[1])
-          const text = el.textContent?.trim() || ''
-          if (text) {
-            const level = inferTocLevel(text, domLevel)
-            headings.push({ level, text, pageNum: pageIdx + 1 }) // +1 for 1-based page numbering
-          }
-        })
-      } else {
-        const lines = pageContent.split('\n')
-        lines.forEach((line) => {
-          const meta = getBrdHeadingMeta(line)
-          if (meta) {
-            const text = line.trim()
-            const level = inferTocLevel(text, meta.level)
-            headings.push({ level, text, pageNum: pageIdx + 1 })
-          }
-        })
-      }
-    })
-
-    const getHeadingPrefixToken = (text: string) => {
-      const trimmed = stripMarkdownHeadingPrefix(text)
-      const match = trimmed.match(/^((?:[IVXLCDM]+\.)|(?:[A-Z]\.)|(?:\d+(?:\.\d+)*\.?))\s+/i)
-      return (match?.[1] ?? '').toUpperCase()
-    }
-
-    const normalizeHeadingBase = (text: string) => {
-      const withoutPrefix = text
-        .trim()
-        .replace(/^((?:[IVXLCDM]+\.)|(?:[A-Z]\.)|(?:\d+(?:\.\d+)*\.?))\s+/i, '')
-      const withoutParen = withoutPrefix.replace(/\([^)]*\)/g, ' ')
-      const withoutAsterisk = withoutParen.replace(/\*/g, ' ')
-      const beforeDash = withoutAsterisk.split(/\s+[â€“-]\s+/)[0] ?? withoutAsterisk
-      return beforeDash
-        .toLowerCase()
-        .replace(/[^a-z0-9\s/]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-    }
-
-    // Normalize hierarchy context so lettered sections (A/B/C/D)
-    // are consistently treated as children of active Roman sections (I/II/III).
-    const normalizedHeadings: Array<{ level: number; text: string; pageNum: number }> = []
-    let hasRomanContext = false
-    for (const heading of headings) {
-      const text = stripMarkdownHeadingPrefix(heading.text)
-      const next = { ...heading }
-
-      if (/^(?:[IVXLCDM]{2,}|[IVX])\.\s+/i.test(text)) {
-        next.level = 2
-        hasRomanContext = true
-      } else if (/^[A-Z]\.\s+/.test(text)) {
-        next.level = hasRomanContext ? 3 : Math.max(3, heading.level)
-      } else if (/^\d+\.\d+\.\d+\s+/.test(text)) {
-        next.level = 4
-      } else if (/^\d+\.\d+\s+/.test(text)) {
-        next.level = 3
-      }
-
-      normalizedHeadings.push(next)
-    }
-
-    // Remove duplicates that can appear from page reflow/splitting
-    // and variant heading text for the same section key.
-    const deduped: Array<{ level: number; text: string; pageNum: number }> = []
-    for (const heading of normalizedHeadings) {
-      const prev = deduped[deduped.length - 1]
-      if (!prev) {
-        deduped.push(heading)
-        continue
-      }
-
-      const sameLevel = prev.level === heading.level
-      const nearPage = heading.pageNum === prev.pageNum || heading.pageNum === prev.pageNum + 1
-      if (sameLevel && nearPage) {
-        const prevText = prev.text.trim().toLowerCase()
-        const nextText = heading.text.trim().toLowerCase()
-        const sameText = prevText === nextText
-        if (sameText) continue
-
-        const prevPrefix = getHeadingPrefixToken(prev.text)
-        const nextPrefix = getHeadingPrefixToken(heading.text)
-        const samePrefix = Boolean(prevPrefix) && prevPrefix === nextPrefix
-
-        const prevBase = normalizeHeadingBase(prev.text)
-        const nextBase = normalizeHeadingBase(heading.text)
-        const sameBase = Boolean(prevBase) && prevBase === nextBase
-        const baseOverlaps =
-          Boolean(prevBase) &&
-          Boolean(nextBase) &&
-          (prevBase.startsWith(nextBase) || nextBase.startsWith(prevBase))
-
-        if ((samePrefix && sameBase) || (samePrefix && baseOverlaps)) continue
-      }
-
-      deduped.push(heading)
-    }
-
-    return deduped
-  }
-
-  const generateBrdTableOfContents = (allPages: string[]) => {
-    const headings = extractBrdHeadings(allPages)
-    if (!headings.length) {
-      return '<div style="padding: 20px; color: #94a3b8; font-family: Aptos, Arial, sans-serif;"><p>No sections found in document.</p></div>'
-    }
-
-    const sanitizeHeadingForPrefix = (text: string) =>
-      text
-        .trim()
-        .replace(/^#{1,6}\s+/, '')
-        .replace(/[\u00A0\u200B-\u200D\uFEFF]/g, ' ')
-        .replace(/^[\s"'`~*_\-â€“â€”â€¢â–ªâ—¦â€£â—â—‹â– â–âœ“âž¤:;,.()\[\]{}]+/, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-
-    const isRomanSectionPrefix = (text: string) => {
-      const match = text.match(/^([IVXLCDM]+)\s*[.)]\s*/i)
-      if (!match) return false
-      const token = match[1].toUpperCase()
-      // Prevent alpha sections like C. / D. from being treated as Roman headings.
-      if (token.length === 1 && token !== 'I' && token !== 'V' && token !== 'X') return false
-      return true
-    }
-    const isAlphaSectionPrefix = (text: string) => /^[A-Z]\s*[.)]\s*/i.test(text)
-    const isNumericSubPrefix = (text: string) => /^\d+\.\d+\s*/.test(text)
-    const isNumericSubSubPrefix = (text: string) => /^\d+\.\d+\.\d+\s*/.test(text)
-
-    const resolveDisplayLevel = (text: string, fallbackLevel: number) => {
-      const normalized = sanitizeHeadingForPrefix(text)
-      if (isRomanSectionPrefix(normalized)) return 2
-      if (isAlphaSectionPrefix(normalized)) return 3
-      if (isNumericSubSubPrefix(normalized)) return 4
-      if (isNumericSubPrefix(normalized)) return 3
-      return fallbackLevel
-    }
-
-    let tocHtml = '<div style="font-family: Aptos, Arial, sans-serif; color: #0f172a; padding: 0;">'
-    tocHtml += '<h2 style="font-size: 20px; font-weight: 700; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin: 0 0 24px 0; text-transform: uppercase; letter-spacing: 1px;">Table of Contents</h2>'
-    tocHtml += '<table style="width: 100%; border-collapse: collapse; border: none; table-layout: fixed;">'
-    tocHtml += '<colgroup><col style="width: auto;" /><col style="width: 40px;" /></colgroup>'
-
-    headings.forEach((heading) => {
-      const headingText = sanitizeHeadingForPrefix(heading.text)
-      const displayLevel = resolveDisplayLevel(headingText, heading.level)
-
-      const paddingLeft = displayLevel === 2 ? '0px' : displayLevel === 3 ? '24px' : '48px'
-      const fontSize = displayLevel === 2 ? '14px' : displayLevel === 3 ? '13px' : '12px'
-      const fontWeight = displayLevel === 2 ? '600' : '400'
-      const paddingTop = displayLevel === 2 ? '10px' : '5px'
-      const paddingBottom = displayLevel === 2 ? '10px' : '5px'
-      const borderTop = displayLevel === 2 ? 'border-top: 1px solid #e2e8f0;' : ''
-      const sectionText = escapeBrdHtml(headingText)
-      const color = displayLevel === 2 ? '#0f172a' : '#334155'
-
-      tocHtml += `
-        <tr style="${borderTop}">
-          <td style="border: none; padding: ${paddingTop} 0 ${paddingBottom} ${paddingLeft}; font-size: ${fontSize}; font-weight: ${fontWeight}; color: ${color}; vertical-align: bottom; white-space: nowrap; overflow: hidden; text-overflow: clip;">
-            <span>${sectionText}</span><span style="display: inline-block; width: 100%; overflow: hidden; color: #cbd5e1; letter-spacing: 2px; font-weight: 400; font-size: 11px; padding-left: 6px; vertical-align: bottom; line-height: 1.8;">&nbsp;${`${String.fromCharCode(0xb7)} `.repeat(80).trimEnd()}</span>
-          </td>
-          <td style="border: none; padding: ${paddingTop} 0 ${paddingBottom} 8px; font-size: ${fontSize}; font-weight: ${fontWeight}; color: #64748b; text-align: right; vertical-align: bottom; white-space: nowrap; width: 40px;">${heading.pageNum}</td>
-        </tr>
-      `
-    })
-
-    tocHtml += '</table>'
-    tocHtml += '</div>'
-    return tocHtml
-  }
-
   const splitBrdBlockIntoStickyUnits = (block: string) => {
     const lines = block.replace(/\r\n/g, '\n').split('\n')
     const trimmedLines = lines.map((line) => line.trim())
@@ -9793,7 +8714,7 @@ export function IdeaDetailPage() {
   const convertBrdTextBlocksToHtmlBlocks = (text: string) => splitBrdTextIntoBlocks(text).map((block) => htmlTextToParagraph(block))
 
   useEffect(() => {
-    if (activePanel !== 'brd') return
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
     if (brdContentNormalizationRef.current) return
 
     const normalizedPages = brdPagesRef.current.map((page) => normalizeBrdBodyContent(page))
@@ -10249,7 +9170,7 @@ export function IdeaDetailPage() {
   }, [brdTableMenuOpen])
 
   useEffect(() => {
-    if (activePanel !== 'brd') return
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
     const onSelectionChange = () => {
       const selection = window.getSelection()
       if (!selection || selection.rangeCount === 0) return
@@ -10281,7 +9202,6 @@ export function IdeaDetailPage() {
     } catch {
       // ignore
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -10299,29 +9219,6 @@ export function IdeaDetailPage() {
       // ignore
     }
   }, [brdSelectedTemplateId])
-
-  const applyBrdTemplateById = (templateId: string) => {
-    const t = brdTemplates.find((x) => x.id === templateId) ?? defaultBrdTemplates.find((x) => x.id === templateId) ?? null
-    setBrdSelectedTemplateId(templateId)
-    if (!t) return
-    setEditingHeaderIndex(null)
-    const normalizedBody = normalizeBrdBodyContent(t.body ?? '')
-    brdPagesRef.current = [normalizedBody]
-    setBrdPages([normalizedBody])
-    brdHeadersRef.current = [t.header ?? '']
-    setBrdHeaders([t.header ?? ''])
-    brdHeaderHeightsRef.current = [18]
-    setBrdHeaderHeights([18])
-    scheduleWordCountUpdate()
-    window.requestAnimationFrame(() => {
-      brdPageEditableRefs.current[0]?.focus()
-    })
-  }
-
-  const newTemplateId = () => {
-    const id = globalThis.crypto?.randomUUID?.()
-    return id ?? `tpl_${Date.now()}_${Math.random().toString(16).slice(2)}`
-  }
 
   const brdTextColorMenu = brdTextColorMenuOpen
     ? createPortal(
@@ -11503,318 +10400,8 @@ export function IdeaDetailPage() {
       )
     : null
 
-  const getBrdExportPages = () => {
-    const pages = brdPagesRef.current
-    const headers = brdHeadersRef.current
-    return pages.map((body, idx) => ({
-      header: (headers[idx] ?? '').trim(),
-      body: (body ?? '').replace(/\u00A0/g, ' ').trimEnd(),
-    }))
-  }
-
-  const downloadBlob = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  }
-
-  const exportBrdMarkdown = () => {
-    const pages = getBrdExportPages()
-    const md = pages
-      .map(({ header, body }, idx) => {
-        const parts: string[] = []
-        if (header) parts.push(`#### ${header}`)
-        if (body) parts.push(body)
-        if (!header && !body) parts.push('')
-        // Page separator
-        if (idx < pages.length - 1) parts.push('\n---\n')
-        return parts.join('\n\n')
-      })
-      .join('\n\n')
-
-    downloadBlob(new Blob([md], { type: 'text/markdown;charset=utf-8' }), 'BRD.md')
-  }
-
-  const getBrdExportBlocks = (body: string): Array<{ type: 'paragraph'; lines: string[] } | { type: 'table'; rows: string[][] }> => {
-    const normalized = (body ?? '').replace(/\u00A0/g, ' ').trim()
-    if (!normalized) return []
-
-    if (!brdBodyHasHtmlMarkup(normalized)) {
-      return normalized
-        .split(/\n\s*\n/)
-        .map((block) => block.trim())
-        .filter(Boolean)
-        .map((block) => ({
-          type: 'paragraph' as const,
-          lines: block.split('\n').map((line) => line.trimEnd()),
-        }))
-    }
-
-    const container = document.createElement('div')
-    container.innerHTML = normalized
-    const blocks: Array<{ type: 'paragraph'; lines: string[] } | { type: 'table'; rows: string[][] }> = []
-
-    const appendParagraphFromText = (text: string) => {
-      const cleaned = text.replace(/\u00A0/g, ' ').trim()
-      if (!cleaned) return
-      blocks.push({
-        type: 'paragraph',
-        lines: cleaned.split('\n').map((line) => line.trimEnd()),
-      })
-    }
-
-    for (const node of Array.from(container.childNodes)) {
-      if (node.nodeType === globalThis.Node.TEXT_NODE) {
-        appendParagraphFromText(node.textContent ?? '')
-        continue
-      }
-
-      if (node.nodeType !== globalThis.Node.ELEMENT_NODE) continue
-      const el = node as HTMLElement
-      if (el.tagName.toLowerCase() === 'table') {
-        const rows = Array.from(el.querySelectorAll('tr'))
-          .map((row) =>
-            Array.from(row.querySelectorAll('th,td')).map((cell) => (cell as HTMLElement).innerText.replace(/\u00A0/g, ' ').trim())
-          )
-          .filter((row) => row.length > 0)
-        if (rows.length) {
-          blocks.push({ type: 'table', rows })
-          continue
-        }
-      }
-
-      appendParagraphFromText(el.innerText)
-    }
-
-    return blocks
-  }
-
-  const exportBrdWord = async () => {
-    const pages = getBrdExportPages()
-    const { Document, Packer, Paragraph, TextRun, PageBreak, Table, TableRow, TableCell, WidthType } = await import('docx')
-
-    const children: unknown[] = []
-    pages.forEach(({ header, body }, idx) => {
-      if (header) {
-        children.push(
-          new Paragraph({
-            children: [new TextRun({ text: header, bold: true })],
-            spacing: { after: 180 },
-          })
-        )
-      }
-
-      const blocks = getBrdExportBlocks(body)
-      blocks.forEach((block) => {
-        if (block.type === 'paragraph') {
-          block.lines.forEach((line) => {
-            children.push(new Paragraph({ text: line || '' }))
-          })
-          children.push(new Paragraph({ text: '' }))
-          return
-        }
-
-        const columnCount = Math.max(...block.rows.map((row) => row.length), 1)
-        children.push(
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: block.rows.map(
-              (row) =>
-                new TableRow({
-                  children: Array.from({ length: columnCount }).map((_, cellIndex) =>
-                    new TableCell({
-                      width: { size: Math.floor(100 / columnCount), type: WidthType.PERCENTAGE },
-                      children: [new Paragraph({ text: row[cellIndex] ?? '' })],
-                    })
-                  ),
-                })
-            ),
-          })
-        )
-        children.push(new Paragraph({ text: '' }))
-      })
-
-      if (idx < pages.length - 1) children.push(new Paragraph({ children: [new PageBreak()] }))
-    })
-
-    const doc = new Document({
-      sections: [{ properties: {}, children: children as any }],
-    })
-
-    const blob = await Packer.toBlob(doc)
-    downloadBlob(
-      blob,
-      'BRD.docx'
-    )
-  }
-
-  const exportBrdPdf = async () => {
-    const pages = getBrdExportPages()
-    const { jsPDF } = await import('jspdf')
-    const pdf = new jsPDF({ unit: 'pt', format: 'a4' })
-
-    const marginX = 56
-    const marginTop = 64
-    const pageWidth = pdf.internal.pageSize.getWidth()
-    const pageHeight = pdf.internal.pageSize.getHeight()
-    const usableWidth = pageWidth - marginX * 2
-    const lineGap = 16
-    const bottomMargin = 64
-
-    const addTextBlock = (text: string, startY: number, maxWidth = usableWidth) => {
-      const lines = pdf.splitTextToSize(text, usableWidth)
-      let y = startY
-      for (const line of lines) {
-        if (y > pageHeight - bottomMargin) {
-          pdf.addPage()
-          y = marginTop
-        }
-        pdf.text(line, marginX, y, { maxWidth })
-        y += lineGap
-      }
-      return y
-    }
-
-    const addTableBlock = (rows: string[][], startY: number) => {
-      let y = startY
-      const columnCount = Math.max(...rows.map((row) => row.length), 1)
-      const cellWidth = usableWidth / columnCount
-
-      for (const row of rows) {
-        const cellLines = Array.from({ length: columnCount }).map((_, cellIndex) =>
-          pdf.splitTextToSize(row[cellIndex] ?? '', Math.max(24, cellWidth - 10)) as string[]
-        )
-        const lineCount = Math.max(...cellLines.map((lines) => Math.max(lines.length, 1)), 1)
-        const rowHeight = Math.max(22, lineCount * 12 + 10)
-
-        if (y + rowHeight > pageHeight - bottomMargin) {
-          pdf.addPage()
-          y = marginTop
-        }
-
-        let x = marginX
-        cellLines.forEach((lines, cellIndex) => {
-          pdf.rect(x, y - 12, cellWidth, rowHeight)
-          const textYStart = y + 2
-          lines.forEach((line, lineIndex) => {
-            pdf.text(line, x + 4, textYStart + lineIndex * 12, { maxWidth: cellWidth - 8 })
-          })
-          x += cellWidth
-        })
-
-        y += rowHeight
-      }
-
-      return y + 8
-    }
-
-    pdf.setFont('helvetica', 'normal')
-    pdf.setFontSize(12)
-
-    let first = true
-    pages.forEach(({ header, body }) => {
-      if (!first) pdf.addPage()
-      first = false
-
-      let y = marginTop
-      if (header) {
-        pdf.setFont('helvetica', 'bold')
-        y = addTextBlock(header, y)
-        y += 8
-        pdf.setFont('helvetica', 'normal')
-      }
-
-      const blocks = getBrdExportBlocks(body)
-      blocks.forEach((block) => {
-        if (block.type === 'paragraph') {
-          const text = block.lines.join('\n')
-          if (text.trim()) {
-            y = addTextBlock(text, y)
-            y += 6
-          }
-          return
-        }
-
-        y = addTableBlock(block.rows, y)
-      })
-    })
-
-    const blob = pdf.output('blob')
-    downloadBlob(blob, 'BRD.pdf')
-  }
-
-  const BrdFooter = () => {
-    const [wordCount, setWordCount] = useState(0)
-
-    useEffect(() => {
-      brdWordCountUpdateFnRef.current = setWordCount
-      // Ensure badge is correct after mount.
-      scheduleWordCountUpdate()
-      return () => {
-        brdWordCountUpdateFnRef.current = () => {}
-      }
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
-
-    useEffect(() => {
-      // Ensure badge is correct after pagination changes.
-      scheduleWordCountUpdate()
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [brdPages.length])
-
-    return (
-      <div className="sticky bottom-3 z-10 w-full px-3">
-        <div className="flex w-full items-center justify-between">
-          <div className="w-fit rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-[12px] text-slate-700 shadow-sm">
-            Page {Math.min(brdActivePageIndex + 1, brdPages.length)} of {brdPages.length} &nbsp;&nbsp; {wordCount} words
-          </div>
-
-          <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-[12px] text-slate-700 shadow-sm">
-            <button
-              type="button"
-              className="h-6 w-6 rounded-full border border-slate-200 bg-white text-slate-700 leading-none"
-              onClick={() => setBrdZoom((z) => Math.max(BRD_ZOOM_MIN, Number((z - BRD_ZOOM_STEP).toFixed(2))))}
-              aria-label="Zoom out"
-            >
-              âˆ’
-            </button>
-            <input
-              type="range"
-              min={BRD_ZOOM_MIN}
-              max={brdMaxZoomFit}
-              step={BRD_ZOOM_STEP}
-              value={brdZoom}
-              onChange={(e) => setBrdZoom(Number(e.target.value))}
-              className={cn(
-                'w-28 h-1 appearance-none rounded-full bg-slate-200',
-                '[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-slate-700',
-                '[&::-webkit-slider-thumb]:shadow-[0_1px_3px_rgba(15,23,42,0.25)]',
-                '[&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-slate-700',
-                '[&::-moz-range-track]:h-1 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-slate-200'
-              )}
-            />
-            <div className="w-12 text-right tabular-nums">{Math.round(brdZoom * 100)}%</div>
-            <button
-              type="button"
-              className="h-6 w-6 rounded-full border border-slate-200 bg-white text-slate-700 leading-none"
-              onClick={() => setBrdZoom((z) => Math.min(brdMaxZoomFit, Number((z + BRD_ZOOM_STEP).toFixed(2))))}
-              aria-label="Zoom in"
-            >
-              +
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   useEffect(() => {
-    if (activePanel !== 'brd') return
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
     const sections = brdPageSectionRefs.current.filter(Boolean) as HTMLElement[]
     if (!sections.length) return
 
@@ -11856,24 +10443,6 @@ export function IdeaDetailPage() {
     focusActiveBrdPage()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(document as any).execCommand?.(command, false, value)
-  }
-
-  const clearBrdFormatting = () => {
-    if (isBrdGenerating) return
-    focusActiveBrdPage()
-    execBrdCommand('removeFormat')
-    execBrdCommand('unlink')
-    // Ensure highlight/background is cleared across browsers.
-    execBrdCommand('hiliteColor', 'transparent')
-    execBrdCommand('backColor', 'transparent')
-  }
-
-  const commitHeaderToState = (index: number) => {
-    setBrdHeaders((prev) => {
-      const next = [...prev]
-      next[index] = brdHeadersRef.current[index] ?? ''
-      return next
-    })
   }
 
   const findLargestFittingPrefix = (text: string, maxHeight: number) => {
@@ -11994,7 +10563,7 @@ export function IdeaDetailPage() {
     }
 
     const carriedHeaderHtml = decodeCarriedHeaderHtml(table.getAttribute('data-brd-header-html'))
-    let headerRows: HTMLTableRowElement[] = thead
+    const headerRows: HTMLTableRowElement[] = thead
       ? Array.from(thead.querySelectorAll('tr')) as HTMLTableRowElement[]
       : []
     let dataRows: HTMLTableRowElement[] = tbody
@@ -12198,11 +10767,8 @@ export function IdeaDetailPage() {
     return next
   }
 
-  useEffect(() => {
-    if (activePanel !== 'brd') return
-    // Gate both by ref (immediate) and state (for safety)
-    if (isBrdGenerating || isBrdRenderLockedRef.current) return
-
+  // Capture the callbacks when scheduling, not when the frame runs.
+  const scheduleBrdAutoPagination = useEffectEvent(() => {
     const raf = window.requestAnimationFrame(() => {
       if (brdAutoPaginatingRef.current) return
 
@@ -12224,6 +10790,13 @@ export function IdeaDetailPage() {
     })
 
     return () => window.cancelAnimationFrame(raf)
+  })
+
+  useEffect(() => {
+    if (!brdPageEditableRefs.current.some((page) => page?.isConnected)) return
+    if (isBrdGenerating || isBrdRenderLockedRef.current) return
+
+    return scheduleBrdAutoPagination()
   }, [
     activePanel,
     brdFontFamily,
@@ -12234,287 +10807,6 @@ export function IdeaDetailPage() {
     isBrdGenerating,
     isBrdRenderLocked,
   ])
-
-  const BrdPage = ({ index }: { index: number }) => {
-    const ref = useRef<HTMLDivElement | null>(null)
-    const headerRef = useRef<HTMLDivElement | null>(null)
-    const value = brdPages[index] ?? ''
-    const headerValue = brdHeaders[index] ?? ''
-    const isEditingHeader = editingHeaderIndex === index
-
-    useEffect(() => {
-      if (!ref.current) return
-      brdPageEditableRefs.current[index] = ref.current
-      if (document.activeElement === ref.current) return
-      const el = ref.current
-      if (brdBodyHasHtmlMarkup(value)) {
-        if (el.innerHTML !== value) el.innerHTML = value
-      } else if (el.innerText !== value) {
-        el.innerText = value
-      }
-    }, [value, index])
-
-    useEffect(() => {
-      if (!headerRef.current) return
-      if (isEditingHeader && document.activeElement === headerRef.current) return
-      if (headerRef.current.innerText !== headerValue) headerRef.current.innerText = headerValue
-    }, [headerValue, isEditingHeader])
-
-    useEffect(() => {
-      const el = headerRef.current
-      if (!el) return
-      const update = () => {
-        const h = Math.max(18, Math.min(120, el.scrollHeight))
-        setBrdHeaderHeights((prev) => {
-          if ((prev[index] ?? 18) === h) return prev
-          const copy = [...prev]
-          copy[index] = h
-          brdHeaderHeightsRef.current = copy
-          return copy
-        })
-      }
-
-      update()
-      if (!isEditingHeader) return
-      const ro = new ResizeObserver(() => update())
-      ro.observe(el)
-      return () => ro.disconnect()
-    }, [headerValue, index, isEditingHeader])
-
-    return (
-      <section
-        ref={(node) => {
-          brdPageSectionRefs.current[index] = node
-        }}
-        data-page-index={index}
-        className="relative h-[1123px] w-[794px] border border-slate-300 bg-white px-16 py-14 shadow-[0_28px_58px_-38px_rgba(15,23,42,0.45)] overflow-hidden"
-      >
-        {/* Header (non-editable unless double-clicked) */}
-        <div className="absolute left-16 right-16" style={{ top: BRD_HEADER_TOP_PX }}>
-          {isEditingHeader && (
-            <>
-              <div
-                className="pointer-events-none absolute -left-14 rounded-sm border border-slate-300 bg-slate-100 px-2 py-1 text-[12px] leading-4 text-slate-700 shadow-sm"
-                style={{ top: (brdHeaderHeights[index] ?? 18) + 8 }}
-              >
-                Header
-              </div>
-              <div
-                className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-slate-400"
-                style={{ top: (brdHeaderHeights[index] ?? 18) + 10 }}
-                aria-hidden="true"
-              />
-            </>
-          )}
-          <div
-            ref={headerRef}
-            contentEditable={!isBrdGenerating && isEditingHeader}
-            suppressContentEditableWarning
-            spellCheck={false}
-            className={cn(
-              "min-h-6 whitespace-pre-wrap font-['Aptos','Arial',sans-serif] text-[12px] leading-5 outline-none",
-              isEditingHeader ? 'text-slate-700' : 'text-slate-400',
-              !isEditingHeader && 'pointer-events-none select-none'
-            )}
-            onInput={(e) => {
-              const nextHeader = e.currentTarget.innerText
-              brdHeadersRef.current[index] = nextHeader
-            }}
-            onBlur={() => {
-              // Avoid exiting edit mode on transient focus loss (e.g. reflow/resize observer updates).
-              window.requestAnimationFrame(() => {
-                if (editingHeaderIndex !== index) return
-                const active = document.activeElement
-                const bodyEl = brdPageEditableRefs.current[index]
-                // Exit header edit only when focus clearly moved to the page body.
-                if (bodyEl && active === bodyEl) {
-                  commitHeaderToState(index)
-                  setEditingHeaderIndex(null)
-                }
-              })
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                commitHeaderToState(index)
-                setEditingHeaderIndex(null)
-                // Return focus to body.
-                window.requestAnimationFrame(() => {
-                  brdPageEditableRefs.current[index]?.focus()
-                })
-              }
-            }}
-          />
-
-          {!isEditingHeader && !isBrdGenerating && (
-            <div
-              className="absolute -inset-x-2 -inset-y-2 cursor-text"
-              onDoubleClick={() => {
-                setEditingHeaderIndex(index)
-                window.requestAnimationFrame(() => {
-                  headerRef.current?.focus()
-                })
-              }}
-              title="Double-click to edit header"
-              aria-label="Double-click to edit header"
-            />
-          )}
-        </div>
-
-        <div
-          ref={ref}
-          contentEditable={!isBrdGenerating && !isEditingHeader}
-          suppressContentEditableWarning
-          spellCheck={false}
-          className={cn(
-            "min-h-[995px] whitespace-pre-wrap text-slate-900 outline-none [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_em]:italic [&_u]:underline",
-            '[&_h2]:mb-4 [&_h2]:mt-7 [&_h2]:border-b [&_h2]:border-slate-300 [&_h2]:pb-2 [&_h2]:text-[19px] [&_h2]:font-semibold [&_h2]:uppercase [&_h2]:tracking-[0.08em] [&_h2]:text-slate-800 [&_h2:first-child]:mt-0',
-            '[&_h3]:mb-3 [&_h3]:mt-5 [&_h3]:text-[16px] [&_h3]:font-semibold [&_h3]:text-sky-900 [&_h3:first-child]:mt-0',
-            '[&_h4]:mb-2 [&_h4]:mt-4 [&_h4]:text-[14px] [&_h4]:font-semibold [&_h4]:text-slate-800 [&_h4:first-child]:mt-0',
-            '[&_p]:mb-3 [&_p]:mt-0 [&_p]:text-justify',
-            '[&_ul]:mb-4 [&_ul]:mt-2 [&_ul]:list-disc [&_ul]:pl-8',
-            '[&_ol]:mb-4 [&_ol]:mt-2 [&_ol]:pl-8',
-            '[&_li]:mb-1.5 [&_li]:pl-1',
-            '[&_ul>li::marker]:text-sky-700 [&_ol>li::marker]:font-semibold [&_ol>li::marker]:text-slate-700',
-            isEditingHeader && 'select-none text-slate-400'
-          )}
-          style={{
-            fontFamily: brdFontFamily === 'Aptos' ? "Aptos, Arial, sans-serif" : `${brdFontFamily}, Arial, sans-serif`,
-            fontSize: `${brdFontSize}px`,
-            lineHeight: String(brdLineHeight),
-            // Keep header layout unchanged; only control the body gap here.
-            paddingTop: (brdHeaderHeights[index] ?? 18) + BRD_HEADER_BODY_GAP_PX,
-            minHeight: getBodyMaxHeightPx(index),
-            maxHeight: getBodyMaxHeightPx(index),
-            overflow: 'hidden',
-          }}
-          onDoubleClick={() => {
-            if (!isEditingHeader) return
-            commitHeaderToState(index)
-            setEditingHeaderIndex(null)
-            window.requestAnimationFrame(() => {
-              brdPageEditableRefs.current[index]?.focus()
-            })
-          }}
-          onFocus={() => {
-            brdLastFocusedPage.current = index
-          }}
-          onKeyDown={(e) => {
-            const isSelectAll =
-              (e.ctrlKey || e.metaKey) &&
-              (e.key === 'a' || e.key === 'A') &&
-              !e.shiftKey &&
-              !e.altKey
-            if (!isSelectAll) return
-            e.preventDefault()
-
-            const first = brdPageEditableRefs.current.find((node) => node != null) ?? null
-            const last = [...brdPageEditableRefs.current].reverse().find((node) => node != null) ?? null
-            if (!first || !last) return
-
-            const selection = window.getSelection()
-            if (!selection) return
-            selection.removeAllRanges()
-
-            const range = document.createRange()
-            range.setStart(first, 0)
-            range.setEnd(last, last.childNodes.length)
-            selection.addRange(range)
-          }}
-          onInput={(e) => {
-            const host = e.currentTarget
-            const next = host.innerHTML
-            brdPagesRef.current[index] = next
-            scheduleWordCountUpdate()
-
-            // Paginate if content exceeds max height (with safety margin)
-            const maxHeight = getBodyMaxHeightPx(index)
-            const contentHeight = measureBrdBodyHeight(next)
-            
-            // Use slightly stricter threshold (95%) to catch overflow early
-            if (contentHeight <= maxHeight * 0.95) {
-              // Always persist typing to state so re-renders don't reset the DOM
-              setBrdPages((prev) => {
-                if (prev[index] === next) return prev
-                const copy = [...prev]
-                copy[index] = next
-                return copy
-              })
-              return
-            }
-
-            const rebalanced = rebalancePagesFrom(brdPagesRef.current, index)
-            brdPagesRef.current = rebalanced
-            setBrdPages(rebalanced)
-          }}
-          onKeyDownCapture={(e) => {
-            if (e.key !== 'Backspace' && e.key !== 'Delete') return
-            const selection = window.getSelection()
-            if (!selection || selection.isCollapsed) return
-
-            const findPageIndexForNode = (node: globalThis.Node | null) => {
-              if (!node) return -1
-              const anyNode = node as unknown as { nodeType?: number; parentElement?: HTMLElement | null }
-              const element =
-                anyNode.nodeType === globalThis.Node.ELEMENT_NODE
-                  ? (node as unknown as HTMLElement)
-                  : (anyNode.parentElement ?? null)
-              if (!element) return -1
-              for (let i = 0; i < brdPageEditableRefs.current.length; i += 1) {
-                const pageEl = brdPageEditableRefs.current[i]
-                if (pageEl && pageEl.contains(element)) return i
-              }
-              return -1
-            }
-
-            const startIdx = findPageIndexForNode(selection.anchorNode as unknown as globalThis.Node | null)
-            const endIdx = findPageIndexForNode(selection.focusNode as unknown as globalThis.Node | null)
-
-            // If selection spans multiple pages, delete everything.
-            if (startIdx !== -1 && endIdx !== -1 && startIdx !== endIdx) {
-              e.preventDefault()
-              brdPagesRef.current = ['']
-              setBrdPages([''])
-
-              window.requestAnimationFrame(() => {
-                const first = brdPageEditableRefs.current[0]
-                if (!first) return
-                first.focus()
-                const sel = window.getSelection()
-                if (!sel) return
-                sel.removeAllRanges()
-                const range = document.createRange()
-                range.setStart(first, 0)
-                range.collapse(true)
-                sel.addRange(range)
-              })
-            }
-          }}
-          onKeyUp={(e) => {
-            if (e.key !== 'Backspace' && e.key !== 'Delete') return
-            const current = brdPagesRef.current[index] ?? ''
-            const following = brdPagesRef.current[index + 1] ?? ''
-            if (!following) return
-            if (brdBodyHasTableMarkup(current) || brdBodyHasTableMarkup(following)) return
-            if (measureBrdBodyHeight(current) >= getBodyMaxHeightPx(index)) return
-            const rebalanced = rebalancePagesFrom(brdPagesRef.current, index)
-            if (rebalanced.length !== brdPagesRef.current.length || rebalanced[index + 1] !== brdPagesRef.current[index + 1]) {
-              brdPagesRef.current = rebalanced
-              setBrdPages(rebalanced)
-            }
-          }}
-        />
-      </section>
-    )
-  }
-
-  const hasBrdBodyContent = brdPages.some((page) => page.trim())
-  const showBrdCoverPage = !isBrdGenerating && !isBrdRenderLocked && hasBrdBodyContent
-  const showBrdTocPage = !isBrdGenerating && !isBrdRenderLocked && hasBrdBodyContent
-  const brdVisiblePageCount = brdPages.length + (showBrdCoverPage ? 1 : 0) + (showBrdTocPage ? 1 : 0)
-  const brdCanvasHeightPx =
-    Math.max(1, brdVisiblePageCount) * BRD_PAGE_HEIGHT_PX +
-    Math.max(0, brdVisiblePageCount - 1) * BRD_PAGE_GAP_PX
 
   const getSectionReviewContent = (sectionKey: PanelKey): string => {
     if (sectionKey === 'summary') {
@@ -12664,7 +10956,7 @@ export function IdeaDetailPage() {
     : diagramStudioC4Level === 'L2'
       ? c4Level2Analysis.architectureReview
       : undefined
-  const diagramStudioReviewTarget: ArchitectureReviewTarget | null = diagramStudioC4Level === 'L1'
+  const diagramStudioReviewTarget: ArchitectureReviewTarget | null = contentReviewEnabled || contentLocked ? null : diagramStudioC4Level === 'L1'
     ? 'c4-l1'
     : diagramStudioC4Level === 'L2'
       ? 'c4-l2'
@@ -12679,16 +10971,9 @@ export function IdeaDetailPage() {
       ? bpmnHighAnalysis.architectureReview
       : diagramStudioC4Review
   const diagramStudioC4ReviewMeta = c4ReviewStatusMeta(diagramStudioReview?.status)
-  const diagramStudioReviewLabel = diagramStudioReviewTarget === 'integration'
-    ? 'ArchiMate Integration'
-    : diagramStudioReviewTarget === 'bpmn-high'
-      ? 'BPMN High-Level'
-      : diagramStudioC4Level
-        ? `C4 ${diagramStudioC4Level}`
-        : 'Diagram'
 
   return (
-    <>
+    <div className="idea-detail-page min-w-0" style={{ '--idea-detail-top': `${detailViewport.top}px` } as CSSProperties}>
       {brdBulletMenu}
       {brdNumberMenu}
       {brdMultilevelMenu}
@@ -12706,7 +10991,9 @@ export function IdeaDetailPage() {
         activePanel={activePanel}
         onNavigatePanel={navigateToPanel}
         menuSections={ideaSectionPolicyReady ? menuSections : []}
+        menuOrderLocked={Boolean(workflowSectionOrder)}
         onReorderMenuSections={(orderedKeys) => {
+          if (workflowSectionOrder) return
           const hidden = resolveIdeaNavSections(savedMenuSections).filter((key) => !orderedKeys.includes(key))
           reorderIdeaMenuSections(idea.id, [...orderedKeys, ...hidden])
         }}
@@ -12736,26 +11023,27 @@ export function IdeaDetailPage() {
 
       <div
         className={cn(
-          'space-y-5 pb-8 transition-all duration-300',
+          'idea-detail-content min-w-0 space-y-5 pb-8 transition-all duration-300',
           'mr-0 md:mr-12',
           sidebarCollapsed ? 'lg:mr-12' : 'lg:mr-72'
         )}
       >
         <Breadcrumb
         items={[
-          { label: 'Workspace', href: workspaceManagementPath },
+          ...(!isMobileLayout ? [{ label: 'Workspace', href: workspaceManagementPath }] : []),
           { label: 'Idea & Backlog', href: ideaBacklogPath },
-          { label: idea.id },
+          { label: isMobileLayout ? 'Details' : idea.id },
         ]}
         />
 
-      <div className="space-y-4">
-          <div className="flex items-start justify-between gap-4">
+      <div className="idea-detail-heading space-y-4">
+          <div className="idea-detail-heading-row flex items-start justify-between gap-4">
             <div className="flex items-start gap-3 flex-1 min-w-0">
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => navigate('/idea-backlog')}
+                aria-label="Back to ideas"
+                onClick={() => navigate(ideaBacklogPath)}
               >
                 <ArrowLeft className="h-4 w-4" />
               </Button>
@@ -12764,7 +11052,7 @@ export function IdeaDetailPage() {
                 style={{ backgroundColor: typeAccent[idea.type] }}
                 aria-hidden="true"
               />
-              <div className="space-y-2 min-w-0 flex-1">
+              <div className="idea-detail-title-block space-y-2 min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge variant="outline" className={cn('text-[10px] font-semibold', headerStatusBadgeClass)}>
                   {headerStatusLabel}
@@ -12799,23 +11087,23 @@ export function IdeaDetailPage() {
                 }}
                 onError={(message) => addToast({ title: 'Judul gagal disimpan', description: message, variant: 'error' })}
               />
-              <p className="text-sm text-muted-foreground">
-                Workspace: <span className="font-medium text-slate-700">{workspaceDisplayName}</span>
+              <p className="idea-detail-metadata text-sm text-muted-foreground">
+                <span>Workspace: <span className="font-medium text-slate-700">{workspaceDisplayName}</span></span>
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
-                Submitted by <span className="font-medium text-slate-700">{submittedByDisplayName}</span>
+                <span>Submitted by <span className="font-medium text-slate-700">{submittedByDisplayName}</span></span>
                 {actionControlReviewerLabel ? (
                   <>
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
-                    Reviewer <span className="font-medium text-slate-700">{actionControlReviewerLabel}</span>
+                    <span>Reviewer <span className="font-medium text-slate-700">{actionControlReviewerLabel}</span></span>
                   </>
                 ) : null}
                 <span className="mx-2 text-slate-400" aria-hidden="true">{String.fromCharCode(0xb7)}</span>
-                {idea.createdAt}
+                <time>{idea.createdAt}</time>
               </p>
             </div>
             </div>
 
-            <div className="flex shrink-0 flex-col items-end gap-2">
+            <div className="idea-detail-refresh-meta flex shrink-0 flex-col items-end gap-2">
               {visiblePanel === 'summary' && (
                 <div className="self-end text-[11px] text-slate-600">
                   <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-right">
@@ -12868,7 +11156,7 @@ export function IdeaDetailPage() {
 
       </div>
 
-      <div className="space-y-4">
+      <div className="idea-detail-panels min-w-0 space-y-4">
         {visiblePanel === null && (
           <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-border/60 bg-card/60" aria-busy="true">
             <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -14141,6 +12429,7 @@ export function IdeaDetailPage() {
                     <div className="flex min-w-0 items-center gap-2">
                       <Workflow className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                       <h2 className="text-lg font-semibold text-foreground">Diagrams</h2>
+                      {contentLocked && <span role="status" className="text-xs text-muted-foreground">Read-only</span>}
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <button
@@ -14174,6 +12463,24 @@ export function IdeaDetailPage() {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  {showTechnicalDiagrams ? (() => {
+                    const retained = readSelectedSourceReferences(idea.description || '')
+                    if (retained.ok === false) return <p role="status" className="p-3 text-sm">{retained.reason}</p>
+                    if (!retained.sources.length) return null
+                    return <section aria-label="Retained diagram source references" className="mb-4 space-y-2 rounded border p-3">
+                      <p className="text-sm font-semibold">Diagram source references</p>
+                      <p className="text-xs text-muted-foreground">Read-only sources from the selected description. Review has not been reverified; this is not production approval.</p>
+                      {retained.sources.map((source, index) => <details key={index} className="rounded border p-2">
+                        <summary>{source.kind === 'archimate' ? 'ArchiMate from brainstorming' : (source.kind || source.language)}{source.topic ? ` - ${source.topic}` : ''}</summary>
+                        {supportsReadOnlyTechnicalPreview(source)
+                          ? <AssistantMermaidBlock source={source.source} notation="plantuml" diagramKind={source.kind} diagramLanguage={source.language} compact />
+                          : <p className="text-xs">A diagram preview is not available here. The original source is retained below.</p>}
+                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{source.source}</pre>
+                        {source.shownContext ? <details><summary>Original depiction context (unverified provenance)</summary><pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs">{source.shownContext}</pre></details> : null}
+                      </details>)}
+                    </section>
+                  })() : null}
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-5">
               {(showTechnicalDiagrams && (isIntegrationRefreshing || !integrationLoaded || (integrationLatestGraph?.nodes.length ?? 0) > 0)) ? (
               <div className="order-5 flex flex-col rounded-2xl border border-border/40 bg-white/85 p-4 shadow-sm">
@@ -14182,11 +12489,14 @@ export function IdeaDetailPage() {
                     <GitBranch className="h-4 w-4 shrink-0 text-foreground" aria-hidden />
                     <span className="text-sm font-semibold text-foreground">ArchiMate Integration</span>
                   </div>
+                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                  <DiagramSyncIndicator status={processDocumentSync['brainstorm-archimate']} onRetry={contentLocked ? undefined : () => retryDiagramSync('brainstorm-archimate')} />
                   {integrationLoaded && typeof confidence.integration === 'number' && confidence.integration > 0 ? (
                     <Badge variant="outline" className={cn('shrink-0 text-[10px] font-semibold', confidenceClass(confidence.integration))}>
                       {confidence.integration}%
                     </Badge>
                   ) : null}
+                  </div>
                 </div>
                 <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
                   Integration architecture recommendation with ArchiMate canvas and PlantUML source.
@@ -14242,52 +12552,48 @@ export function IdeaDetailPage() {
               </div>
               ) : null}
 
-              {(showTechnicalDiagrams ? validatedTechnicalDiagrams : []).map((diagram) => {
-                const isBrainstormC4 = diagram.kind === 'c4'
-                const canvasFormat = diagram.kind === 'c4'
+              {(showTechnicalDiagrams ? technicalGallery.filter(diagram => diagram.kind !== 'c4' || diagram.source) : []).map((diagram) => {
+                const canvasFormat = diagram.kind === 'use-case' ? 'use-case' : diagram.kind === 'c4'
                   ? 'c4'
                   : diagram.kind === 'class'
                     ? 'class'
                     : diagram.kind === 'erd'
                       ? 'erd'
                       : 'plantuml'
-                const technicalKey = isBrainstormC4
-                  ? (/!include\s*<\s*C4\/C4_Container|\bContainer\s*\(/i.test(diagram.source)
-                    ? 'brainstorm-c4-level-2'
-                    : 'brainstorm-c4-level-1')
+                const technicalKey = diagram.persistKey
+                const technicalMeta = diagram.kind === 'use-case' ? { icon: Workflow, description: 'Aktor, tujuan pengguna, batas sistem, dan relasi UML. Tinjau draft sebelum digunakan.' } : diagram.kind === 'c4'
+                  ? { icon: Layers, description: 'Gambaran sistem dan container.' }
                   : diagram.kind === 'class'
-                    ? 'brainstorm-class'
-                    : diagram.kind === 'erd'
-                      ? 'brainstorm-erd'
-                      : diagram.kind === 'sequence'
-                        ? 'brainstorm-sequence'
-                        : brainstormProcessPersistKey(diagram.label, 0)
-                const technicalMeta = diagram.kind === 'c4'
-                  ? { icon: Layers, description: 'Gambaran sistem (C4) terakhir yang sudah dikonfirmasi saat brainstorming.' }
-                  : diagram.kind === 'class'
-                    ? { icon: Boxes, description: 'Class diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                    ? { icon: Boxes, description: 'Struktur class dan relasinya.' }
                     : diagram.kind === 'sequence'
-                      ? { icon: Workflow, description: 'Sequence diagram terakhir yang sudah dikonfirmasi saat brainstorming.' }
-                      : { icon: Database, description: 'ERD terakhir yang sudah dikonfirmasi saat brainstorming.' }
+                      ? { icon: Workflow, description: 'Urutan interaksi antar komponen.' }
+                      : { icon: Database, description: 'Entitas data dan relasinya.' }
                 return (
+                  <div key={technicalKey} className="order-6 min-w-0 space-y-2">
                   <DiagramGalleryCard
                     key={technicalKey}
+                    syncStatus={processDocumentSync[technicalKey]}
+                    onRetrySync={contentLocked ? undefined : () => retryDiagramSync(technicalKey)}
                     ideaId={idea.id}
                     diagramKey={technicalKey}
-                    diagramSource={diagram.source}
+                    diagramSource={brainstormCanvasByKey[technicalKey]?.source || diagram.source}
+                    savedGraph={brainstormCanvasByKey[technicalKey]}
+                    onPersistGraph={contentLocked ? undefined : (graph) => persistBpmnCanvas(technicalKey, graph)}
                     diagramFormat={canvasFormat}
-                    renderAsImage={canvasFormat === 'plantuml'}
+                    renderAsImage={canvasFormat === 'plantuml' && Boolean(diagram.source)}
                     title={diagram.label}
                     icon={technicalMeta.icon}
                     description={technicalMeta.description}
                     imageSrc={null}
-                    missing={false}
-                    generationError={null}
+                    missing={!diagram.source}
+                    generationError={diagramSourceErrors[technicalKey] || null}
+                    onRetryLoad={diagramSourceErrors[technicalKey] ? () => setDiagramSourcesReloadKey(key => key + 1) : undefined}
                     confidence={null}
-                    isRegenerating={false}
+                    isRegenerating={diagramSourcesLoading && !diagram.source}
                     onOpenStudio={setDiagramStudio}
                     className="order-6"
                   />
+                  </div>
                 )
               })}
 
@@ -14296,8 +12602,11 @@ export function IdeaDetailPage() {
                   const processKey = brainstormProcessPersistKey(diagram.label, index)
                   const savedGraph = brainstormCanvasByKey[processKey]
                   return (
+                  <div key={processKey} className="order-6 min-w-0 space-y-2">
                   <DiagramGalleryCard
                     key={processKey}
+                    syncStatus={processDocumentSync[processKey]}
+                    onRetrySync={contentLocked ? undefined : () => retryDiagramSync(processKey)}
                     ideaId={idea.id}
                     diagramKey={processKey}
                     diagramSource={savedGraph?.source || diagram.source}
@@ -14317,6 +12626,7 @@ export function IdeaDetailPage() {
                     onOpenStudio={setDiagramStudio}
                     className="order-6"
                   />
+                  </div>
                   )
                 })
               ) : showBpmnDiagrams && brainstormProcessDiagrams.length === 0 ? (
@@ -14329,10 +12639,12 @@ export function IdeaDetailPage() {
                 </div>
               ) : null}
 
-              {(showTechnicalDiagrams && (regenerating.c4Level1 || Boolean(c4Level1Analysis.plantumlSource?.trim()) || (c4Level1Analysis.canvasGraph?.nodes.length ?? 0) > 0)) ? (
+              {showTechnicalDiagrams && !technicalGallery.some(diagram => diagram.persistKey === 'brainstorm-c4-level-1' && diagram.source) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-1"
+                syncStatus={processDocumentSync['brainstorm-c4-level-1']}
+                onRetrySync={contentLocked ? undefined : () => retryDiagramSync('brainstorm-c4-level-1')}
                 diagramSource={c4Level1Analysis.plantumlSource}
                 diagramFormat="c4"
                 savedGraph={c4Level1Analysis.canvasGraph}
@@ -14344,21 +12656,24 @@ export function IdeaDetailPage() {
                 imageLoading={c4Level1Preview.isLoading}
                 imageError={c4Level1Preview.error}
                 missing={c4Level1Missing}
-                generationError={c4Level1GenerationError}
+                generationError={c4Level1GenerationError || diagramSourceErrors['brainstorm-c4-level-1'] || null}
+                onRetryLoad={c4Level1GenerationError || diagramSourceErrors['brainstorm-c4-level-1'] ? () => { setDiagramSourcesReloadKey(key => key + 1); void loadRuntimeC4Architecture('L1', idea) } : undefined}
                 confidence={c4Level1Loaded ? confidence.c4Level1 : null}
-                isRegenerating={regenerating.c4Level1}
-                onGenerateDraft={() => void loadRuntimeC4Architecture('L1', idea, { forceRefresh: true })}
-                onGenerateAlternative={() => void generateC4Alternative('L1')}
+                isRegenerating={regenerating.c4Level1 || (!c4Level1Loaded && !c4Level1GenerationError) || diagramSourcesLoading}
+                onGenerateDraft={contentLocked ? undefined : () => void loadRuntimeC4Architecture('L1', idea, { forceRefresh: true })}
+                onGenerateAlternative={contentLocked ? undefined : () => void generateC4Alternative('L1')}
                 onOpenStudio={setDiagramStudio}
                 c4DrilldownTargets={c4Level1DrilldownTargets}
                 onOpenC4Drilldown={openC4Drilldown}
                 className="order-1"
               />
               ) : null}
-              {(showTechnicalDiagrams && (regenerating.c4Level2 || Boolean(c4Level2Analysis.plantumlSource?.trim()) || (c4Level2Analysis.canvasGraph?.nodes.length ?? 0) > 0)) ? (
+              {showTechnicalDiagrams && !technicalGallery.some(diagram => diagram.persistKey === 'brainstorm-c4-level-2' && diagram.source) ? (
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="c4-level-2"
+                syncStatus={processDocumentSync['brainstorm-c4-level-2']}
+                onRetrySync={contentLocked ? undefined : () => retryDiagramSync('brainstorm-c4-level-2')}
                 diagramSource={c4Level2Analysis.plantumlSource}
                 diagramFormat="c4"
                 savedGraph={c4Level2Analysis.canvasGraph}
@@ -14370,11 +12685,12 @@ export function IdeaDetailPage() {
                 imageLoading={c4Level2Preview.isLoading}
                 imageError={c4Level2Preview.error}
                 missing={c4Level2Missing}
-                generationError={c4Level2GenerationError}
+                generationError={c4Level2GenerationError || diagramSourceErrors['brainstorm-c4-level-2'] || null}
+                onRetryLoad={c4Level2GenerationError || diagramSourceErrors['brainstorm-c4-level-2'] ? () => { setDiagramSourcesReloadKey(key => key + 1); void loadRuntimeC4Architecture('L2', idea) } : undefined}
                 confidence={c4Level2Loaded ? confidence.c4Level2 : null}
-                isRegenerating={regenerating.c4Level2}
-                onGenerateDraft={() => void loadRuntimeC4Architecture('L2', idea, { forceRefresh: true })}
-                onGenerateAlternative={() => void generateC4Alternative('L2')}
+                isRegenerating={regenerating.c4Level2 || (!c4Level2Loaded && !c4Level2GenerationError) || diagramSourcesLoading}
+                onGenerateDraft={contentLocked ? undefined : () => void loadRuntimeC4Architecture('L2', idea, { forceRefresh: true })}
+                onGenerateAlternative={contentLocked ? undefined : () => void generateC4Alternative('L2')}
                 onOpenStudio={setDiagramStudio}
                 className="order-2"
               />
@@ -14383,6 +12699,8 @@ export function IdeaDetailPage() {
               <DiagramGalleryCard
                 ideaId={idea.id}
                 diagramKey="bpmn-high-level"
+                syncStatus={processDocumentSync.high}
+                onRetrySync={contentLocked ? undefined : () => retryDiagramSync('high')}
                 diagramSource={bpmnHighAnalysis.canvasGraph?.source || bpmnHighAnalysis.bpmnXml}
                 diagramFormat="bpmn"
                 savedGraph={bpmnHighAnalysis.canvasGraph}
@@ -14449,12 +12767,13 @@ export function IdeaDetailPage() {
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-4 pb-3 pt-3 lg:px-5 lg:pb-4 lg:pt-3">
                   <div className="shrink-0 space-y-0 [&_h2]:leading-tight">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         {(() => {
                           const StudioIcon = diagramStudio.icon
                           return <StudioIcon className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                         })()}
                         <h2 className="text-lg font-semibold text-foreground">{diagramStudio.title}</h2>
+                        <DiagramSyncIndicator status={processDocumentSync[diagramSyncKey(diagramStudio.diagramKey)]} onRetry={contentLocked ? undefined : () => retryDiagramSync(diagramSyncKey(diagramStudio.diagramKey))} />
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                         {typeof diagramStudio.confidence === 'number' && diagramStudio.confidence > 0 ? (
@@ -14580,7 +12899,7 @@ export function IdeaDetailPage() {
                             ) : null}
                           </div>
                         ) : null}
-                        {diagramStudio.missing && diagramStudio.onGenerateDraft ? (
+                        {!contentLocked && diagramStudio.missing && diagramStudio.onGenerateDraft ? (
                           <Button
                             type="button"
                             className="h-9 rounded-md bg-[#0b5fd7] px-3 text-xs font-semibold shadow-none hover:bg-[#094fad]"
@@ -14593,7 +12912,7 @@ export function IdeaDetailPage() {
                             <Sparkles className="h-3.5 w-3.5" aria-hidden />
                             Generate draft
                           </Button>
-                        ) : diagramStudio.onGenerateAlternative ? (
+                        ) : !contentLocked && diagramStudio.onGenerateAlternative ? (
                           <Button
                             type="button"
                             variant="outline"
@@ -14631,10 +12950,20 @@ export function IdeaDetailPage() {
                   </div>
 
                   <div className="min-h-0 flex-1 overflow-hidden">
-                    {diagramStudio.renderAsImage ? (
-                      studioPlantUmlPreview.objectUrl ? (
+                    {diagramStudio.diagramKey === 'brainstorm-sequence' && diagramStudio.diagramSource ? (
+                      <EditableSequenceDiagram
+                        key={diagramStudio.diagramKey}
+                        source={diagramStudio.diagramSource}
+                        savedPngBase64={brainstormCanvasByKey[diagramStudio.diagramKey]?.canvasPngBase64}
+                        ideaId={idea.id}
+                        diagramKey={diagramStudio.diagramKey}
+                        locked={contentLocked}
+                        onSave={diagramStudio.onPersistGraph}
+                      />
+                    ) : diagramStudio.renderAsImage ? (
+                      studioImageSrc ? (
                         <StudioImageSurface
-                          src={studioPlantUmlPreview.objectUrl}
+                          src={studioImageSrc}
                           title={diagramStudio.title}
                           source={diagramStudio.diagramSource}
                         />
@@ -14660,7 +12989,7 @@ export function IdeaDetailPage() {
                         onPersistGraph={diagramStudio.onPersistGraph}
                         c4DrilldownTargets={diagramStudio.c4DrilldownTargets}
                         onOpenC4Drilldown={diagramStudio.onOpenC4Drilldown}
-                        editable
+                        editable={!contentLocked}
                         fillHeight
                         hideStudioHeader
                       />
@@ -14906,6 +13235,7 @@ export function IdeaDetailPage() {
                       <div className="flex min-w-0 items-center gap-2">
                         <GitBranch className="h-5 w-5 shrink-0 text-foreground" aria-hidden />
                         <h2 className="text-lg font-semibold text-foreground">AI Integration Recommendation</h2>
+                        <DiagramSyncIndicator status={processDocumentSync['brainstorm-archimate']} onRetry={contentLocked ? undefined : () => retryDiagramSync('brainstorm-archimate')} />
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         {integrationLoaded && typeof confidence.integration === 'number' ? (
@@ -14926,17 +13256,17 @@ export function IdeaDetailPage() {
                           <ShieldCheck className="mr-1 h-3.5 w-3.5 shrink-0" aria-hidden />
                           {c4ReviewStatusMeta(runtimeIntegrationAnalysis.architectureReview?.status).label}
                         </Badge>
-                        {(!runtimeIntegrationAnalysis.architectureReview || ['draft', 'revision_requested', 'rejected', 'cancelled', 'superseded'].includes(runtimeIntegrationAnalysis.architectureReview.status)) ? (
+                        {!contentReviewEnabled && !contentLocked && (!runtimeIntegrationAnalysis.architectureReview || ['draft', 'revision_requested', 'rejected', 'cancelled', 'superseded'].includes(runtimeIntegrationAnalysis.architectureReview.status)) ? (
                           <Button type="button" className={cn(enterpriseCyanGradientActionButtonClass(), 'h-10 gap-2')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'submit' }) }}>
                             <ShieldCheck className="h-4 w-4" aria-hidden /> Submit for review
                           </Button>
                         ) : null}
-                        {runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && runtimeIntegrationAnalysis.architectureReview.submittedBy === currentUserId ? (
+                        {!contentReviewEnabled && !contentLocked && runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && runtimeIntegrationAnalysis.architectureReview.submittedBy === currentUserId ? (
                           <Button type="button" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'h-10 gap-2')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'cancel' }) }}>
                             <Undo2 className="h-4 w-4" aria-hidden /> Cancel review
                           </Button>
                         ) : null}
-                        {runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && currentArchitectureMembership && runtimeIntegrationAnalysis.architectureReview.submittedBy !== currentUserId ? (
+                        {!contentReviewEnabled && !contentLocked && runtimeIntegrationAnalysis.architectureReview?.status === 'pending' && currentArchitectureMembership && runtimeIntegrationAnalysis.architectureReview.submittedBy !== currentUserId ? (
                           <div className="flex shrink-0 items-center gap-1">
                             <Button type="button" size="sm" className="h-9 gap-1.5" onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'approve' }) }}><Check className="h-3.5 w-3.5" aria-hidden /> Approve</Button>
                             <Button type="button" size="sm" variant="outline" className={cn(enterpriseSecondaryButtonClass(), 'h-9 gap-1.5')} onClick={() => { setC4ReviewComment(''); setC4ReviewDialog({ target: 'integration', action: 'revision_requested' }) }}><Undo2 className="h-3.5 w-3.5" aria-hidden /> Revision</Button>
@@ -15027,7 +13357,9 @@ export function IdeaDetailPage() {
 
                   <div className="min-h-0 flex-1 overflow-hidden">
                     {reviewedSection('integration')}
-                    <EditableIntegrationArchitectureCanvas
+                    {contentLocked ? (
+                      <IntegrationArchitecturePreview nodes={integrationLatestGraph?.nodes ?? []} edges={integrationLatestGraph?.edges ?? []} />
+                    ) : <EditableIntegrationArchitectureCanvas
                       ideaId={idea.id}
                       bootstrapKey={integrationBootstrapKey}
                       bootstrapRecord={integrationBootstrapRecord}
@@ -15042,18 +13374,18 @@ export function IdeaDetailPage() {
                           <p className="font-semibold">Perubahan tidak disimpan</p>
                           <p className="mt-1">Diagram ini sudah diubah di tab atau sesi lain. Muat ulang untuk melihat versi terbaru.</p>
                           <button type="button" className="mt-1 font-semibold underline" onClick={() => window.location.reload()}>Muat ulang</button>
-                        </div>
+                            </div>
                       ) : integrationChecks.length > 0 ? (
                         <div className="max-w-xl rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow-sm">
                           <p className="font-semibold">Perlu dicek ({integrationChecks.length})</p>
                           <ul className="mt-1 list-disc space-y-0.5 pl-4">
                             {integrationChecks.slice(0, 6).map((check) => <li key={check}>{check}</li>)}
-                          </ul>
+                                    </ul>
                           {integrationChecks.length > 6 ? <p className="mt-1 text-amber-700">+{integrationChecks.length - 6} lainnya</p> : null}
-                        </div>
+                                </div>
                       ) : null}
-                    />
-                    <DiagramHistoryDialog
+                    />}
+                    {!contentLocked && <DiagramHistoryDialog
                       open={isIntegrationHistoryOpen}
                       onOpenChange={setIsIntegrationHistoryOpen}
                       ideaId={idea.id}
@@ -15062,7 +13394,7 @@ export function IdeaDetailPage() {
                       reviewHistory={runtimeIntegrationAnalysis.architectureReview?.history ?? []}
                       resolveName={resolveIdentityDisplayName}
                       onRestore={restoreIntegrationVersion}
-                    />
+                    />}
                   </div>
                 </div>
               </div>
@@ -15612,7 +13944,7 @@ export function IdeaDetailPage() {
                       {ideaDocsView === 'documents' ? 'Idea Docs' : 'Templates & reusable content'}
                     </h2>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="idea-docs-toolbar flex shrink-0 items-center gap-2">
                     <div className="inline-flex h-10 items-center rounded-lg border border-slate-300/90 bg-background/95 p-1 shadow-sm" role="group" aria-label="Idea document view">
                       <button
                         type="button"
@@ -15633,10 +13965,10 @@ export function IdeaDetailPage() {
                         Templates
                       </button>
                     </div>
-                    <RepositoryViewModeSwitch
+                    {!isMobileLayout && <RepositoryViewModeSwitch
                       value={ideaDocsView === 'documents' ? ideaDocsLayout : ideaTemplateLayout}
                       onChange={ideaDocsView === 'documents' ? setIdeaDocsLayout : setIdeaTemplateLayout}
-                    />
+                    />}
                     <button
                       type="button"
                       aria-pressed={isIdeaDocsPanelFullscreen}
@@ -15658,7 +13990,7 @@ export function IdeaDetailPage() {
                     </button>
                   </div>
                 </div>
-                <div className={cn('space-y-2', ideaDocsView === 'documents' ? 'pb-4' : 'pb-1')}>
+                <div className={cn('idea-docs-description space-y-2', ideaDocsView === 'documents' ? 'pb-4' : 'pb-1')}>
                   <p className="w-full text-[11px] leading-snug text-muted-foreground">
                     {ideaDocsView === 'documents'
                       ? 'Upload supporting documents or diagrams to auto-generate a knowledge base entry, or pick a Document & Knowledge Management template to draft a new document for this idea.'
@@ -15667,6 +13999,7 @@ export function IdeaDetailPage() {
                 </div>
                 {ideaDocsView === 'documents' ? (
                   <>
+                {ideaDocFolderError && <div role="alert" className="my-3 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-5 text-amber-950"><p>{ideaDocFolderError}</p><button type="button" disabled={ideaDocFolderInitBusy} onClick={() => setIdeaDocFolderRetry((value) => value + 1)} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-amber-300 bg-white px-3 font-medium"><RefreshCcw className="h-4 w-4" />Retry folder access</button></div>}
                 {!isIdeaDocAtProjectRoot && ideaDocFolderStack.length > 0 ? (
                   <div className="flex flex-wrap items-center gap-1 text-sm">
                     <button
@@ -15694,7 +14027,23 @@ export function IdeaDetailPage() {
                     ))}
                   </div>
                 ) : null}
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                {contentLocked ? <p role="status" className="mb-3 text-sm text-amber-800">
+                  {ideaContentLock.error || (ideaContentLock.value?.state === 'approved'
+                    ? 'Approved version. Start a new revision to edit.'
+                    : 'Content is read-only while approval is in progress.')}
+                </p> : null}
+                {isIdeaCreator && ideaContentLock.value?.state === 'approved' && ideaContentLock.value.run_id ? (
+                  <Button type="button" variant="outline" className="mb-3 gap-2" disabled={contentRevisionBusy} onClick={() => {
+                    const runId = ideaContentLock.value?.run_id?.split(':')[0]
+                    if (!runId || contentRevisionBusy) return
+                    setContentRevisionBusy(true)
+                    void updateIdeaContentRevision(runId, 'content-revision').then(() => {
+                      setIdeaDocsReloadKey((key) => key + 1)
+                    }).catch((error) => addToast({ title: 'Revision could not be opened', description: String(error), variant: 'error' }))
+                      .finally(() => setContentRevisionBusy(false))
+                  }}><Undo2 className="h-4 w-4" aria-hidden />Start new revision</Button>
+                ) : null}
+                <div className="idea-docs-actions flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-2">
                     {/* Shown without a folder too: generating or adding a folder creates the
                         idea's document container when it has none yet. */}
@@ -15704,7 +14053,7 @@ export function IdeaDetailPage() {
                           type="button"
                           className={enterprisePrimarySolidButtonClass()}
                           title="Generate a document from a DKM master template"
-                          disabled={ideaDocTemplatesLoading || ideaDocGenerateBusy}
+                          disabled={contentLocked || ideaDocTemplatesLoading || ideaDocGenerateBusy || Boolean(ideaDocFolderError)}
                           onClick={() => void openIdeaDocGenerateDialog()}
                         >
                           {ideaDocGenerateBusy ? (
@@ -15717,7 +14066,7 @@ export function IdeaDetailPage() {
                         <button
                           type="button"
                           className={enterpriseSecondaryButtonClass()}
-                          disabled={ideaDocFolderCreateBusy}
+                          disabled={contentLocked || ideaDocFolderCreateBusy || Boolean(ideaDocFolderError)}
                           onClick={() => void handleIdeaDocCreateFolder()}
                           title="Create a subfolder to organize documents"
                         >
@@ -15730,28 +14079,11 @@ export function IdeaDetailPage() {
                         </button>
                       </>
                     ) : null}
-                    {/* The published workflow's URD approval already goes to these heads; the
-                        manual send stays only for workspaces without that workflow. */}
-                    {showBpmnDiagrams && !workflowRequestDocumentKinds.includes('URD') ? (
-                      <button
-                        type="button"
-                        className={enterpriseSecondaryButtonClass()}
-                        title="Send the URD to Head of Business Project & Research and Head of Business Project Management Office"
-                        disabled={urdSendBusy}
-                        onClick={() => void sendUrdToHeads()}
-                      >
-                        {urdSendBusy ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
-                        Send to Head of Business Project &amp; Research and Head of PMO
-                      </button>
-                    ) : null}
                   </div>
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   {ideaDocsTotalCount > 0 ? (
                     <DocumentRepositoryPaginationControls
+                      mobile={isMobileLayout}
                       page={ideaDocsPage}
                       pageSize={ideaDocsPageSize}
                       totalCount={ideaDocsTotalCount}
@@ -15774,7 +14106,7 @@ export function IdeaDetailPage() {
                   templates={ideaDocTemplates}
                   documents={ideaGeneratedDocs}
                   loading={ideaDocTemplatesLoading}
-                  layout={ideaTemplateLayout}
+                  layout={isMobileLayout ? 'folders' : ideaTemplateLayout}
                   onUseTemplate={(templateId) => { void openIdeaDocGenerateDialog(templateId) }}
                   onUploadTemplate={() => openTemplateManagementAction('upload')}
                   onNewTemplate={() => openTemplateManagementAction('new-template')}
@@ -15816,9 +14148,9 @@ export function IdeaDetailPage() {
                   ) : (
                     <div className={cn(
                       'flex min-h-0 flex-1 overflow-hidden',
-                      ideaDocsLayout === 'split' ? 'flex-row gap-3' : 'flex-col',
+                      !isMobileLayout && ideaDocsLayout === 'split' ? 'flex-row gap-3' : 'flex-col',
                     )}>
-                      {ideaDocsLayout === 'explorer' ? (
+                      {!isMobileLayout && ideaDocsLayout === 'explorer' ? (
                         <DocumentRepositoryExplorerView
                           folders={ideaDocSubfolders}
                           documents={ideaDocsPaginatedItems.map((item) => ({
@@ -15853,7 +14185,8 @@ export function IdeaDetailPage() {
                         />
                       ) : (
                         <>
-                          {ideaDocsLayout === 'folders' && ideaDocSubfolders.length > 0 ? (
+                          {isMobileLayout && ideaDocSubfolders.length > 0 && <div className="mb-3 divide-y rounded-md border bg-background">{ideaDocSubfolders.map((folder) => <button key={folder.id} type="button" className="flex min-h-12 w-full items-center gap-2 px-3 py-2 text-left text-sm" onClick={() => openIdeaDocSubfolder(folder)}><Folder className="h-4 w-4 shrink-0 text-primary" /><span className="min-w-0 flex-1 break-words">{folder.name}</span><ChevronRight className="h-4 w-4 shrink-0" /></button>)}</div>}
+                          {!isMobileLayout && ideaDocsLayout === 'folders' && ideaDocSubfolders.length > 0 ? (
                             <div className="mb-3 flex min-w-0 shrink-0 items-center gap-2">
                               <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto scrollbar-hide">
                                 {ideaDocSubfolders.map((folder) => (
@@ -15882,7 +14215,7 @@ export function IdeaDetailPage() {
                               </div>
                             </div>
                           ) : null}
-                          {ideaDocsLayout === 'split' ? (
+                          {!isMobileLayout && ideaDocsLayout === 'split' ? (
                             <div className="flex w-60 shrink-0 flex-col overflow-y-auto rounded-xl border border-border/60 bg-background/70">
                               {ideaDocSubfolders.length === 0 ? (
                                 <p className="px-3 py-4 text-xs text-muted-foreground">No subfolders here.</p>
@@ -15907,6 +14240,8 @@ export function IdeaDetailPage() {
                           {ideaRepositoryItems.length > 0 ? (
                             <div className="min-h-0 min-w-0 flex-1 overflow-auto scrollbar-hide">
                               <DocumentRepositoryTableView
+                                mobileCards={isMobileLayout}
+                                onItemMenu={(event, item) => openIdeaDocContextMenu(event, item)}
                                 hiddenColumnKeys={['linked', 'access']}
                                 items={ideaDocsPaginatedItems}
                                 showTags={false}
@@ -15927,15 +14262,13 @@ export function IdeaDetailPage() {
                                 }}
                                 onRowContextMenu={(event, item) => openIdeaDocContextMenu(event, item)}
                                 rowAction={(item) => {
-                                  const label = `${item.name} ${item.displayName ?? ''} ${item.type}`
-                                  const matchesRequestedDocument = workflowRequestDocumentKinds.some((kind) => (
-                                    new RegExp(`\\b${kind}\\b`, 'i').test(label)
-                                  ))
+                                  const document = ideaGeneratedDocs.find((doc) => doc.id === item.id)
+                                  const matchesRequestedDocument = ideaDocumentMatchesApproval(document, item, workflowRequestDocumentKinds)
                                   if (!matchesRequestedDocument) return null
                                   // The approval of this document lives on its row: the request
                                   // button for the owner, then who it waits on (and, for an
                                   // approver, the Approve / Revision / Reject controls).
-                                  const showRequest = isIdeaCreator && ideaApprovalStatus.canRequest
+                                  const showRequest = isIdeaCreator && (ideaApprovalStatus.canRequest || ideaContentLock.value?.state === 'revision')
                                   if (!showRequest && ideaApprovalStatus.awaitingRequest) return null
                                   return (
                                     <div className="mt-2 space-y-1" onClick={(event) => event.stopPropagation()}>
@@ -15946,9 +14279,10 @@ export function IdeaDetailPage() {
                                         size="sm"
                                         className="h-10 rounded-lg border-primary/30 bg-primary/10 px-4 text-sm font-semibold text-primary shadow-sm hover:bg-primary/15 hover:text-primary"
                                         variant="outline"
-                                        disabled={ideaApprovalStatus.busy}
+                                        disabled={ideaApprovalStatus.busy || contentSubmitting || Object.values(processDocumentSync).some(value => value !== 'synced')}
                                         onClick={(event) => {
                                           event.stopPropagation()
+                                          setContentSubmitting(true)
                                           void ideaApprovalStatus.request().then((deliveries) => {
                                             if (!deliveries) return
                                             const { sent, failed } = describeEmailDeliveries(deliveries)
@@ -15960,12 +14294,18 @@ export function IdeaDetailPage() {
                                             if (failed) {
                                               addToast({ variant: 'warning', title: 'Email not delivered', description: failed })
                                             }
+                                          }).finally(() => {
+                                            setContentSubmitting(false)
+                                            setIdeaDocsReloadKey(key => key + 1)
                                           })
                                         }}
                                       >
                                         {ideaApprovalStatus.busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                                         Request for Approval
                                       </Button>
+                                      {Object.values(processDocumentSync).some(value => value !== 'synced') ? (
+                                        <p role="status" className="text-xs text-amber-800">Synchronize diagram changes with the document before requesting approval.</p>
+                                      ) : null}
                                       {ideaApprovalStatus.emailDeliveries.length > 0 ? (
                                         <p
                                           className="mt-1 text-[11px] text-slate-500"
@@ -15975,7 +14315,7 @@ export function IdeaDetailPage() {
                                           {ideaApprovalStatus.emailDeliveries.map((item) => `${item.name} ${item.ok ? '✓' : '✗'}`).join(' · ')}
                                         </p>
                                       ) : null}
-                                      {ideaApprovalStatus.error && ideaApprovalStatus.awaitingRequest ? <p className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
+                                      {ideaApprovalStatus.error ? <p role="alert" className="mt-1 text-[11px] text-rose-700">{ideaApprovalStatus.error}</p> : null}
                                       </>
                                       ) : null}
                                       <IdeaApprovalBanner
@@ -16090,41 +14430,41 @@ export function IdeaDetailPage() {
                       <div className="shrink-0 space-y-2 border-b border-border/70 px-5 py-3 sm:px-6">
                         <div className={cn('flex gap-2', ideaDocWorkspaceNarrow ? 'flex-col' : 'flex-row items-end gap-4')}>
                           <div className="min-w-0 flex-1 space-y-1.5">
-                            <Label
-                              htmlFor="idea-doc-template"
-                              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
-                            >
-                              Template
-                            </Label>
+                        <Label
+                          htmlFor="idea-doc-template"
+                          className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
+                        >
+                          Template
+                        </Label>
                             <div className="flex min-w-0 items-center gap-3">
-                              <Select
-                                id="idea-doc-template"
+                        <Select
+                          id="idea-doc-template"
                                 className="min-w-0 flex-1 rounded-xl"
-                                value={ideaDocGenerateTemplateId}
-                                disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
-                                onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
-                              >
-                                <option value="" disabled>
-                                  {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
-                                    ? 'Loading templates…'
-                                    : ideaDocGenerateTemplates.length === 0
-                                      ? 'No template is available at this stage'
-                                      : 'Select template…'}
-                                </option>
-                                {ideaDocGenerateTemplates.map((template) => (
-                                  <option key={template.id} value={template.id}>
-                                    {template.name}
-                                  </option>
-                                ))}
-                              </Select>
-                              {selectedIdeaDocGenerateTemplate ? (
+                          value={ideaDocGenerateTemplateId}
+                          disabled={ideaDocGenerateBusy || ideaDocTemplatesLoading || ideaDocWorkflowGateLoading}
+                          onChange={(event) => setIdeaDocGenerateTemplateId(event.target.value)}
+                        >
+                          <option value="" disabled>
+                            {ideaDocTemplatesLoading || ideaDocWorkflowGateLoading
+                              ? 'Loading templates…'
+                              : ideaDocGenerateTemplates.length === 0
+                                ? 'No template is available at this stage'
+                                : 'Select template…'}
+                          </option>
+                          {ideaDocGenerateTemplates.map((template) => (
+                            <option key={template.id} value={template.id}>
+                              {template.name}
+                            </option>
+                          ))}
+                        </Select>
+                        {selectedIdeaDocGenerateTemplate ? (
                                 <span className="hidden shrink-0 text-[11px] text-muted-foreground xl:inline">
-                                  {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
-                                  {' · '}
-                                  v{selectedIdeaDocGenerateTemplate.version}
-                                  {selectedIdeaDocGenerateTemplate.category_code
-                                    ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
-                                    : ''}
+                                {(selectedIdeaDocGenerateTemplate.document_type_code || 'document').toUpperCase()}
+                                {' · '}
+                                v{selectedIdeaDocGenerateTemplate.version}
+                                {selectedIdeaDocGenerateTemplate.category_code
+                                  ? ` · ${selectedIdeaDocGenerateTemplate.category_code}`
+                                  : ''}
                                 </span>
                               ) : null}
                             </div>
@@ -16286,12 +14626,12 @@ export function IdeaDetailPage() {
                         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 px-5 py-3">
                           <div className="min-w-0">
                             <h4 id="idea-doc-source-title" className="text-sm font-semibold text-foreground">
-                              Source context
+                            Source context
                             </h4>
                             <p className="text-[11px] tabular-nums text-muted-foreground">
                               {ideaDocGenerateSourceChars.toLocaleString('en-US')} chars sent to the generator
                             </p>
-                          </div>
+                        </div>
                           <button
                             type="button"
                             className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -16337,15 +14677,15 @@ export function IdeaDetailPage() {
                             </div>
                           </div>
                           {ideaDocSourceMode === 'edit' ? (
-                            <Textarea
-                              id="idea-doc-source"
-                              rows={9}
+                        <Textarea
+                          id="idea-doc-source"
+                          rows={9}
                               className="scroll-reveal min-h-0 w-full flex-1 resize-none rounded-xl border-border/80 bg-background px-3.5 py-3 text-sm leading-relaxed shadow-sm"
-                              value={ideaDocGenerateSource}
-                              disabled={ideaDocGenerateBusy}
-                              onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
-                              placeholder="Idea description / requirements used to fill the template"
-                            />
+                          value={ideaDocGenerateSource}
+                          disabled={ideaDocGenerateBusy}
+                          onChange={(event) => setIdeaDocGenerateSource(event.target.value)}
+                          placeholder="Idea description / requirements used to fill the template"
+                        />
                           ) : (
                             <div
                               role="tabpanel"
@@ -16429,11 +14769,11 @@ export function IdeaDetailPage() {
                           )}
                         </div>
                       </div>
-                    </div>
+                      </div>
 
                     <div className="flex shrink-0 flex-col gap-3 border-t border-border/70 bg-muted/20 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0 flex-1">
-                        {ideaDocGenerateBusy ? (
+                      {ideaDocGenerateBusy ? (
                           <ul className="flex flex-wrap items-center gap-x-4 gap-y-1" aria-label="Agent progress">
                             {IDEA_DOC_GENERATE_STEPS.map((step, index) => {
                               const isDone = index < ideaDocGenerateStepIndex
@@ -16460,37 +14800,37 @@ export function IdeaDetailPage() {
                               )
                             })}
                           </ul>
-                        ) : (
-                          <p className="text-xs leading-relaxed text-muted-foreground">
-                            Enterprise note: generated files are saved to Document repository and can be downloaded
-                            after the editor opens.
-                          </p>
-                        )}
-                      </div>
+                      ) : (
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          Enterprise note: generated files are saved to Document repository and can be downloaded
+                          after the editor opens.
+                        </p>
+                      )}
+                    </div>
                       <div className="flex shrink-0 items-center justify-end gap-3">
-                          <Button
-                            type="button"
-                            variant="outline"
+                      <Button
+                        type="button"
+                        variant="outline"
                             className={cn(enterpriseSecondaryButtonClass(), 'min-w-[140px] justify-center gap-2')}
-                            disabled={ideaDocGenerateBusy}
-                            onClick={() => setIdeaDocGenerateOpen(false)}
-                          >
-                            <X className="h-4 w-4 shrink-0" aria-hidden />
-                            Cancel
-                          </Button>
-                          <Button
-                            type="button"
+                        disabled={ideaDocGenerateBusy}
+                        onClick={() => setIdeaDocGenerateOpen(false)}
+                      >
+                        <X className="h-4 w-4 shrink-0" aria-hidden />
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
                             className={cn(registerServicePrimaryButtonClass(), 'min-w-[200px] justify-center gap-2')}
-                            disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
-                            onClick={() => { void handleIdeaDocGenerate() }}
-                          >
-                            {ideaDocGenerateBusy ? (
-                              <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-                            ) : (
-                              <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
-                            )}
-                            {ideaDocGenerateBusy ? 'Generating…' : 'Generate & open'}
-                          </Button>
+                        disabled={ideaDocGenerateBusy || ideaDocWorkflowGateLoading || !ideaDocGenerateTemplateId || !ideaDocGenerateSource.trim() || !ideaDocGenerateTemplates.some((template) => template.id === ideaDocGenerateTemplateId)}
+                        onClick={() => { void handleIdeaDocGenerate() }}
+                      >
+                        {ideaDocGenerateBusy ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        ) : (
+                          <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+                        )}
+                        {ideaDocGenerateBusy ? 'Generating…' : 'Generate & open'}
+                      </Button>
                       </div>
                     </div>
                   </div>
@@ -17073,6 +15413,6 @@ export function IdeaDetailPage() {
         )}
       </div>
       </div>
-    </>
+    </div>
   )
 }

@@ -1,5 +1,7 @@
 import { ensureFreshSession, getSession, clearSession, validateActiveServerSessionIfDue, notifySessionExpiredIfNeeded } from '@/auth/authService'
 import { recordApiFailure } from '@/lib/platformHealth/recentApiFailureStore'
+import { fetchWithNetworkRecovery } from './networkRecovery'
+import { oacContentSha256 } from '@/lib/oacSigning'
 
 /** Attach Bearer token when present. */
 export function authHeadersForToken(token?: string | null, extra?: HeadersInit): HeadersInit {
@@ -64,6 +66,8 @@ function mergeRequestHeaders(accessToken: string | undefined, init?: RequestInit
   return mergeHeaders(auth, merged)
 }
 
+export { parseOacSignedPathPrefixes, oacContentSha256 } from '@/lib/oacSigning'
+
 /** 401 = unauthenticated; 403 is often authorization and must not clear the session. */
 function isUnauthenticated(response: Response): boolean {
   return response.status === 401
@@ -84,22 +88,29 @@ export async function apiFetch(
   timeoutMs: number = DEFAULT_API_FETCH_TIMEOUT_MS,
 ): Promise<Response> {
   let session = await ensureFreshSession()
-  if (session?.token) {
+  if (session?.token || session?.cookieSession) {
     await validateActiveServerSessionIfDue()
+  }
+
+  const contentSha256 = await oacContentSha256(input, init)
+  const requestHeaders = (accessToken?: string): Headers => {
+    const headers = mergeRequestHeaders(accessToken, init)
+    if (contentSha256) headers.set('x-amz-content-sha256', contentSha256)
+    return headers
   }
 
   const doFetch = async (accessToken?: string) => {
     // Respect a caller-supplied signal (e.g. for cancellable uploads) instead of racing it
     // against our own timeout — only install a timeout when the caller didn't ask to control it.
     if (init?.signal) {
-      return fetch(input, { ...init, headers: mergeRequestHeaders(accessToken, init) })
+      return fetchWithNetworkRecovery(input, { ...init, headers: requestHeaders(accessToken) })
     }
     const controller = new AbortController()
     const timer = window.setTimeout(() => controller.abort(), timeoutMs)
     try {
-      return await fetch(input, {
+      return await fetchWithNetworkRecovery(input, {
         ...init,
-        headers: mergeRequestHeaders(accessToken, init),
+        headers: requestHeaders(accessToken),
         signal: controller.signal,
       })
     } catch (error) {
@@ -117,9 +128,9 @@ export async function apiFetch(
 
   let response = await doFetch(session?.token)
 
-  if (isUnauthenticated(response) && session?.refreshToken) {
+  if (isUnauthenticated(response) && (session?.refreshToken || session?.cookieSession)) {
     session = await ensureFreshSession({ force: true })
-    if (session?.token) {
+    if (session) {
       response = await doFetch(session.token)
     }
   }

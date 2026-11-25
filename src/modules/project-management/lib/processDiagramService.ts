@@ -12,6 +12,8 @@ export type ProcessCanvasGraph = {
   userCustomized?: boolean
   source?: string
   snapToGrid?: boolean
+  canvasPngBase64?: string
+  canvasExportError?: boolean
 }
 
 export type RuntimeProcessDiagramAnalysis = {
@@ -63,14 +65,17 @@ export function runtimeProcessDiagramFromAgentResponse(
 
 function canvasGraphFromJson(json: Record<string, unknown>, source: string): ProcessCanvasGraph | undefined {
   const nodes = Array.isArray(json.nodes) ? (json.nodes as Node<ArchimateNodeData>[]) : []
-  if (!nodes.length) return undefined
+  const savedCanvas = Array.isArray(json.nodes) && Array.isArray(json.edges) && json.user_customized === true
+  if (!nodes.length && !source.trim() && !savedCanvas) return undefined
   return {
     nodes,
     edges: Array.isArray(json.edges) ? (json.edges as Edge[]) : [],
     viewport: isCanvasViewport(json.viewport) ? json.viewport : undefined,
     userCustomized: Boolean(json.user_customized),
     snapToGrid: readOptionalBoolean(json.snap_to_grid),
-    source: typeof json.plantuml_source === 'string' && json.plantuml_source.trim() ? json.plantuml_source : source,
+    canvasPngBase64: typeof json.canvas_png_base64 === 'string' ? json.canvas_png_base64 : undefined,
+    canvasExportError: Boolean(json.canvas_export_error),
+    source: typeof json.plantuml_source === 'string' && (savedCanvas || json.plantuml_source.trim()) ? json.plantuml_source : source,
   }
 }
 
@@ -126,6 +131,8 @@ export function buildPersistentProcessDiagramPayload(
       executive_brief: analysis.executiveBrief,
       bpmn_xml: analysis.bpmnXml,
       plantuml_source: graph?.source || '',
+      canvas_png_base64: graph?.canvasPngBase64 || '',
+      canvas_export_error: Boolean(graph?.canvasExportError),
       rendered_png_base64: analysis.renderedPngBase64,
       sub_processes: analysis.subProcesses,
       missing_evidence: analysis.missingEvidence,

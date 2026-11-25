@@ -21,8 +21,11 @@ export async function fetchPlantUmlPng(source: string, signal?: AbortSignal): Pr
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
+    if (response.status >= 500) {
+      throw new Error(`Layanan render diagram belum tersedia (${response.status}). Coba lagi nanti.`)
+    }
     throw new Error(
-      detail.trim()
+      detail.trim() && !/<(?:html|head|body|!doctype)\b/i.test(detail)
         ? `PlantUML render failed (${response.status}): ${detail.slice(0, 180)}`
         : `PlantUML render failed (${response.status}). Pastikan plantuml-server berjalan.`,
     )

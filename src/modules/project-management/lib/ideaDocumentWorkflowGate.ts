@@ -1,5 +1,6 @@
 import {
   getWorkflow,
+  getWorkflowVersion,
   listWorkflowApprovals,
   listWorkflows,
   type WorkflowApprovalDto,
@@ -8,6 +9,8 @@ import {
 import {
   readIdeaSectionAudience,
   readIdeaSectionVisibility,
+  readIdeaSectionOrder,
+  type IdeaPanelKey,
   type IdeaSectionAudience,
   type IdeaSectionVisibilityMap,
 } from '@/modules/project-management/lib/ideaPanelCatalog'
@@ -235,6 +238,9 @@ export type IdeaWorkflowAudience = {
 }
 
 export type PublishedIdeaSectionPolicy = {
+  contentReviewEnabled?: boolean
+  creatorDiagramsEnabled?: boolean
+  sectionOrder?: IdeaPanelKey[]
   map: IdeaSectionVisibilityMap
   /** Who still sees hidden sections and which diagram types; null keeps the default rule. */
   sectionAudience: IdeaSectionAudience | null
@@ -248,7 +254,8 @@ export type PublishedIdeaSectionPolicy = {
 
 export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | undefined): string[] {
   const kinds: string[] = []
-  for (const node of asNodes(graph ?? {})) {
+  for (const node of asNodes(graph ?? { nodes: [], edges: [] })) {
+    if (node.data?.disabled === true) continue
     const config = node.data?.config ?? {}
     if (config.actionOperation !== 'Request for Approval') continue
     const fromParameter = emailDocumentKindFromTemplateCode(config.parameter)
@@ -260,17 +267,51 @@ export function requestDocumentKindsFromGraph(graph: WorkflowGraph | null | unde
   return kinds
 }
 
+export function ideaContentReviewPolicy(graph: WorkflowGraph | null | undefined) {
+  const requests = asNodes(graph ?? { nodes: [], edges: [] }).filter((node) =>
+    node.data?.kind === 'action' && !node.data.disabled && node.data.config?.actionOperation === 'Request for Approval')
+  return {
+    contentReviewEnabled: requests.some((node) => node.data?.config?.lockIdeaContentOnApproval === 'true'),
+    creatorDiagramsEnabled: requests.some((node) => node.data?.config?.showIdeaDiagramsBeforeApproval === 'true'),
+  }
+}
+
+async function approvalGraphs(graph: WorkflowGraph, visited = new Set<string>()): Promise<WorkflowGraph[]> {
+  const result = [graph]
+  for (const node of asNodes(graph)) {
+    if (node.data?.kind !== 'callWorkflow' || node.data.disabled) continue
+    const config = node.data.config ?? {}
+    const id = config.workflowId?.trim()
+    const version = Number(config.workflowVersion)
+    const key = `${id}:${version}`
+    if (!id || !Number.isInteger(version) || version < 1 || visited.has(key)) continue
+    if (visited.size >= 20) throw new Error('Workflow approval nesting exceeds the supported limit')
+    visited.add(key)
+    const child = await getWorkflowVersion(id, version)
+    if (child.definition) result.push(...await approvalGraphs(child.definition, visited))
+  }
+  return result
+}
+
 const OPEN_AUDIENCE: IdeaWorkflowAudience = { by: 'jobTitle', values: [] }
 
-function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkflowAudience {
-  const trigger = asNodes(graph ?? {}).find((node) => {
+function ideaTrigger(graph: WorkflowGraph | null | undefined): GraphNode | undefined {
+  return asNodes(graph ?? { nodes: [], edges: [] }).find((node) => {
     const config = node.data?.config ?? {}
     return node.data?.kind === 'trigger'
       && config.triggerType === 'Event'
       && config.triggerDomain === 'AI Idea & Prioritization'
       && config.triggerEntity === 'Idea'
   })
-  const config = trigger?.data?.config ?? {}
+}
+
+export function ideaSectionOrderFromGraph(graph: WorkflowGraph | null | undefined): IdeaPanelKey[] | undefined {
+  const trigger = ideaTrigger(graph)
+  return trigger?.data?.disabled ? undefined : readIdeaSectionOrder(trigger?.data?.config?.ideaSectionOrder)
+}
+
+function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkflowAudience {
+  const config = ideaTrigger(graph)?.data?.config ?? {}
   return {
     by: parseEmailRecipientBy(config.audienceBy),
     values: parseJobTitles(config.audienceValues),
@@ -278,8 +319,8 @@ function ideaTriggerAudience(graph: WorkflowGraph | null | undefined): IdeaWorkf
 }
 
 /**
- * Newest published Active workflow that stored an Idea section map.
- * Workflows with no map are skipped, so a team branch cannot wipe the page.
+ * Newest published Active workflow that stored an Idea section map or order.
+ * Workflows with neither are skipped, so a team branch cannot wipe the page.
  * Missing map means every section stays visible.
  * An empty audience includes everyone. Badges limit the map to matching people.
  */
@@ -293,15 +334,24 @@ export async function loadPublishedIdeaSectionPolicy(
       const full = await getWorkflow(summary.id)
       const published = full.published_definition ?? full.definition
       const map = readIdeaSectionVisibility(published?.ideaSections)
-      if (Object.keys(map).length > 0) {
-        const requestDocumentKinds = requestDocumentKindsFromGraph(published)
+      const sectionOrder = ideaSectionOrderFromGraph(published)
+      const graphs = await approvalGraphs(published ?? { nodes: [], edges: [] })
+      const contentPolicies = graphs.map(ideaContentReviewPolicy)
+      const contentPolicy = {
+        contentReviewEnabled: contentPolicies.some(policy => policy.contentReviewEnabled),
+        creatorDiagramsEnabled: contentPolicies.some(policy => policy.creatorDiagramsEnabled),
+      }
+      if (Object.keys(map).length > 0 || sectionOrder || contentPolicy.contentReviewEnabled || contentPolicy.creatorDiagramsEnabled) {
+        const requestDocumentKinds = [...new Set(graphs.flatMap(requestDocumentKindsFromGraph))]
         return {
           map,
+          sectionOrder,
           sectionAudience: readIdeaSectionAudience(published?.ideaSectionAudience),
           audience: ideaTriggerAudience(published),
           requestsApproval: requestDocumentKinds.length > 0,
           requestDocumentKinds,
           workflowId: summary.id,
+          ...(contentPolicy.contentReviewEnabled || contentPolicy.creatorDiagramsEnabled ? contentPolicy : {}),
         }
       }
     } catch {

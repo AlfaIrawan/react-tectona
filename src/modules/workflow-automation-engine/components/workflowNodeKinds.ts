@@ -1,5 +1,7 @@
 import {
   GitBranch,
+  Building2,
+  Workflow,
   Play,
   Repeat2,
   RotateCcw,
@@ -21,6 +23,10 @@ import {
 
 export type WorkflowNodeKind =
   | 'trigger'
+  | 'workspaceSelection'
+  | 'userInput'
+  | 'callWorkflow'
+  | 'waitForEvent'
   | 'action'
   | 'ifElse'
   | 'approval'
@@ -124,7 +130,7 @@ export const WORKFLOW_TRIGGER_EVENT_CATALOG = {
   },
   'AI Idea & Prioritization': {
     // Submitted is raised once the idea's AI analysis has finished (workflow-automation analysis-completed).
-    Idea: ['Submitted', 'Created', 'Scored', 'Prioritized', 'Approved', 'Converted to Project'],
+    Idea: ['Before Idea Creation', 'Submitted', 'Created', 'Scored', 'Prioritized', 'Approved', 'Converted to Project'],
     Recommendation: ['Created', 'Approved', 'Rejected'],
     'Decision Matrix': ['Updated', 'Threshold Breached'],
   },
@@ -289,7 +295,44 @@ const ACTION_TARGET_LABELS: Record<string, string> = {
   'project.assignments': 'Current project',
 }
 
+const USER_INPUT_META: WorkflowKindMeta = {
+    kind: 'userInput',
+    label: 'User Input',
+    hint: 'Collect information from the user',
+    icon: Building2,
+    accent: '#0891b2',
+    chipClass: 'bg-cyan-50 text-cyan-600 ring-cyan-100',
+    fields: [
+      { key: 'inputType', label: 'Input Type', type: 'select', options: ['Workspace Selection'] },
+      { key: 'popupTitle', label: 'Popup Title', type: 'text' },
+      { key: 'popupDescription', label: 'Popup Description', type: 'textarea', placeholder: 'Choose the workspace that will own this idea.' },
+    ],
+    defaultConfig: { inputType: 'Workspace Selection', allowedWorkspaceIds: '[]', defaultWorkspaceId: '', popupTitle: 'Select Workspace', popupDescription: '', optionDescriptions: '{}', selectionRequired: 'Yes' },
+}
+
+export function isWorkspaceSelectionInput(data: Pick<WorkflowNodeData, 'kind' | 'config'>): boolean {
+  return data.kind === 'workspaceSelection' || (data.kind === 'userInput' && data.config.inputType === 'Workspace Selection')
+}
+
 export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
+  callWorkflow: {
+    kind: 'callWorkflow', label: 'Call Workflow', hint: 'Run a published workflow and wait for its result',
+    icon: Workflow, accent: '#0d9488', chipClass: 'bg-teal-50 text-teal-600 ring-teal-100',
+    fields: [
+      { key: 'inputKeys', label: 'Input Keys (optional)', type: 'text', placeholder: 'Context keys to pass, comma separated' },
+      { key: 'outputKeys', label: 'Output Keys (optional)', type: 'text', placeholder: 'Context keys returned by the child' },
+    ],
+    defaultConfig: { workflowId: '', workflowVersion: '', workflowName: '', inputKeys: '', outputKeys: '' },
+  },
+  waitForEvent: {
+    kind: 'waitForEvent', label: 'Wait for Event', hint: 'Pause until the idea is submitted and its AI analysis completes',
+    icon: Timer, accent: '#d97706', chipClass: 'bg-amber-50 text-amber-600 ring-amber-100',
+    fields: [{ key: 'event', label: 'Event', type: 'select', options: ['Idea Submitted'] }],
+    defaultConfig: { event: 'Idea Submitted' },
+  },
+  userInput: USER_INPUT_META,
+  // Older saved definitions remain readable, but only User Input is offered in the palette.
+  workspaceSelection: { ...USER_INPUT_META, kind: 'workspaceSelection' },
   trigger: {
     kind: 'trigger',
     label: 'Trigger',
@@ -442,6 +485,9 @@ export const WORKFLOW_KIND_META: Record<WorkflowNodeKind, WorkflowKindMeta> = {
 /** Order the palette renders the kinds in. */
 export const WORKFLOW_PALETTE_ORDER: readonly WorkflowNodeKind[] = [
   'trigger',
+  'userInput',
+  'callWorkflow',
+  'waitForEvent',
   'action',
   'ifElse',
   'approval',
@@ -461,6 +507,16 @@ export const WORKFLOW_PALETTE_MIME = 'application/tectona-workflow-node'
 export function workflowNodeSummary(data: WorkflowNodeData): string {
   const c = data.config
   switch (data.kind) {
+    case 'callWorkflow':
+      return c.workflowId ? `${c.workflowName || c.workflowId} · v${c.workflowVersion || '?'}` : 'Select a child workflow'
+    case 'waitForEvent':
+      return c.event || 'Select an event'
+    case 'userInput':
+    case 'workspaceSelection':
+      try {
+        const ids: unknown = JSON.parse(c.allowedWorkspaceIds || '[]')
+        return Array.isArray(ids) && ids.length ? `${ids.length} workspace(s) available` : 'Select allowed workspaces'
+      } catch { return 'Select allowed workspaces' }
     case 'trigger':
       if (!c.triggerType) return 'Configure trigger'
       if (c.triggerType === 'Event') return `${c.triggerType} · ${c.triggerDomain || 'Select module'} / ${c.triggerEntity || 'Select entity'} / ${c.triggerEvent || c.event || 'Select event'}`

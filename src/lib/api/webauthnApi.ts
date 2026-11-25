@@ -5,6 +5,7 @@
  */
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser'
 import { IDENTITY_API_BASE, TECTONA_OIDC_CLIENT_ID } from './gatewayBase'
+import { withOacContentSha256 } from '@/lib/oacSigning'
 
 export interface PasskeyTokenResponse {
   access_token: string
@@ -15,12 +16,13 @@ export interface PasskeyTokenResponse {
 async function postJson<T>(path: string, body: unknown, accessToken?: string): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`
-  const res = await fetch(`${IDENTITY_API_BASE}${path}`, {
+  const url = `${IDENTITY_API_BASE}${path}`
+  const res = await fetch(url, await withOacContentSha256(url, {
     method: 'POST',
     credentials: 'include',
     headers,
     body: JSON.stringify(body ?? {}),
-  })
+  }))
   if (!res.ok) {
     let detail = `HTTP ${res.status}`
     try {

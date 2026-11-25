@@ -1,3 +1,4 @@
+import { OnboardingUnavailable } from '@/auth/OnboardingUnavailable'
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import {
@@ -18,7 +19,6 @@ import {
 import type { CorporateOnboardingFinishMethod } from '@/lib/corporateOnboardingSession'
 import {
   isCorporatePersonalWorkspaceCreated,
-  isCorporateJoinStepCompleted,
   isCorporateWizardComplete,
   markCorporateJoinStepCompleted,
   markCorporatePersonalWorkspaceCreated,
@@ -52,7 +52,7 @@ type CorporateOrganizationStepProps = {
   error: string
 }
 
-type Phase = 'bootstrapping' | 'org-ready' | 'personal' | 'optional-join' | 'join'
+type Phase = 'unavailable' | 'bootstrapping' | 'org-ready' | 'personal' | 'optional-join' | 'join'
 
 const BOOTSTRAP_TIMEOUT_MS = 30_000
 
@@ -69,13 +69,17 @@ const UNMATCHED_WIZARD_STEPS: WizardStepItem[] = [
   { id: 'finish', label: 'Confirm' },
 ]
 
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      window.setTimeout(() => reject(new Error(message)), ms)
-    }),
-  ])
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => {
+      window.clearTimeout(timer)
+      signal.removeEventListener('abort', abort)
+    }
+    const abort = () => { cleanup(); reject(new Error('Organization check cancelled.')) }
+    const timer = window.setTimeout(() => { cleanup(); reject(new Error(message)) }, ms)
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then(value => { cleanup(); resolve(value) }, error => { cleanup(); reject(error) })
+  })
 }
 
 function wizardStepIndex(phase: Phase, matched: boolean, finalizing: boolean): number {
@@ -145,6 +149,7 @@ export function CorporateOrganizationStep({
   submitting,
   error,
 }: CorporateOrganizationStepProps) {
+  const [attempt, setAttempt] = useState(0)
   const [phase, setPhase] = useState<Phase>('bootstrapping')
   const [domainInfo, setDomainInfo] = useState<DomainResolveResponse | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -171,10 +176,13 @@ export function CorporateOrganizationStep({
 
   useEffect(() => {
     let cancelled = false
+    const controller = new AbortController()
     void (async () => {
       setLoadError('')
+      setPhase('bootstrapping')
       try {
         const subjectId = getSession()?.user.id ?? ''
+        if (!subjectId) throw new Error('Session expired. Sign in again.')
         const [resolved, progress, onboardingStatus] = await withTimeout(
           Promise.all([
             resolveOrganizationByEmail(email),
@@ -187,9 +195,16 @@ export function CorporateOrganizationStep({
                 }),
           ]),
           BOOTSTRAP_TIMEOUT_MS,
-          'Organization setup timed out. Check that workspace-org service is running, then try again.',
+          'Organization access check timed out. Try again when the service is available.',
+          controller.signal,
         )
         if (cancelled) return
+        const statuses = ['none', 'personal_provisioning', 'corporate_setup_pending', 'active', 'join_pending', 'email_verify_pending', 'blocked']
+        if (typeof resolved?.matched !== 'boolean' || typeof progress?.matched !== 'boolean' ||
+            !statuses.includes(onboardingStatus?.onboarding_status) ||
+            !Number.isFinite(onboardingStatus?.active_membership_count)) {
+          throw new Error('Organization access could not be verified. Please retry.')
+        }
         setDomainInfo(resolved)
 
         const hasActivePersonalMembership =
@@ -221,16 +236,16 @@ export function CorporateOrganizationStep({
       } catch (err) {
         if (!cancelled) {
           setLoadError(err instanceof Error ? err.message : 'Failed to prepare organization onboarding.')
-          setDomainInfo({ email_domain: email.split('@')[1] ?? '', matched: false })
-          setPhase('personal')
+          setPhase('unavailable')
         }
       }
     })()
 
     return () => {
       cancelled = true
+      controller.abort()
     }
-  }, [email])
+  }, [email, attempt])
 
   const completeAfterJoinStep = async (orgWorkspaceId?: string) => {
     const subjectId = getSession()?.user.id
@@ -361,6 +376,10 @@ export function CorporateOrganizationStep({
   const combinedError = error || loadError || localError
 
   const bannerError = phase !== 'personal' ? combinedError : undefined
+
+  if (phase === 'unavailable') {
+    return <OnboardingUnavailable onRetry={() => { setPhase('bootstrapping'); setAttempt(value => value + 1) }} />
+  }
 
   if (phase === 'bootstrapping') {
     return (

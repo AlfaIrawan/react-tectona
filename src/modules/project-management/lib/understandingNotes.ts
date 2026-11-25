@@ -59,6 +59,8 @@ function nestIntroducedLists(notes: UnderstandingNote[]): UnderstandingNote[] {
         index + 1 < notes.length
         && notes[index + 1].children.length === 0
         && LABELED_ITEM.test(notes[index + 1].text)
+        && (!understandingNoteKind(notes[index + 1].text)
+          || understandingNoteKind(notes[index + 1].text) === understandingNoteKind(note.text))
       ) {
         index += 1
         children.push({ text: notes[index].text, children: [] })
@@ -81,13 +83,15 @@ const KIND_LABEL: Record<NoteKind, { id: string; en: string }> = {
   open: { id: 'Yang masih terbuka:', en: 'Still open:' },
 }
 
-/** One kind per note. A short "Nama: keterangan" is a named system or channel. */
+/** Only explicit topic wording classifies a note; a colon does not prove a system name. */
 export function understandingNoteKind(text: string): NoteKind | null {
-  const folded = text.toLowerCase()
-  if (LABELED_ITEM.test(text) && !/\b(tujuan(?:\s+utama)?|proyek ini|project ini)\b/.test(folded)) return 'systems'
+  const folded = text.replace(/\*\*|__/g, '').toLowerCase()
+  if (/^(?:masalah utama|permasalahan|kondisi saat ini|current problem|pain points?)\s*:/.test(folded)) return 'today'
   if (/\b(tujuan(?:\s+utama)?|proyek ini adalah|project ini|ingin membuat|bantuan bagi)\b/.test(folded)) return 'goal'
   if (/\b(pengguna bisnis|user bisnis|pihak yang|yang terdampak|peran yang)\b/.test(folded)) return 'people'
   if (/\b(diharapkan|nantinya|ke depan|yang diharapkan|solusi yang)\b/.test(folded)) return 'expected'
+  if (/^(?:sistem(?: dan saluran)?|aplikasi|systems?(?: and channels)?|applications?)(?: yang (?:digunakan|dipakai|tercatat))?\s*:/.test(folded)) return 'systems'
+  if (LABELED_ITEM.test(folded)) return null
   if (/\b(saat ini|sekarang|hari ini|kondisi berjalan)\b/.test(folded)) return 'today'
   if (/\b(belum pasti|perlu dikonfirmasi|masih terbuka|tidak tahu|belum diketahui)\b/.test(folded)) return 'open'
   return null

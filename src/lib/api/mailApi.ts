@@ -106,6 +106,68 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   }
 }
 
+export interface WorkspaceMailConnector {
+  id: string
+  workspace_id: string
+  name: string
+  smtp_host: string
+  smtp_port: number
+  smtp_use_starttls: boolean
+  username: string
+  from_address: string
+  from_name: string
+  password_set: boolean
+}
+
+export interface WorkspaceMailConnectorSave {
+  name: string
+  smtp_host: string
+  smtp_port: number
+  smtp_use_starttls: boolean
+  username: string
+  from_address: string
+  from_name: string
+  password?: string
+}
+
+export async function listWorkspaceMailConnectors(workspaceId: string): Promise<WorkspaceMailConnector[]> {
+  const response = await apiFetch(`${BASE}/workspaces/${encodeURIComponent(workspaceId)}/mail-connectors`, {
+    headers: tectonaServiceHeaders(),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  return parseJsonResponse<WorkspaceMailConnector[]>(response)
+}
+
+export async function createWorkspaceMailConnector(
+  workspaceId: string,
+  payload: WorkspaceMailConnectorSave,
+): Promise<WorkspaceMailConnector> {
+  const response = await apiFetch(`${BASE}/workspaces/${encodeURIComponent(workspaceId)}/mail-connectors`, {
+    method: 'POST',
+    headers: tectonaServiceHeaders(),
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) throw new Error(await parseError(response))
+  return parseJsonResponse<WorkspaceMailConnector>(response)
+}
+
+export async function testWorkspaceMailConnector(
+  workspaceId: string,
+  connectorId: string,
+  to: string,
+): Promise<MailboxTestResult> {
+  const response = await apiFetch(
+    `${BASE}/workspaces/${encodeURIComponent(workspaceId)}/mail-connectors/${encodeURIComponent(connectorId)}/test`,
+    {
+      method: 'POST',
+      headers: tectonaServiceHeaders(),
+      body: JSON.stringify({ to }),
+    },
+  )
+  if (!response.ok) throw new Error(await parseError(response))
+  return parseJsonResponse<MailboxTestResult>(response)
+}
+
 export async function getMailboxConfig(): Promise<MailboxConfigStatus> {
   const response = await apiFetch(`${BASE}/mailbox/config`, { headers: tectonaServiceHeaders() })
   if (!response.ok) throw new Error(await parseError(response))

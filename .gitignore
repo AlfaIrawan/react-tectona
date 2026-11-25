@@ -29,6 +29,7 @@ build
 .env.*
 !.env.example
 !.env.dev
+!.env.awsdev
 .env.local
 .env.development.local
 .env.test.local
@@ -36,6 +37,7 @@ build
 .env*.local
 
 # Local scratch / one-off patches
+public/tectona-local-ca.cer
 __test_fixed.tsx
 _snippet.txt
 .claude/
@@ -78,3 +80,6 @@ Desktop.ini
 .vercel
 .netlify
 .firebase
+
+# Intermediate frames for the original cinematic theme renderer (not shipped).
+.theme-render/

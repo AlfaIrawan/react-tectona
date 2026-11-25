@@ -144,7 +144,7 @@ export function listTemplateShareWorkspaceOptions(input: {
         searchHaystack: row.searchHaystack || row.name.toLowerCase(),
       } satisfies TemplateWorkspaceCandidate
     })
-    .filter((row): row is TemplateWorkspaceCandidate => Boolean(row))
+    .filter((row) => row !== null)
     .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }))
 }
 

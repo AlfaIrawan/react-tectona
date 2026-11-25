@@ -2,6 +2,7 @@
 export const UI_DESIGN_WIDTH_PX = 1920
 
 const SCALE_EPSILON = 0.995
+const MOBILE_NATIVE_QUERY = '(max-width: 767px), (max-width: 1023px) and (pointer: coarse)'
 
 function readScaleVar(root: HTMLElement): number | null {
   const raw =
@@ -66,6 +67,8 @@ function repairStaleScaleLock(root: HTMLElement, viewportWidth: number): void {
 export function syncUiScaleLock(): void {
   if (typeof window === 'undefined') return
   const root = document.documentElement
+  // The login shell owns its viewport until it unmounts. Avoid competing resize writers.
+  if (root.dataset.loginLayout === 'active') return
   const vw = window.innerWidth
   const vh = window.innerHeight
   if (vw <= 0 || vh <= 0) return
@@ -74,7 +77,7 @@ export function syncUiScaleLock(): void {
   clearLegacyBodyScaleInlineStyles()
   clearRootScaleInlineStyles()
 
-  if (vw >= UI_DESIGN_WIDTH_PX * SCALE_EPSILON) {
+  if (vw >= UI_DESIGN_WIDTH_PX * SCALE_EPSILON || window.matchMedia(MOBILE_NATIVE_QUERY).matches) {
     clearScaleLock(root)
     return
   }

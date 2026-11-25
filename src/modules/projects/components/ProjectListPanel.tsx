@@ -190,7 +190,7 @@ function clampProjectListColumnWidthPx(px: number): number {
 
 const TABLE_HEADERS: Array<{
   key: ProjectListColumnKey
-  sortKey: ProjectListSortKey
+  sortKey: Exclude<ProjectListSortKey, 'manual'>
   filterKey?: ProjectListFilterKey
   label: string
   icon: typeof ListChecks
@@ -749,7 +749,6 @@ function SortableProjectListHeaderCell({
 
 export function ProjectListPanel({
   project,
-  template: _template,
   ownerName,
   workItems,
   usesApiItems,
@@ -1024,7 +1023,7 @@ export function ProjectListPanel({
   useEffect(() => {
     if (!columnResizingKey) return
 
-    const onMove = (event: MouseEvent) => {
+    const onMove = (event: globalThis.MouseEvent) => {
       const active = columnResizeRef.current
       if (!active) return
       const next = clampProjectListColumnWidthPx(active.startWidth + (event.clientX - active.startX))
@@ -1820,7 +1819,7 @@ export function ProjectListPanel({
                 label: option.label,
               }))}
               renderOption={(option, selectedOption) =>
-                renderWorkItemTypeSelectOption(
+                option.value === '' ? option.label : renderWorkItemTypeSelectOption(
                   { value: option.value, label: option.label },
                   selectedOption,
                 )
@@ -1850,7 +1849,7 @@ export function ProjectListPanel({
                 label: resolveWorkStatusDisplayLabel(option),
               }))}
               renderOption={(option, selectedOption) =>
-                renderProjectListStatusSelectOption(
+                option.value === '' ? option.label : renderProjectListStatusSelectOption(
                   { value: option.value, label: option.label },
                   selectedOption,
                 )
@@ -1880,7 +1879,7 @@ export function ProjectListPanel({
                 label: priority,
               }))}
               renderOption={(option, selectedOption) =>
-                renderProjectListPrioritySelectOption(
+                option.value === '' ? option.label : renderProjectListPrioritySelectOption(
                   { value: option.value, label: option.label },
                   selectedOption,
                 )

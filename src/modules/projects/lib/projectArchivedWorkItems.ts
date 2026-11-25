@@ -109,8 +109,7 @@ export function restoreArchivedWorkItem(projectId: string, workItemId: string): 
 }
 
 export function isWorkItemArchivable(item: WorkItemApiModel): boolean {
-  const status = item.status === 'Blocked' ? 'Backlog' : item.status
-  return status === 'Done'
+  return item.status === 'Done'
 }
 
 export function archiveWorkItemManual(input: {

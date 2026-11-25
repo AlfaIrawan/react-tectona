@@ -136,6 +136,7 @@ import { EnterpriseColumnWidthModal } from '@/components/enterprise/EnterpriseCo
 import { EnterpriseNavIconRail } from '@/components/enterprise/EnterpriseNavIconRail'
 import { InviteWorkspaceMemberDrawer } from '@/modules/workspace-management/components/InviteWorkspaceMemberDrawer'
 import { WorkspacePanelSlot } from '@/modules/workspace-management/components/WorkspacePanelSlot'
+import { useWorkspaceDrawerFocus } from '@/modules/workspace-management/lib/useWorkspaceDrawerFocus'
 import {
   WorkspaceManagementGuideDrawer,
   type WorkspaceGuideActionId,
@@ -236,7 +237,7 @@ import {
   activateIdentityUser,
   deleteIdentityUser,
   fetchIdentityUser,
-  fetchIdentityUsers,
+  fetchWorkspaceManagementIdentityDirectory,
   provisionIdentityUser,
   type IdentityUserDto,
 } from '@/lib/api/identityAdminApi'
@@ -713,7 +714,7 @@ function workspaceMatchesDirectoryChartFocus(w: WorkspaceRecord, focus: Director
 
 type WorkspaceOverviewPalette = 'pastel' | 'vivid'
 
-const WORKSPACE_OVERVIEW_PALETTES: Record<
+export const WORKSPACE_OVERVIEW_PALETTES: Record<
   WorkspaceOverviewPalette,
   {
     shellAccent: string
@@ -4013,6 +4014,7 @@ function WorkspaceMainPanel({
     <section
       id={id}
       ref={panelRef}
+      data-theme-panel="workspace"
       style={style}
       className={cn(
         'liquid-glass-enterprise-panel flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-2xl border transition-all',
@@ -4047,7 +4049,7 @@ function WorkspaceMainPanel({
 /** Card inside main panel — `div` to avoid nested `<section>` landmarks. */
 function InsetDashboardCard({ title, description, children, right }: { title: string; description: string; children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-[0_8px_32px_rgba(15,23,42,0.06)]">
+    <div data-theme-surface="inset-card" className="overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-[0_8px_32px_rgba(15,23,42,0.06)]">
       <div className="flex items-start justify-between gap-3 border-b border-slate-200/90 px-4 py-3 sm:px-5 sm:py-4">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
@@ -4084,7 +4086,7 @@ function IntelligenceChartPanel({
   children: ReactNode
 }) {
   return (
-    <Card style={style} className={cn('relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl p-5 shadow-[0_12px_34px_rgba(15,23,42,0.08)]', palette.cardBg, palette.cardBorder)}>
+    <Card data-theme-panel="chart" style={style} className={cn('relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl p-5 shadow-[0_12px_34px_rgba(15,23,42,0.08)]', palette.cardBg, palette.cardBorder)}>
       <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-[2px] rounded-t-2xl bg-gradient-to-r opacity-85', accent)} />
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -4197,7 +4199,7 @@ const KpiSparkline = memo(function KpiSparkline({ data, color }: { data: number[
   )
 })
 
-function WorkspaceKpiCard({
+export function WorkspaceKpiCard({
   label,
   value,
   subtitle,
@@ -4237,7 +4239,7 @@ function WorkspaceKpiCard({
 
       <div className="text-xs text-slate-500">{label}</div>
       <div className="mt-1 flex items-center gap-3">
-        <div className="shrink-0 text-2xl font-bold leading-none text-slate-950">{value}</div>
+        <div data-theme-value className="shrink-0 text-2xl font-bold leading-none text-slate-950">{value}</div>
         <div className="h-10 min-w-0 flex-1">
             <KpiSparkline data={trendSeries} color={trendColor} />
           </div>
@@ -4247,7 +4249,7 @@ function WorkspaceKpiCard({
           <Icon className="h-3.5 w-3.5 shrink-0 text-slate-600" aria-hidden />
           <span className="truncate">{subtitle}</span>
         </span>
-        <span className={cn('shrink-0 font-semibold', trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
+        <span data-theme-tone={trend.startsWith('-') ? 'negative' : 'positive'} className={cn('shrink-0 font-semibold', trend.startsWith('-') ? 'text-rose-600' : 'text-emerald-600')}>
           {trend}
         </span>
       </div>
@@ -4606,7 +4608,7 @@ function WorkspaceEnterpriseNavFloatRail({
   )
 }
 
-function IntelligenceDonut({
+export function IntelligenceDonut({
   data,
   centerLabel,
   pieColors,
@@ -4706,7 +4708,7 @@ function IntelligenceDonut({
           )}
 
           {/* Glass backing disc */}
-          <div className={cn(
+          <div data-theme-surface="chart-center" className={cn(
             'pointer-events-none absolute inset-2 rounded-full border bg-gradient-to-br from-white/95 via-slate-50/95 to-slate-100/85',
             isVivid
               ? 'border-white/75 shadow-[0_22px_52px_rgba(15,23,42,0.20),inset_0_1px_0_rgba(255,255,255,0.95),inset_0_-1px_0_rgba(15,23,42,0.04)]'
@@ -4782,21 +4784,21 @@ function IntelligenceDonut({
           {/* Center badge */}
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
             {isVivid ? (
-              <div className="rounded-2xl border border-white/75 px-4 py-3 text-center backdrop-blur-md"
+              <div data-theme-surface="chart-center" className="rounded-2xl border border-white/75 px-4 py-3 text-center backdrop-blur-md"
                 style={{ background: 'linear-gradient(145deg, rgba(255,255,255,0.97) 0%, rgba(241,245,249,0.93) 100%)', boxShadow: '0 12px_32px rgba(15,23,42,0.18), inset 0 1px 0 rgba(255,255,255,0.95)' }}>
                 <div className="mb-1.5 flex justify-center gap-1">
                   {(pieColors ?? []).slice(0, 3).map((c, i) => (
                     <span key={i} className="h-1.5 w-1.5 rounded-full shadow-sm" style={{ background: c, boxShadow: `0 0 4px ${c}` }} />
                   ))}
                 </div>
-                <div className="text-[2.15rem] font-black leading-none tracking-[-0.04em]"
+                <div data-theme-value className="text-[2.15rem] font-black leading-none tracking-[-0.04em]"
                   style={{ background: 'linear-gradient(135deg, #0f172a 0%, #334155 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
                   {total}
                 </div>
                 <div className="mt-1 text-[9px] font-bold uppercase tracking-[0.22em] text-slate-400">{centerLabel}</div>
               </div>
             ) : (
-              <div className="rounded-2xl border border-white/90 px-4 py-2 text-center backdrop-blur-sm"
+              <div data-theme-surface="chart-center" className="rounded-2xl border border-white/90 px-4 py-2 text-center backdrop-blur-sm"
                 style={{ background: 'rgba(255,255,255,0.88)', boxShadow: '0 8px 22px rgba(15,23,42,0.10)' }}>
                 <div className="text-3xl font-bold leading-none tracking-tight text-slate-900">{total}</div>
                 <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{centerLabel}</div>
@@ -4839,6 +4841,8 @@ function IntelligenceDonut({
                       ? 'border-slate-300 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]'
                       : 'border-slate-200/90 bg-white/80 hover:border-slate-300 hover:bg-white'
                 )}
+                data-theme-surface="chart-row"
+                data-active={isActive || rowSelected}
                 style={isVivid && (isActive || rowSelected) ? { borderLeftColor: sc, borderLeftWidth: 3 } : undefined}
                 onMouseEnter={() => setActiveIndex((prev) => (prev === idx ? prev : idx))}
                 onMouseLeave={() => setActiveIndex((prev) => (prev === null ? prev : null))}
@@ -4890,7 +4894,7 @@ function IntelligenceDonut({
   )
 }
 
-function WorkspaceHealthExecutiveDonut({
+export function WorkspaceHealthExecutiveDonut({
   data,
   palette,
   selectedBand,
@@ -4930,7 +4934,7 @@ function WorkspaceHealthExecutiveDonut({
           Portfolio Resilience
         </div>
       <div className="relative aspect-square w-full max-w-[220px] overflow-hidden">
-        <div className="pointer-events-none absolute inset-[8%] rounded-full border border-white/80 bg-gradient-to-br from-slate-50/90 via-white/95 to-slate-100/85 shadow-[0_12px_28px_rgba(15,23,42,0.10)]" />
+        <div data-theme-surface="chart-center" className="pointer-events-none absolute inset-[8%] rounded-full border border-white/80 bg-gradient-to-br from-slate-50/90 via-white/95 to-slate-100/85 shadow-[0_12px_28px_rgba(15,23,42,0.10)]" />
         <div className="absolute inset-0 min-h-0 min-w-0">
           <MeasuredResponsiveContainer className="h-full w-full min-h-0 min-w-0">
           <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
@@ -5003,10 +5007,10 @@ function WorkspaceHealthExecutiveDonut({
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-1.5">
-          <div className="rounded-full border border-slate-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm">
+          <div data-theme-surface="chart-badge" className="rounded-full border border-slate-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm">
             Executive Index {healthIndex}
           </div>
-          <div className="rounded-full border border-slate-200/80 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
+          <div data-theme-surface="chart-badge" className="rounded-full border border-slate-200/80 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
           Stability Score {stabilityScore}
           </div>
         </div>
@@ -5014,17 +5018,17 @@ function WorkspaceHealthExecutiveDonut({
 
       <div className="space-y-3">
         <div className="grid gap-2 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/75 to-slate-100/80 px-3 py-2 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
+          <div data-theme-surface="inset-card" className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/75 to-slate-100/80 px-3 py-2 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Executive Signal</div>
             <div className="mt-1 text-sm font-semibold text-slate-900">
               {healthIndex >= 80 ? 'Stable Portfolio' : healthIndex >= 65 ? 'Watchlist Required' : 'Immediate Intervention'}
             </div>
           </div>
-          <div className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(16,185,129,0.10)]">
+          <div data-theme-surface="status-positive" className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(16,185,129,0.10)]">
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-500">Healthy Coverage</div>
             <div className="mt-1 text-sm font-semibold text-emerald-700">{total > 0 ? Math.round((healthy / total) * 100) : 0}% of portfolio</div>
           </div>
-          <div className="rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
+          <div data-theme-surface="status-negative" className="rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500">Critical Exposure</div>
             <div className="mt-1 text-sm font-semibold text-rose-700">{criticalPct}% of portfolio</div>
           </div>
@@ -5056,6 +5060,8 @@ function WorkspaceHealthExecutiveDonut({
                   ? 'border-slate-300 bg-white shadow-[0_8px_18px_rgba(15,23,42,0.08)]'
                   : 'border-slate-200 bg-white/80 hover:border-slate-300 hover:bg-white'
               )}
+              data-theme-surface="chart-row"
+              data-active={activeIndex === idx || selectedBand === item.name}
             >
               <div className="flex min-w-0 items-center gap-2.5">
                 <span
@@ -5629,17 +5635,18 @@ function governanceMatrixSearchBlob(
     .toLowerCase()
 }
 
-function WorkspaceManagementPageSkeleton({ className }: { className?: string }) {
+export function WorkspaceManagementPageSkeleton({ className }: { className?: string }) {
   return (
     <div
+      data-theme-surface="loading-card"
       className={cn(
-        'liquid-glass-enterprise-panel flex min-h-[280px] animate-pulse items-center justify-center rounded-2xl border border-border/60 bg-muted/20',
+        'liquid-glass-enterprise-panel flex min-h-[280px] items-center justify-center rounded-2xl border border-border/60 bg-muted/20',
         className,
       )}
     >
       <div className="flex flex-col items-center gap-3 px-6 text-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
-        <p className="text-sm text-muted-foreground">Loading workspace data…</p>
+        <Loader2 data-theme-part="loading-icon" className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
+        <p data-theme-part="loading-description" className="text-sm text-muted-foreground">Loading workspace data…</p>
       </div>
     </div>
   )
@@ -6745,7 +6752,7 @@ export function WorkspaceManagementPage() {
     try {
       const [workspaceRows, identityRes] = await Promise.all([
         fetchAllWorkspaceOrgWorkspaces(),
-        fetchIdentityUsers({ limit: 500 }).catch(() => ({ items: [] as IdentityUserDto[] })),
+        fetchWorkspaceManagementIdentityDirectory().catch(() => ({ items: [] as IdentityUserDto[] })),
       ])
       const mapped = workspaceRows.map(mapWorkspaceOrgWorkspaceDtoToRecord)
       setDirectoryWorkspaces((prev) => {
@@ -6878,7 +6885,7 @@ export function WorkspaceManagementPage() {
 
   const refreshIdentityUserDirectory = useCallback(async () => {
     try {
-      const res = await fetchIdentityUsers({ limit: 500 })
+      const res = await fetchWorkspaceManagementIdentityDirectory()
       setIdentityUsers(res.items ?? [])
       return res.items ?? []
     } catch {
@@ -7439,6 +7446,12 @@ export function WorkspaceManagementPage() {
   const [governanceMatrixDetailWorkspace, setGovernanceMatrixDetailWorkspace] = useState<WorkspaceRecord | null>(null)
   const [memberDetailOpen, setMemberDetailOpen] = useState(false)
   const [memberDetailTarget, setMemberDetailTarget] = useState<AggregatedMemberRecord | null>(null)
+  const newWorkspaceDrawerRef = useRef<HTMLDivElement>(null)
+  const memberDetailDrawerRef = useRef<HTMLDivElement>(null)
+  const governanceDetailDrawerRef = useRef<HTMLDivElement>(null)
+  useWorkspaceDrawerFocus(newWorkspaceDrawerRef, newWorkspaceDrawerOpen, true)
+  useWorkspaceDrawerFocus(memberDetailDrawerRef, memberDetailOpen)
+  useWorkspaceDrawerFocus(governanceDetailDrawerRef, governanceMatrixDetailOpen)
   const [confirmRemoveMemberOpen, setConfirmRemoveMemberOpen] = useState(false)
   const [confirmRemoveMemberTarget, setConfirmRemoveMemberTarget] = useState<AggregatedMemberRecord | null>(null)
   const [isRemovingMember, setIsRemovingMember] = useState(false)
@@ -14299,6 +14312,7 @@ export function WorkspaceManagementPage() {
                     isWorkspaceCollapsed ? 'h-8 w-8 rounded-full' : 'h-9 w-9'
                   )}
                   aria-label={isWorkspaceCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  data-theme-part="nav-toggle"
                   title={isWorkspaceCollapsed ? 'Expand navigation' : 'Collapse navigation'}
                   onClick={() => setIsWorkspaceCollapsed((c) => !c)}
                 >
@@ -14359,6 +14373,8 @@ export function WorkspaceManagementPage() {
                         type="button"
                         onClick={() => selectWorkspacePanel(panel.id)}
                         data-tour-target={`wm-nav-${panel.id}`}
+                        data-theme-nav-item
+                        aria-current={active ? 'page' : undefined}
                         className={cn(
                           'group relative flex w-full overflow-hidden border text-left transition-all duration-200',
                             enterpriseNavCompact
@@ -14376,13 +14392,13 @@ export function WorkspaceManagementPage() {
                               )
                             : 'border-transparent bg-white/55 text-slate-600 hover:border-slate-200/80 hover:bg-white/88 hover:text-slate-950'
                         )}
-                        aria-label={panel.label}
                         title={panel.label}
                       >
                         {active ? (
                             <span className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-gradient-to-b from-sky-500 via-blue-600 to-indigo-600" />
                         ) : null}
                         <span
+                          data-theme-part="nav-icon"
                           className={cn(
                               'relative flex shrink-0 items-center justify-center rounded-2xl border transition-colors',
                               enterpriseNavCompact ? 'h-9 w-9' : 'h-11 w-11',
@@ -14398,6 +14414,7 @@ export function WorkspaceManagementPage() {
                               <span className="block truncate text-sm font-semibold text-slate-900">{panel.label}</span>
                             {!enterpriseNavCompact ? (
                               <span
+                                data-theme-part="nav-badge"
                                 className={cn(
                                   'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]',
                                   active ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 text-slate-500'
@@ -14421,7 +14438,7 @@ export function WorkspaceManagementPage() {
 
             {!enterpriseNavSimpleList ? (
               <div className="shrink-0 space-y-4 pt-4">
-                <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-3">
+                <div data-theme-surface="nav-summary" className="rounded-2xl border border-blue-200 bg-blue-50/70 p-3">
                   <div className="flex items-center gap-2 text-sm font-semibold text-blue-800">
                     <BarChart3 className="h-4 w-4" />
                     Workspace health
@@ -14445,7 +14462,7 @@ export function WorkspaceManagementPage() {
         )
         ) : null}
 
-        <main
+        <div
           className={cn(
             'flex min-h-0 min-w-0 w-full max-w-full flex-col self-stretch',
             // Parent wrapper already has docked inset — false avoids double padding.
@@ -14872,7 +14889,10 @@ export function WorkspaceManagementPage() {
                 >
                   <div
                     ref={overviewDashboardRef}
-                    className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                    role="region"
+                    aria-label="Workspace overview charts"
+                    tabIndex={0}
+                    className="h-full min-h-0 space-y-4 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   >
                     {/* ROW 1: Health + Lifecycle */}
                     <div className="grid min-w-0 gap-4 xl:grid-cols-2">
@@ -14971,7 +14991,7 @@ export function WorkspaceManagementPage() {
                             const overloaded = val > WORKSPACE_LOAD_OVERLOAD_PROJECTS
                             const barColor = overloaded ? pal.overloadBar : pal.normalBar
                             return (
-                              <div className="overflow-hidden rounded-2xl border border-white/60 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl"
+                              <div data-theme-surface="chart-tooltip" className="overflow-hidden rounded-2xl border border-white/60 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur-xl"
                                 style={{ background: 'linear-gradient(145deg, rgba(255,255,255,0.97) 0%, rgba(248,250,252,0.95) 100%)', minWidth: 186 }}>
                                 <div className="px-4 py-2.5" style={{ borderBottom: `2px solid ${barColor}28` }}>
                                   <div className="flex items-center gap-2">
@@ -15002,7 +15022,7 @@ export function WorkspaceManagementPage() {
                           }
                           if (workspaceLoadDistributionData.length === 0 || workspaceLoadDistributionData.every((w) => w.tasks <= 0)) {
                             return (
-                              <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
+                              <div data-theme-surface="chart-empty" className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
                                 No linked projects in the current workspace scope yet.
                               </div>
                             )
@@ -17372,7 +17392,15 @@ export function WorkspaceManagementPage() {
                                 }}
                               >
                                 <div className="min-w-0">
-                                  <div className="font-semibold text-foreground">{workspace.name}</div>
+                                  <button
+                                    type="button"
+                                    className="rounded-sm text-left font-semibold text-foreground focus-visible:ring-2 focus-visible:ring-primary"
+                                    aria-label={`${workspace.name}, governance details`}
+                                    aria-haspopup="dialog"
+                                    onClick={() => openGovernanceMatrixDetailDrawer(workspace)}
+                                  >
+                                    {workspace.name}
+                                  </button>
                                   <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{workspace.code}</div>
                                     <div className="mt-1.5 flex flex-wrap gap-1">
                                       <Badge variant="outline" className="rounded-md border-border px-1.5 py-0 text-[10px] font-medium">
@@ -17768,7 +17796,15 @@ export function WorkspaceManagementPage() {
                                       {member.name.split(' ').map((n) => n[0] ?? '').slice(0, 2).join('')}
                                     </div>
                                           <div className="min-w-0">
-                                            <p className="font-semibold text-foreground">{member.name}</p>
+                                            <button
+                                              type="button"
+                                              className="rounded-sm text-left font-semibold text-foreground focus-visible:ring-2 focus-visible:ring-primary"
+                                              aria-label={`${member.name}, member details`}
+                                              aria-haspopup="dialog"
+                                              onClick={() => openMemberDetailDrawer(member)}
+                                            >
+                                              {member.name}
+                                            </button>
                                             <p className="text-[10px] text-muted-foreground tabular-nums">
                                               {workspaceCount} workspace{workspaceCount === 1 ? '' : 's'}
                                             </p>
@@ -18469,7 +18505,7 @@ export function WorkspaceManagementPage() {
               </div>
             </div>
           </WorkspacePanelSlot>
-        </main>
+        </div>
       </section>
       </div>
 
@@ -19303,13 +19339,16 @@ export function WorkspaceManagementPage() {
 
       {/* Workspace Members — view details drawer (selaras Governance Matrix / Workspace Details) */}
       <div
+        ref={memberDetailDrawerRef}
+        inert={!memberDetailOpen}
+        tabIndex={-1}
         className={cn(
           'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
           memberDetailOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
         style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)', margin: 0, padding: 0 }}
-        role="dialog"
-        aria-labelledby="workspace-member-detail-title"
+        role={memberDetailOpen ? 'dialog' : undefined}
+        aria-labelledby={memberDetailOpen ? 'workspace-member-detail-title' : undefined}
       >
         {(() => {
           const member = memberDetailTarget
@@ -19472,13 +19511,16 @@ export function WorkspaceManagementPage() {
 
       {/* Governance Matrix — view details drawer (tanpa overlay; selaras Workspace Details) */}
       <div
+        ref={governanceDetailDrawerRef}
+        inert={!governanceMatrixDetailOpen}
+        tabIndex={-1}
         className={cn(
           'fixed right-0 top-0 z-[1100] flex h-screen w-[460px] max-w-[92vw] flex-col transform border-l border-border bg-background/95 shadow-2xl backdrop-blur-xl transition-all duration-300',
           governanceMatrixDetailOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
         style={{ boxShadow: '0 0 60px rgba(0,0,0,0.3), inset 1px 0 0 rgba(255,255,255,0.1)', margin: 0, padding: 0 }}
-        role="dialog"
-        aria-labelledby="governance-matrix-detail-title"
+        role={governanceMatrixDetailOpen ? 'dialog' : undefined}
+        aria-labelledby={governanceMatrixDetailOpen ? 'governance-matrix-detail-title' : undefined}
       >
                 {(() => {
                   const ws = governanceMatrixDetailWorkspace
@@ -20794,9 +20836,7 @@ export function WorkspaceManagementPage() {
         )}
         data-tour-target="wm-new-workspace-drawer-backdrop"
         onClick={closeNewWorkspaceDrawer}
-        aria-hidden={!newWorkspaceDrawerOpen}
-        role="button"
-        tabIndex={-1}
+        aria-hidden="true"
       />
 
       <div
@@ -20805,13 +20845,19 @@ export function WorkspaceManagementPage() {
           newWorkspaceDrawerOpen ? 'pointer-events-auto translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
         )}
         data-tour-target="wm-new-workspace-drawer"
+        ref={newWorkspaceDrawerRef}
+        inert={!newWorkspaceDrawerOpen}
+        tabIndex={-1}
+        role={newWorkspaceDrawerOpen ? 'dialog' : undefined}
+        aria-modal={newWorkspaceDrawerOpen || undefined}
+        aria-labelledby={newWorkspaceDrawerOpen ? 'workspace-new-drawer-title' : undefined}
         style={{
           boxShadow: '0 0 60px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255, 255, 255, 0.1)',
         }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4 backdrop-blur-sm">
           <div className="pr-3">
-            <h2 className="flex items-center gap-2 text-xl font-semibold text-foreground">
+            <h2 id="workspace-new-drawer-title" className="flex items-center gap-2 text-xl font-semibold text-foreground">
               <Plus className="h-5 w-5 text-primary" aria-hidden />
               New Workspace
             </h2>

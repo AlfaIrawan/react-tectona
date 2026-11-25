@@ -1,4 +1,4 @@
-import { Fragment, startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode } from 'react'
+import { Fragment, startTransition, useCallback, useDeferredValue, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   DndContext,
@@ -29,7 +29,6 @@ import {
   Copy,
   Trash2,
   Type,
-  AlertTriangle,
   ArrowDownToLine,
   ArrowLeftToLine,
   ArrowRightLeft,
@@ -91,8 +90,6 @@ import {
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   LabelList,
@@ -433,7 +430,6 @@ import {
   defaultTectonaWorkspaceName,
   LEGACY_DEMO_WORKSPACE_NAMES,
   allWorkspacePickerNames,
-  type WorkspacePickerGroups,
 } from '@/lib/work/workspacePickerGroups'
 import { DirectoryKanbanView } from '@/modules/task-work-management/components/DirectoryKanbanView'
 import { EpicStructureTreePanel, canDetachStructureItem } from '@/modules/task-work-management/components/EpicStructureTreePanel'
@@ -658,7 +654,7 @@ function IntegrationSyncToolbarButton({
 
   useEffect(() => {
     if (!open) return
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node
       if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return
       setOpen(false)
@@ -830,6 +826,7 @@ function WorkItemPersonSelect({
 }) {
   const labelId = `${id}-label`
   const [open, setOpen] = useState(false)
+  const [previousContainmentOpen, setPreviousContainmentOpen] = useState(containmentOpen)
   const [anchor, setAnchor] = useState<{ left: number; top: number; width: number } | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -845,15 +842,15 @@ function WorkItemPersonSelect({
     })
   }
 
-  useEffect(() => {
-    if (containmentOpen) return
-    setOpen(false)
-  }, [containmentOpen])
+  if (previousContainmentOpen !== containmentOpen) {
+    setPreviousContainmentOpen(containmentOpen)
+    if (!containmentOpen) setOpen(false)
+  }
 
   useEffect(() => {
     if (!open) return
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node | null
       if (!target) return
       if (triggerRef.current?.contains(target)) return
@@ -1140,7 +1137,6 @@ function WorkItemStatusIcon({ status, className }: { status: WorkStatus; classNa
   return <Icon className={cn('h-4 w-4 shrink-0', meta.iconClass, className)} aria-hidden />
 }
 
-const PIE_COLORS = ['#1d4ed8', '#2563eb', '#60a5fa', '#93c5fd', '#cbd5e1']
 
 // ──────────────────────────────────────────────────────────────────────────
 // Work Execution Overview Panel — telemetry derived from live work items.
@@ -2586,15 +2582,15 @@ export function TaskWorkManagementPage() {
   const [shellReady, setShellReady] = useState(false)
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
-  const [statusFilter, setStatusFilter] = useState<string>('All')
-  const [priorityFilter, setPriorityFilter] = useState<string>('All')
-  const [assigneeFilter, setAssigneeFilter] = useState<string>('All')
-  const [projectFilter, setProjectFilter] = useState<string>('All')
+  const [statusFilter] = useState<string>('All')
+  const [priorityFilter] = useState<string>('All')
+  const [assigneeFilter] = useState<string>('All')
+  const [projectFilter] = useState<string>('All')
   const [workspaceFilter, setWorkspaceFilter] = useState<string>('All')
   useWorkItemsRealtimeScope(workspaceFilter === 'All' ? null : workspaceFilter)
-  const [typeFilter, setTypeFilter] = useState<string>('All')
-  const [dueFilter, setDueFilter] = useState<string>('All')
-  const [dependencyFilter, setDependencyFilter] = useState<string>('All')
+  const [typeFilter] = useState<string>('All')
+  const [dueFilter] = useState<string>('All')
+  const [dependencyFilter] = useState<string>('All')
   const [groupBy, setGroupBy] = useState<GroupByKey>(null)
   const [directoryViewMode, setDirectoryViewMode] = useState<DirectoryViewMode>('list')
   const [directoryGanttZoomLevel, setDirectoryGanttZoomLevel] = useState<PlanningGanttZoomLevel>('Week')
@@ -2772,8 +2768,8 @@ export function TaskWorkManagementPage() {
   // Match Document & Knowledge Management Enterprise Navigation: 260px panel, rounded-2xl typography.
   const enterpriseNavLayoutVariant = 'compact' as const
   const navPanelRef = useRef<HTMLDivElement | null>(null)
-  const activeMainPanelRef = useRef<HTMLElement | null>(null)
-  const directoryPanelRef = useRef<HTMLElement | null>(null)
+  const activeMainPanelRef = useRef<HTMLDivElement | null>(null)
+  const directoryPanelRef = useRef<HTMLDivElement | null>(null)
   const groupByTriggerRef = useRef<HTMLButtonElement | null>(null)
   const groupByMenuPanelRef = useRef<HTMLDivElement | null>(null)
   const directoryPageSizeTriggerRef = useRef<HTMLButtonElement | null>(null)
@@ -2793,7 +2789,6 @@ export function TaskWorkManagementPage() {
     directoryPanelMaxHeightPx,
     navDocked
   )
-  const directoryPanelHeightLocked = directoryPanelHeightStyle != null
 
   useEffect(() => {
     if (!showDirectorySelection && selectedIds.length > 0) setSelectedIds([])
@@ -2863,7 +2858,7 @@ export function TaskWorkManagementPage() {
   useEffect(() => {
     if (!groupByMenuOpen) return
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node | null
       if (!target) return
       if (groupByTriggerRef.current?.contains(target)) return
@@ -2889,7 +2884,7 @@ export function TaskWorkManagementPage() {
   useEffect(() => {
     if (!directoryPageSizeMenuOpen) return
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node | null
       if (!target) return
       if (directoryPageSizeTriggerRef.current?.contains(target)) return
@@ -2913,7 +2908,7 @@ export function TaskWorkManagementPage() {
   useEffect(() => {
     if (!workItemTypeMenuOpen) return
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node | null
       if (!target) return
       if (workItemTypeTriggerRef.current?.contains(target)) return
@@ -2950,7 +2945,7 @@ export function TaskWorkManagementPage() {
   useEffect(() => {
     if (!workItemPriorityMenuOpen) return
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node | null
       if (!target) return
       if (workItemPriorityTriggerRef.current?.contains(target)) return
@@ -2987,7 +2982,7 @@ export function TaskWorkManagementPage() {
   useEffect(() => {
     if (!workItemStatusMenuOpen) return
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node | null
       if (!target) return
       if (workItemStatusTriggerRef.current?.contains(target)) return
@@ -3160,7 +3155,7 @@ export function TaskWorkManagementPage() {
   useEffect(() => {
     if (userWorkspacesLoading) return
     let cancelled = false
-    void fetchAllWorkspaceOrgWorkspaces({ status: 'active' })
+    void fetchAllWorkspaceOrgWorkspaces()
       .then((rows) => {
         if (cancelled) return
         const allowedIds = new Set(userWorkspaceOptions.map((option) => option.workspaceId))
@@ -3366,7 +3361,7 @@ export function TaskWorkManagementPage() {
 
   useEffect(() => {
     if (!directoryColumnsMenuOpen) return
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: globalThis.MouseEvent) => {
       const target = event.target as Node | null
       if (!target) return
       if (directoryColumnsTriggerRef.current?.contains(target)) return
@@ -4574,7 +4569,7 @@ export function TaskWorkManagementPage() {
 
   useEffect(() => {
     if (!directoryColumnResizingKey) return
-    const onMove = (event: MouseEvent) => {
+    const onMove = (event: globalThis.MouseEvent) => {
       const active = directoryColumnResizeRef.current
       if (!active) return
       const next = clampDirectoryColumnWidthPx(active.startWidth + (event.clientX - active.startX))
@@ -5241,12 +5236,15 @@ export function TaskWorkManagementPage() {
     }
   }
 
+  const captureWorkItemEscapeReset = useEffectEvent(() => resetWorkItemAddForm)
+
   useEffect(() => {
     if (!workItemAddOpen) return
+    const resetForm = captureWorkItemEscapeReset()
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || workItemAddSaving) return
       setWorkItemAddOpen(false)
-      resetWorkItemAddForm()
+      resetForm()
     }
     window.addEventListener('keydown', onWindowKeyDown)
     return () => window.removeEventListener('keydown', onWindowKeyDown)

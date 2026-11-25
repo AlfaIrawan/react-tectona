@@ -259,7 +259,7 @@ function SortableTodoRow({
         }}
         data-todo-row
         className={cn(
-          'group flex items-center gap-3 rounded-xl border shadow-sm hover:shadow-md transition-shadow px-4 py-3 cursor-pointer select-none',
+          'todo-item-row group flex items-center gap-3 rounded-xl border shadow-sm hover:shadow-md transition-shadow px-4 py-3 cursor-pointer select-none',
           !categoryInfo && 'bg-white dark:bg-slate-800/50',
           showAsCompleted && !statusAnim && 'opacity-70',
           isDragging && 'opacity-90 shadow-lg z-10 ring-2 ring-primary/20',
@@ -300,6 +300,7 @@ function SortableTodoRow({
       <div className="flex-1 min-w-0 flex flex-col gap-1">
         <Tooltip content={getTodoTooltipText(todo)} side="top" size="compact" sideOffset={6}>
           <span
+            data-todo-title
             className={cn(
               'text-sm font-medium text-slate-800 dark:text-slate-200 truncate inline-block min-w-0 max-w-full transition-colors duration-300',
               showAsCompleted && 'text-slate-500 dark:text-slate-400',
@@ -898,7 +899,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
   )
 
   return (
-    <div className="relative flex flex-col gap-6 min-h-full px-5" onClick={handlePanelClick}>
+    <div className="todo-list-panel relative flex min-w-0 flex-col gap-6 min-h-full px-5" onClick={handlePanelClick}>
       {/* Context menu for todo row (right-click). Use same position logic as ContextMenu so arrow is correct on first open. */}
       {contextMenu && (() => {
         const menuWidth = 224
@@ -1060,7 +1061,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
       {/* Add new — elegant input + floating add with glow */}
       <div
         className={cn(
-          'liquid-glass-enterprise-panel rounded-2xl p-4 space-y-4',
+          'todo-add-form liquid-glass-enterprise-panel rounded-2xl p-4 space-y-4',
           'border border-white/40 dark:border-white/10',
           'ring-1 ring-black/[0.04] dark:ring-white/[0.06]',
           'shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-[0_18px_52px_rgba(0,0,0,0.35)]',
@@ -1071,10 +1072,11 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
           <input
             type="text"
             placeholder="Add todo..."
+            aria-label="Todo title"
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-            className="flex-1 rounded-xl border border-slate-200/80 dark:border-slate-600/50 bg-white dark:bg-slate-800/50 px-4 py-3 text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow"
+            className="min-w-0 flex-1 rounded-xl border border-slate-200/80 dark:border-slate-600/50 bg-white dark:bg-slate-800/50 px-4 py-3 text-sm text-slate-800 dark:text-slate-200 placeholder:text-slate-400 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-shadow"
           />
           <button
             type="button"
@@ -1088,7 +1090,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
         </div>
 
         {/* Filter row: status pills + priority pill + date */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="todo-form-options flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <div className="flex flex-wrap items-center gap-1.5">
             {(['active', 'done'] as const).map((f) => (
@@ -1108,7 +1110,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
             ))}
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="todo-date-priority flex items-center gap-2 flex-1 min-w-0">
             <div className="flex-1 min-w-0 max-w-[140px]">
               <DatePicker
                 value={newDueDate || null}
@@ -1208,7 +1210,7 @@ export function TodoListPanel({ panelContainerEl }: TodoListPanelProps = {}) {
       )}
 
       {/* List */}
-      <div className="flex-1 min-h-0 overflow-y-auto pt-1 pb-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="todo-items flex-1 min-h-0 overflow-y-auto pt-1 pb-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {loading ? (
           <div className="flex items-center justify-center py-12 text-slate-400">
             <Loader2 className="h-8 w-8 animate-spin" />

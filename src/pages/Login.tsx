@@ -1,3 +1,4 @@
+import { AuthLoginLayout } from '@/modules/auth/AuthLoginLayout'
 import { useState, useEffect } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -176,14 +177,12 @@ export function LoginPage() {
 
   return (
     <>
-      <div className="min-h-screen w-full flex items-center justify-center p-4">
-        <div className="w-full max-w-md mx-auto">
-          <div className="liquid-glass-enterprise-panel rounded-lg p-8 space-y-6">
+      <AuthLoginLayout footer={<><AuthCopyrightNotice /><AuthTourButton page="login" /></>}>
             <div id="login-card-header" className="space-y-2 text-center">
               <img
-                src="/images/logo.png"
+                src="/images/tectona-wordmark.svg"
                 alt="Tectona"
-                className="mx-auto h-24 w-auto object-contain"
+                className="mx-auto h-24 max-w-full w-auto object-contain"
               />
               <p className="text-sm text-muted-foreground">
                 Sign in to your account
@@ -267,8 +266,8 @@ export function LoginPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    tabIndex={-1}
+                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                     disabled={isSubmitting}
                   >
                     {showPassword ? (
@@ -304,18 +303,19 @@ export function LoginPage() {
 
             <AuthSocialProviders id="login-social" mode="signin" />
 
-            <p id="login-signup-link" className="text-center text-sm text-muted-foreground">
-              Don&apos;t have an account?{' '}
-              <a href="/register" className="text-primary hover:underline" onClick={(e) => { e.preventDefault(); navigate('/register') }}>
-                Sign up
-              </a>
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <AuthTourButton page="login" />
-      <AuthCopyrightNotice />
+            {import.meta.env.DEV && import.meta.env.VITE_WORKSPACE_SANDBOX ? (
+              <p className="text-center text-sm text-muted-foreground">
+                Sign in with a seeded Ilex Identity Lite employee account for this sandbox.
+              </p>
+            ) : (
+              <p id="login-signup-link" className="text-center text-sm text-muted-foreground">
+                Don&apos;t have an account?{' '}
+                <a href="/register" className="text-primary hover:underline" onClick={(e) => { e.preventDefault(); navigate('/register') }}>
+                  Sign up
+                </a>
+              </p>
+            )}
+      </AuthLoginLayout>
 
       <SessionConflictModal
         open={conflictOpen}

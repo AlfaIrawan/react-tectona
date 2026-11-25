@@ -101,6 +101,7 @@ import { EnterpriseDeleteConfirmModal } from '@/components/enterprise/Enterprise
 import { getEnterpriseGroupTint } from '@/components/enterprise/enterpriseTableGroupTint'
 import { WorkflowBuilderCanvas } from '@/modules/workflow-automation-engine/components/WorkflowBuilderCanvas'
 import { AgentWorkflowStudio } from '@/modules/workflow-automation-engine/components/AgentWorkflowStudio'
+import { useWorkflowOverview } from '@/modules/workflow-automation-engine/hooks/useWorkflowOverview'
 import { createAgentWorkflow, deleteAgentWorkflow, listAgentWorkflows, type AgentWorkflowSummaryDto } from '@/lib/api/agentWorkflowApi'
 import { listExplainerAssistants } from '@/lib/api/documentKnowledgeApi'
 import { useToast } from '@/components/ui/toast'
@@ -108,7 +109,6 @@ import {
   createWorkflow as apiCreateWorkflow,
   deleteWorkflowApi,
   duplicateWorkflowApi,
-  getWorkflowOverview,
   listWorkflows,
   updateWorkflow,
   type WorkflowOverviewDto,
@@ -135,6 +135,8 @@ type WorkflowStatus = 'Active' | 'Draft' | 'Paused' | 'Needs Approval'
 type PanelId = 'overview' | 'catalog' | 'agentCatalog' | 'automation' | 'monitoring'
 
 type WorkflowRecord = {
+  childWorkflowIds?: string[]
+  parentWorkflowIds?: string[]
   id: string
   name: string
   project: string
@@ -230,68 +232,6 @@ function resolveWorkflowOwner(
   const matched = ownerOptions.find((owner) => normalizeOwnerLookup(owner.name) === candidateKey || normalizeOwnerLookup(owner.email) === candidateKey)
   return byId ?? matched ?? ownerOptions[fallbackIndex % ownerOptions.length] ?? null
 }
-
-const EXECUTION_TREND = [
-  { date: 'May 18', total: 620, success: 560, failure: 60 },
-  { date: 'May 19', total: 710, success: 640, failure: 70 },
-  { date: 'May 20', total: 775, success: 690, failure: 85 },
-  { date: 'May 21', total: 810, success: 735, failure: 75 },
-  { date: 'May 22', total: 860, success: 780, failure: 80 },
-  { date: 'May 23', total: 920, success: 835, failure: 85 },
-  { date: 'May 24', total: 890, success: 810, failure: 80 },
-]
-
-const RELIABILITY_TREND = [
-  { date: 'May 18', success: 78, retry: 14, failure: 8 },
-  { date: 'May 19', success: 80, retry: 13, failure: 7 },
-  { date: 'May 20', success: 82, retry: 12, failure: 6 },
-  { date: 'May 21', success: 79, retry: 14, failure: 7 },
-  { date: 'May 22', success: 84, retry: 11, failure: 5 },
-  { date: 'May 23', success: 86, retry: 10, failure: 4 },
-  { date: 'May 24', success: 88, retry: 9, failure: 3 },
-]
-
-const QUEUE_DEPTH_TREND = [
-  { date: 'May 18', pending: 180, waiting: 96, retry: 28 },
-  { date: 'May 19', pending: 205, waiting: 108, retry: 24 },
-  { date: 'May 20', pending: 232, waiting: 118, retry: 36 },
-  { date: 'May 21', pending: 218, waiting: 124, retry: 30 },
-  { date: 'May 22', pending: 248, waiting: 128, retry: 32 },
-  { date: 'May 23', pending: 236, waiting: 132, retry: 26 },
-  { date: 'May 24', pending: 248, waiting: 128, retry: 32 },
-]
-
-const FUNNEL_STAGES = [
-  { label: 'Triggered', value: 1248, pct: 100, color: '#3b82f6', bottleneck: false },
-  { label: 'Validated', value: 1186, pct: 95, color: '#60a5fa', bottleneck: false },
-  { label: 'Executing', value: 1004, pct: 80, color: '#22d3ee', bottleneck: false },
-  { label: 'Waiting Approval', value: 342, pct: 27, color: '#f59e0b', bottleneck: true },
-  { label: 'Completed', value: 912, pct: 73, color: '#34d399', bottleneck: false },
-]
-
-const APPROVAL_SLA = [
-  { label: 'Within SLA', pct: 84, value: 1024, color: '#10b981' },
-  { label: 'Near SLA Breach', pct: 11, value: 134, color: '#f59e0b' },
-  { label: 'Breached', pct: 5, value: 62, color: '#ef4444' },
-]
-
-const TRIGGER_SOURCES = [
-  { label: 'Schedule', pct: 38, value: 123, color: '#3b82f6' },
-  { label: 'API', pct: 26, value: 84, color: '#10b981' },
-  { label: 'Manual', pct: 18, value: 56, color: '#f59e0b' },
-  { label: 'Event Driven', pct: 12, value: 39, color: '#f97316' },
-  { label: 'System Event', pct: 6, value: 20, color: '#cbd5e1' },
-]
-
-const AUTOMATION_COVERAGE = [
-  { name: 'Automated', value: 72, color: '#10b981' },
-  { name: 'Manual', value: 28, color: '#e2e8f0' },
-]
-
-const AUTOMATION_SPLIT = [
-  { label: 'Automated', count: '227 wf', pct: 72, color: '#10b981' },
-  { label: 'Manual', count: '89 wf', pct: 28, color: '#94a3b8' },
-]
 
 type InsightLevel = 'Critical' | 'Warning' | 'Info'
 
@@ -834,6 +774,8 @@ function workflowScopeLabel(item: WorkflowRecord): string {
 function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOption[] = []): WorkflowRecord {
   const owner = resolveWorkflowOwner(dto.owner, ownerOptions, -1)
   return {
+    childWorkflowIds: dto.child_workflow_ids ?? [],
+    parentWorkflowIds: dto.parent_workflow_ids ?? [],
     id: dto.id,
     name: dto.name,
     project: dto.category,
@@ -853,6 +795,7 @@ function mapWorkflowDto(dto: WorkflowSummaryDto, ownerOptions: WorkflowOwnerOpti
 }
 
 export function WorkflowAutomationEnginePage() {
+  const [expandedCalls, setExpandedCalls] = useState<Set<string>>(new Set())
   const { addToast } = useToast()
   const { workspaceId, selectedWorkspaceIds } = useTenantContext()
   const sidebarFixed = usePreferencesStore((s) => s.preferences.sidebarFixed ?? false)
@@ -892,18 +835,28 @@ export function WorkflowAutomationEnginePage() {
   const [builder, setBuilder] = useState<{ open: boolean; workflowId: string | null; view?: 'builder' | 'runs' | 'run'; runId?: string | null }>({ open: false, workflowId: null })
   // ?workflow=<id>&view=runs&run=<id> (the link in a failed-run notification) opens that run.
   const [linkParams, setLinkParams] = useSearchParams()
-  useEffect(() => {
-    const linkedWorkflowId = linkParams.get('workflow')
-    if (!linkedWorkflowId) return
+  const [appliedLinkParams, setAppliedLinkParams] = useState<URLSearchParams | null>(null)
+  const replacedLinkParams = useRef<URLSearchParams | null>(null)
+  const linkedWorkflowId = linkParams.get('workflow')
+  if (linkedWorkflowId && appliedLinkParams !== linkParams) {
     const view = linkParams.get('view')
+    setAppliedLinkParams(linkParams)
     setBuilder({
       open: true,
       workflowId: linkedWorkflowId,
       view: view === 'runs' || view === 'run' ? 'runs' : 'builder',
       runId: linkParams.get('run'),
     })
+  }
+  useEffect(() => {
+    if (!linkedWorkflowId) {
+      replacedLinkParams.current = null
+      return
+    }
+    if (replacedLinkParams.current === linkParams) return
+    replacedLinkParams.current = linkParams
     setLinkParams({}, { replace: true })
-  }, [linkParams, setLinkParams])
+  }, [linkedWorkflowId, linkParams, setLinkParams])
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([])
   const [workflowCatalogState, setWorkflowCatalogState] = useState<'loading' | 'backend' | 'error'>('loading')
   const workflowOwnerOptionsRef = useRef<WorkflowOwnerOption[]>([])
@@ -1218,26 +1171,8 @@ export function WorkflowAutomationEnginePage() {
 
   // Dashboard state comes from the backend aggregate. Until it arrives, every figure is
   // empty rather than a placeholder that could be mistaken for real data.
-  const [overview, setOverview] = useState<WorkflowOverviewDto | null>(null)
-  const [overviewState, setOverviewState] = useState<'loading' | 'ready' | 'error'>('loading')
   const overviewWorkspaceId = isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined
-  useEffect(() => {
-    if (activePanel !== 'overview') return
-    let cancelled = false
-    setOverviewState('loading')
-    getWorkflowOverview({ workspaceId: overviewWorkspaceId, days: 7 })
-      .then((next) => {
-        if (cancelled) return
-        setOverview(next)
-        setOverviewState('ready')
-      })
-      .catch(() => {
-        if (!cancelled) setOverviewState('error')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [activePanel, overviewWorkspaceId])
+  const { overview, overviewState } = useWorkflowOverview(overviewWorkspaceId, activePanel === 'overview')
 
   const summary = useMemo(() => {
     const kpis = overview?.kpis
@@ -1306,6 +1241,8 @@ export function WorkflowAutomationEnginePage() {
         ? [
             { label: 'Waiting approval', value: overview.queue.waiting_approval, color: '#f59e0b' },
             { label: 'Waiting delay', value: overview.queue.waiting_delay, color: '#8b5cf6' },
+            { label: 'Waiting event', value: overview.queue.waiting_event ?? 0, color: '#d97706' },
+            { label: 'Waiting child', value: overview.queue.waiting_child ?? 0, color: '#0d9488' },
             { label: 'Running', value: overview.queue.running, color: '#3b82f6' },
             { label: 'Pending approvals', value: overview.queue.pending_approvals, color: '#f97316' },
           ]
@@ -1448,7 +1385,7 @@ export function WorkflowAutomationEnginePage() {
           setWorkflows((current) => {
             const index = current.findIndex((item) => item.id === id)
             const next = [...current]
-            next.splice(index === -1 ? next.length : index + 1, 0, mapWorkflowDto(created, workflowOwnerOptionsRef.current, index + 1))
+            next.splice(index === -1 ? next.length : index + 1, 0, mapWorkflowDto(created, workflowOwnerOptionsRef.current))
             return next
           })
           addToast({ variant: 'success', title: 'Workflow duplicated', description: created.name })
@@ -1520,7 +1457,7 @@ export function WorkflowAutomationEnginePage() {
       workspace_id: isAllWorkspacesSelection(workspaceId) ? undefined : workspaceId ?? undefined,
     })
       .then((created) => {
-        setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current, 0), ...current])
+        setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current), ...current])
         setBuilder({ open: true, workflowId: created.id })
       })
       .catch(() => {
@@ -1689,6 +1626,46 @@ export function WorkflowAutomationEnginePage() {
             </div>
             <div className="mt-0.5 truncate text-[10px] text-slate-500" title={item.project}>{item.project}</div>
             <div className="mt-0.5 truncate text-[10px] text-slate-500" title="Where this workflow fires">{workflowScopeLabel(item)}</div>
+            {item.childWorkflowIds?.length ? (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-teal-700"
+                  aria-expanded={expandedCalls.has(item.id)}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setExpandedCalls((current) => {
+                      const next = new Set(current)
+                      if (next.has(item.id)) next.delete(item.id)
+                      else next.add(item.id)
+                      return next
+                    })
+                  }}
+                >
+                  <ChevronRight className={cn('h-3 w-3 transition-transform', expandedCalls.has(item.id) && 'rotate-90')} />
+                  Parent: {item.childWorkflowIds.length} child workflows
+                </button>
+                {expandedCalls.has(item.id) ? (
+                  <div className="ml-1 mt-1 space-y-1 border-l border-border pl-3">
+                    {item.childWorkflowIds.map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className="block max-w-full truncate text-left text-[11px] text-slate-600 hover:text-primary"
+                        onClick={(event) => { event.stopPropagation(); setBuilder({ open: true, workflowId: id }) }}
+                      >
+                        {workflows.find((row) => row.id === id)?.name || id}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {item.parentWorkflowIds?.length ? (
+              <div className="mt-1 truncate text-[10px] text-teal-700" title={item.parentWorkflowIds.map((id) => workflows.find((row) => row.id === id)?.name || id).join(', ')}>
+                Child of {item.parentWorkflowIds.map((id) => workflows.find((row) => row.id === id)?.name || id).join(', ')}
+              </div>
+            ) : null}
             <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-wide text-slate-400">{workflowCode(item)}</div>
           </div>
         )
@@ -3738,7 +3715,7 @@ export function WorkflowAutomationEnginePage() {
         workflowName={builder.workflowId ? workflows.find((item) => item.id === builder.workflowId)?.name ?? null : null}
         workspaceMembers={workflowOwnerOptions}
         onWorkflowCreated={(created) => {
-          setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current, 0), ...current.filter((item) => item.id !== created.id)])
+          setWorkflows((current) => [mapWorkflowDto(created, workflowOwnerOptionsRef.current), ...current.filter((item) => item.id !== created.id)])
           setBuilder({ open: true, workflowId: created.id })
         }}
         onWorkflowSaved={applySavedWorkflow}

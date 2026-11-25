@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Building2, Check, ChevronDown, Loader2, Search, UserRound } from 'lucide-react'
+import { Building2, Check, ChevronDown, Layers, Loader2, Network, Search, UserRound } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,8 +19,21 @@ import { useUserWorkspaceOptions, type UserWorkspaceOption } from '../hooks/useU
 
 const WORKSPACE_LIST_MAX_HEIGHT_CLASS = 'max-h-64'
 
-function workspaceKindLabel(option: UserWorkspaceOption): string {
-  return option.tenantMode === 'personal' ? 'Personal workspace' : 'Organization workspace'
+function workspacePresentation(option: UserWorkspaceOption) {
+  if (option.tenantMode === 'personal') return { Icon: UserRound, label: 'Personal workspace' }
+
+  switch (option.workspaceClassification?.toLowerCase()) {
+    case 'organization': return { Icon: Building2, label: 'Organization workspace' }
+    case 'division': return { Icon: Network, label: 'Division workspace' }
+    case 'department': return { Icon: Network, label: 'Department workspace' }
+    case 'unit': return { Icon: Network, label: 'Unit workspace' }
+    case 'team': return { Icon: Network, label: 'Team workspace' }
+    case 'branch': return { Icon: Network, label: 'Branch workspace' }
+    default:
+      return option.parentWorkspaceId
+        ? { Icon: Network, label: 'Unit workspace' }
+        : { Icon: Layers, label: 'Workspace' }
+  }
 }
 
 interface WorkspaceSwitcherProps {
@@ -35,6 +48,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
   const { options, loading, fallbackOrgName } = useUserWorkspaceOptions()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   const currentAppPath = useMemo(() => {
     const path = legacyAppPathFromLocation(location.pathname, location.search, location.hash)
@@ -56,7 +70,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
         option.workspaceName,
         option.organizationName,
         option.slug ?? '',
-        workspaceKindLabel(option),
+        workspacePresentation(option).label,
       ]
         .join(' ')
         .toLowerCase()
@@ -129,7 +143,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
 
   const triggerClassName = compact
     ? cn(
-        'inline-flex h-8 max-w-[12rem] items-center gap-1 rounded-md border border-slate-200/80 bg-white/90 px-3',
+        'inline-flex h-8 max-w-[12rem] items-center gap-2 rounded-md border border-slate-200/80 bg-white/90 px-3',
         'text-xs font-medium text-slate-800 shadow-sm backdrop-blur-sm transition-colors hover:bg-white',
       )
     : cn(
@@ -140,18 +154,29 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
   return (
     <DropdownMenu
       open={open}
+      onKeyDownCapture={(event) => {
+        if (!open || event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopPropagation()
+        setOpen(false)
+        setQuery('')
+        triggerRef.current?.focus()
+      }}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen)
         if (!nextOpen) setQuery('')
       }}
     >
-      <DropdownMenuTrigger asChild>
+      <DropdownMenuTrigger asChild ref={triggerRef}>
         <button
           type="button"
           className={triggerClassName}
-          aria-label="Switch workspace"
+          data-workspace-switcher-trigger
+          aria-label={`${triggerLabel}, switch workspace`}
+          aria-expanded={open}
+          title={triggerLabel}
         >
-          <span className="truncate">{triggerLabel}</span>
+          <span className="min-w-0 truncate">{triggerLabel}</span>
           <ChevronDown
             className={cn('shrink-0 text-slate-500', compact ? 'h-3.5 w-3.5' : 'h-4 w-4')}
             aria-hidden
@@ -160,7 +185,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align={menuAlign}
-        className="z-[120] w-80 border border-border/80 bg-popover p-0 shadow-xl"
+        className="z-[120] w-80 max-w-[calc(100vw-2rem)] border border-border/80 bg-popover p-0 shadow-xl"
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
         <div className="px-3 pt-2.5 pb-2">
@@ -181,7 +206,12 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
           </div>
         </div>
         <DropdownMenuSeparator className="my-0" />
-        <div className={cn('overflow-y-auto pb-3 pt-1', WORKSPACE_LIST_MAX_HEIGHT_CLASS)}>
+        <div
+          role="region"
+          aria-label="Workspace options"
+          tabIndex={0}
+          className={cn('overflow-y-auto pb-3 pt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring', WORKSPACE_LIST_MAX_HEIGHT_CLASS)}
+        >
           {groupedOptions.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               No workspace matches “{query.trim()}”.
@@ -195,7 +225,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
                 </DropdownMenuLabel>
                 {organizationOptions.map((option) => {
                   const isActive = activeOption?.workspaceId === option.workspaceId
-                  const Icon = option.tenantMode === 'personal' ? UserRound : Building2
+                  const { Icon, label } = workspacePresentation(option)
                   return (
                     <DropdownMenuItem
                       key={option.workspaceId}
@@ -212,7 +242,7 @@ export function WorkspaceSwitcher({ compact = false, menuAlign = 'start' }: Work
                       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-medium text-foreground">{option.workspaceName}</div>
-                        <div className="text-xs text-muted-foreground">{workspaceKindLabel(option)}</div>
+                        <div className="text-xs text-muted-foreground">{label}</div>
                       </div>
                     </DropdownMenuItem>
                   )

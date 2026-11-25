@@ -45,6 +45,8 @@ export type UserWorkspaceOption = {
   organizationName: string
   slug: string | null
   tenantMode: TenantMode | null
+  /** Directory classification for display only; tenantMode still governs access. */
+  workspaceClassification?: string | null
   parentWorkspaceId: string | null
   parentWorkspaceName: string | null
   isNestedOrgPersonal: boolean
@@ -87,6 +89,9 @@ function mapWorkspaceOption(
     // workspace key is stable and is accepted by the workspace-org resolver.
     slug: workspace.slug ?? workspace.workspace_key ?? null,
     tenantMode: workspace.tenant_mode ?? null,
+    workspaceClassification: typeof meta.tectona_workspace_classification === 'string'
+      ? meta.tectona_workspace_classification.trim() || null
+      : null,
     parentWorkspaceId: parentId,
     parentWorkspaceName: parentWorkspace?.name?.trim() || null,
     isNestedOrgPersonal: isNestedOrgPersonalScope(personalOrgScope, parentId),

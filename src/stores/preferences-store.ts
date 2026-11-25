@@ -1,9 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { normalizeAccent, type AccentColor } from '@/lib/tectonaThemes'
+export type { AccentColor } from '@/lib/tectonaThemes'
 
 export type Language = 'en' | 'id'
 export type LandingPage = 'dashboard' | 'projects'
-export type AccentColor = 'gradient' | 'deep-cosmic' | 'indigo-command' | 'frosted-steel' | 'blue-granite'
 
 interface Preferences {
   language: Language
@@ -60,7 +61,7 @@ export const usePreferencesStore = create<PreferencesState>()(
       },
       updatePreferences: (newPreferences) => {
         set((state) => ({
-          preferences: { ...state.preferences, ...newPreferences },
+          preferences: { ...state.preferences, ...newPreferences, accentColor: normalizeAccent(newPreferences.accentColor ?? state.preferences.accentColor) },
         }))
       },
     }),
@@ -70,12 +71,8 @@ export const usePreferencesStore = create<PreferencesState>()(
         if (!state) {
           return
         }
-        // Migrate removed themes to default
-        const accent = state.preferences?.accentColor as string
-        const validAccents = ['gradient', 'deep-cosmic', 'indigo-command', 'frosted-steel', 'blue-granite']
-        if (accent && !validAccents.includes(accent)) {
-          usePreferencesStore.getState().updatePreferences({ accentColor: 'gradient' })
-        }
+        // Retain user intent when migrating the four retired palettes.
+        state.preferences.accentColor = normalizeAccent(state.preferences?.accentColor)
         if (state.preferences?.fontSize) {
           document.documentElement.style.fontSize = `${state.preferences.fontSize}px`
         }

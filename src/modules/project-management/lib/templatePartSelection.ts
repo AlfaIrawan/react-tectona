@@ -21,6 +21,19 @@ export function isSystemFilledKey(key: string): boolean {
   return SYSTEM_KEY_PATTERNS.some((pattern) => pattern.test(normalized))
 }
 
+const SRD_TICKET_KEY = /^(?:ticket|ticket_number|nomor_ticket|nomor_tiket)$/i
+
+export function preserveSrdTicketFills(written: PartPayload, generated: PartPayload): PartPayload {
+  const fills = { ...written.fills }
+  const diagrams = { ...written.diagrams }
+  for (const [key, value] of Object.entries(generated.fills ?? {})) {
+    if (!SRD_TICKET_KEY.test(key)) continue
+    fills[key] = value
+    delete diagrams[key]
+  }
+  return { ...written, fills, diagrams }
+}
+
 export type TemplatePartKind = 'field' | 'section' | 'table'
 export type TemplatePart = {
   key: string
@@ -47,7 +60,7 @@ function readableName(value: string): string {
 }
 
 /** The parts a user can choose for: fields, sections and top-level tables; system fields are left out. */
-export function templateParts(schema: TemplateAgentSchema | null | undefined): TemplatePart[] {
+export function templateParts(schema: TemplateAgentSchema | null | undefined, kind?: string): TemplatePart[] {
   const parts: TemplatePart[] = []
   const seen = new Set<string>()
   const add = (part: TemplatePart) => {
@@ -57,7 +70,7 @@ export function templateParts(schema: TemplateAgentSchema | null | undefined): T
   }
   for (const item of schema?.placeholders ?? []) {
     const key = String(item?.key ?? '').trim()
-    if (key && !isSystemFilledKey(key)) {
+    if (key && !isSystemFilledKey(key) && !(kind === 'SRD' && SRD_TICKET_KEY.test(key))) {
       const location = item.location && typeof item.location.table_index === 'number' ? item.location : null
       add({ key, label: String(item.label || readableName(key)), kind: 'field', location })
     }

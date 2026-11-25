@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties, type RefObject } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, startTransition, type ComponentProps, type CSSProperties, type RefObject } from 'react'
 import { Gantt, Willow, type IApi, type ILink, type IScaleConfig, type ITask, type TID } from '@svar-ui/react-gantt'
 import '@svar-ui/react-gantt/all.css'
 import { cn } from '@/lib/utils'
 import { buildGanttSelectionColumnWithRefs, isSyntheticGanttSummaryId } from '@/modules/task-work-management/components/DirectoryGanttGridCells'
 import { syncVariableTimelineLayout } from '../lib/planningTimelineColumnLayout'
+import { normalizeGanttProjectName } from '../lib/planningGanttProjectName'
 import {
   findGanttChart,
   shouldPublishTimelinePaging,
@@ -322,11 +323,6 @@ const PROJECT_SUMMARY_PREFIX = 'proj:'
 
 function isGanttSummaryId(id: string): boolean {
   return isSyntheticGanttSummaryId(id)
-}
-
-export function normalizeGanttProjectName(project?: string): string {
-  const trimmed = project?.trim()
-  return trimmed || 'Unidentified'
 }
 
 function sortGanttProjectNames(left: string, right: string): number {
@@ -1163,7 +1159,7 @@ type PlanningSvarGanttProps = {
   workspaceOrder?: string[]
   layout?: PlanningGanttLayout
   /** Override default grid columns (e.g. directory icon columns). */
-  columns?: typeof FLAT_GANTT_COLUMNS
+  columns?: ComponentProps<typeof Gantt>['columns']
   zoomLevel: PlanningGanttZoomLevel
   selectedId: string
   onSelect: (id: string) => void
@@ -1331,7 +1327,7 @@ export function PlanningSvarGantt({
     syncTodayColumnHighlight(host, api, zoom, overrides, baseWidth)
   }, [])
 
-  const scheduleGanttVisualSync = useCallback(() => {
+  const scheduleGanttVisualSync = useCallback(function scheduleAfterQuietPeriod() {
     if (rowDragActiveRef.current || chartEditActiveRef.current) return
 
     const quietRemaining = postDropQuietUntilRef.current - performance.now()
@@ -1339,7 +1335,7 @@ export function PlanningSvarGantt({
       if (!postDropSyncTimerRef.current) {
         postDropSyncTimerRef.current = window.setTimeout(() => {
           postDropSyncTimerRef.current = 0
-          scheduleGanttVisualSync()
+          scheduleAfterQuietPeriod()
         }, quietRemaining + 16)
       }
       return
@@ -1672,8 +1668,10 @@ export function PlanningSvarGantt({
     return () => onTimelinePagingApiReadyRef.current?.(null)
   }, [canExtendForward, extendForwardMonth, timelineWindowOverride])
 
+  const hasPagingWindowOverride = useEffectEvent(() => Boolean(timelineWindowOverride))
+
   useEffect(() => {
-    if (!onTimelinePagingChange || timelineWindowOverride) return undefined
+    if (!onTimelinePagingChange || hasPagingWindowOverride()) return undefined
 
     let chart: HTMLElement | null = null
     let raf = 0
@@ -1773,7 +1771,7 @@ export function PlanningSvarGantt({
 
       let minMs = Number.POSITIVE_INFINITY
       for (const task of tasks) {
-        const rawStart = task.start
+        const rawStart: unknown = task.start
         const start =
           rawStart instanceof Date
             ? rawStart

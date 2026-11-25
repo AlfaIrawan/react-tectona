@@ -1,3 +1,4 @@
+import { clearDiagramEdgeWaypoints, reverseDiagramEdge } from '../lib/diagramEdgeActions'
 import { useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import {
   AlignCenter,
@@ -77,15 +78,15 @@ let edgeStyleClipboard: {
 
 export function splitEdgeLabel(label?: string): { text: string; technology: string } {
   const raw = String(label ?? '')
-  const match = /\s*\[([^\]]+)\]\s*$/.exec(raw)
+  const match = /\s?\[([^\]]+)\]\s*$/.exec(raw)
   return {
-    text: match ? raw.slice(0, match.index).trim() : raw,
+    text: match ? raw.slice(0, match.index) : raw,
     technology: match?.[1] ?? '',
   }
 }
 
 export function joinEdgeLabel(text: string, technology: string): string {
-  const trimmed = text.trim()
+  const trimmed = text
   const tech = technology.trim()
   if (!trimmed && !tech) return ''
   return tech ? `${trimmed || 'uses'} [${tech}]` : trimmed
@@ -109,6 +110,7 @@ function NumberStepper({
       <div className="flex items-center gap-1">
         <Input
           type="number"
+          aria-label={label || suffix || 'Value'}
           value={Number.isFinite(value) ? value : 0}
           onChange={(event) => onChange(Number.parseFloat(event.target.value) || 0)}
           className="h-7 px-2 text-[11px]"
@@ -177,10 +179,11 @@ function PropertyRow({
   label: string
   children: ReactNode
 }) {
+  const unsupported = ['Source Constraint', 'Target Constraint', 'Anchor Direction', 'Snap to Point', 'No Jumps', 'Loop Routing'].includes(label)
   return (
     <div className="grid grid-cols-[1fr_1.1fr] items-center gap-2 border-b border-sky-100 py-1 text-[11px]">
       <span className="text-sky-900">{label}</span>
-      <div className="min-w-0 text-slate-800">{children}</div>
+      <fieldset disabled={unsupported} title={unsupported ? 'Not supported by this renderer' : undefined} className="min-w-0 text-slate-800 disabled:opacity-50">{children}</fieldset>
     </div>
   )
 }
@@ -283,13 +286,6 @@ function DashGlyph({ pattern }: { pattern: IntegrationEdgeLinePattern }) {
   )
 }
 
-function swapEdgeHandleRole(handle?: string | null): string | undefined {
-  if (!handle) return undefined
-  if (handle.startsWith('source-')) return `target-${handle.slice(7)}`
-  if (handle.startsWith('target-')) return `source-${handle.slice(7)}`
-  return handle
-}
-
 export function DiagramEdgePropertiesPanel({
   edge,
   onChange,
@@ -308,6 +304,10 @@ export function DiagramEdgePropertiesPanel({
   const textStyle = resolveEdgeTextStyle(edge)
   const arrange = resolveEdgeArrange(edge)
   const stored = readEdgeData(edge)
+  const isErd = edge.type === 'erd' || edge.type === 'erdCrowfoot'
+  const erdData = (edge.data ?? {}) as Record<string, unknown>
+  const cardinality = (end: 'source' | 'target') => `${erdData[`${end}Optional`] ? 'zero-or-' : ''}${erdData[`${end}Many`] ? 'many' : 'one'}`
+  const setCardinality = (end: 'source' | 'target', value: string) => onChange({ data: { ...edge.data, [`${end}Many`]: value.endsWith('many'), [`${end}Optional`]: value.startsWith('zero-or-') } })
   const parts = splitEdgeLabel(typeof edge.label === 'string' ? edge.label : '')
   const technology = stored.technology ?? parts.technology
 
@@ -423,6 +423,7 @@ export function DiagramEdgePropertiesPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-1">
+          <fieldset disabled={isErd} className="flex items-center gap-1 disabled:opacity-50" title={isErd ? "Crowfoot markers encode cardinality" : undefined}>
           {ARROW_OPTIONS.slice(0, 4).map((option) => (
             <ToolbarIcon
               key={`end-quick-${option.value}`}
@@ -433,6 +434,7 @@ export function DiagramEdgePropertiesPanel({
               <ArrowGlyph kind={option.value} />
             </ToolbarIcon>
           ))}
+          </fieldset>
           {LINE_PATTERNS.map((pattern) => (
             <ToolbarIcon
               key={pattern}
@@ -454,10 +456,23 @@ export function DiagramEdgePropertiesPanel({
           </div>
         </div>
 
+        {isErd ? <div className="space-y-2 rounded border border-sky-200 bg-sky-50 p-2">
+          <p className="text-[11px] text-slate-700">Crowfoot markers encode cardinality. Generic arrow shape, size and fill do not apply.</p>
+          {(['source', 'target'] as const).map(end => <label key={end} className="flex items-center gap-2 text-[11px]">
+            <span className="w-16 shrink-0">{end === 'source' ? 'From' : 'To'}</span>
+            <Select aria-label={`${end === 'source' ? 'From' : 'To'} cardinality`} className="h-7 min-w-0 flex-1 text-[11px]" value={cardinality(end)} onChange={event => setCardinality(end, event.target.value)}>
+              <option value="one">One (1)</option>
+              <option value="zero-or-one">Zero or one (0..1)</option>
+              <option value="many">One or many (1..*)</option>
+              <option value="zero-or-many">Zero or many (0..*)</option>
+            </Select>
+          </label>)}
+        </div> : null}
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
             <span className="w-16 shrink-0 text-[11px] text-slate-700">Line end</span>
             <Select
+              aria-label="Line end" disabled={isErd}
               value={visual.endArrow}
               onChange={(event) => commit({ visual: { endArrow: event.target.value as IntegrationEdgeArrow } })}
               className="h-7 min-w-0 flex-1 text-[11px]"
@@ -469,7 +484,7 @@ export function DiagramEdgePropertiesPanel({
           </div>
           <div className="grid grid-cols-2 gap-2 pl-16">
             <NumberStepper label="Spacing" value={visual.endSpacing} onChange={(endSpacing) => commit({ visual: { endSpacing } })} />
-            <NumberStepper label="Size" value={visual.endSize} onChange={(endSize) => commit({ visual: { endSize: Math.max(2, endSize) } })} />
+            <fieldset disabled={isErd} className="disabled:opacity-50" aria-label="End marker size"><NumberStepper label="Size" value={visual.endSize} onChange={(endSize) => commit({ visual: { endSize: Math.max(2, endSize) } })} /></fieldset>
           </div>
         </div>
 
@@ -477,6 +492,7 @@ export function DiagramEdgePropertiesPanel({
           <div className="flex items-center gap-2">
             <span className="w-16 shrink-0 text-[11px] text-slate-700">Line start</span>
             <Select
+              aria-label="Line start" disabled={isErd}
               value={visual.startArrow}
               onChange={(event) => commit({ visual: { startArrow: event.target.value as IntegrationEdgeArrow } })}
               className="h-7 min-w-0 flex-1 text-[11px]"
@@ -488,13 +504,13 @@ export function DiagramEdgePropertiesPanel({
           </div>
           <div className="grid grid-cols-2 gap-2 pl-16">
             <NumberStepper label="Spacing" value={visual.startSpacing} onChange={(startSpacing) => commit({ visual: { startSpacing } })} />
-            <NumberStepper label="Size" value={visual.startSize} onChange={(startSize) => commit({ visual: { startSize: Math.max(2, startSize) } })} />
+            <fieldset disabled={isErd} className="disabled:opacity-50" aria-label="Start marker size"><NumberStepper label="Size" value={visual.startSize} onChange={(startSize) => commit({ visual: { startSize: Math.max(2, startSize) } })} /></fieldset>
           </div>
         </div>
 
-        <div className="flex items-end gap-2">
+        <fieldset disabled title="Line jumps are not supported by this renderer" className="flex items-end gap-2 opacity-50">
           <div className="min-w-0 flex-1">
-            <p className="mb-1 text-[11px] text-slate-700">Line jumps</p>
+            <p className="mb-1 text-[11px] text-slate-700">Line jumps (unavailable)</p>
             <Select
               value={visual.lineJumps}
               onChange={(event) => commit({ visual: { lineJumps: event.target.value as IntegrationEdgeJumpStyle } })}
@@ -509,7 +525,7 @@ export function DiagramEdgePropertiesPanel({
           <div className="w-20">
             <NumberStepper label="" suffix="pt" value={visual.jumpSize} onChange={(jumpSize) => commit({ visual: { jumpSize } })} />
           </div>
-        </div>
+        </fieldset>
       </div>
 
       <div className={PANEL_SECTION_CLASS}>
@@ -531,7 +547,7 @@ export function DiagramEdgePropertiesPanel({
           className={cn(PANEL_MINI_BUTTON_CLASS, 'col-span-2')}
           onClick={() => commit({ visual: defaultIntegrationEdgeVisual(), arrange: defaultIntegrationEdgeArrange() })}
         >
-          Edit Style
+          Reset Style
         </button>
         <button
           type="button"
@@ -581,10 +597,10 @@ export function DiagramEdgePropertiesPanel({
             <NumberStepper label="" value={arrange.strokeOpacity} onChange={(strokeOpacity) => commit({ arrange: { strokeOpacity } })} />
           </PropertyRow>
           <PropertyRow label="Start Fill">
-            <input type="checkbox" checked={visual.startFill} onChange={(event) => commit({ visual: { startFill: event.target.checked } })} />
+            <input type="checkbox" aria-label="Start fill" disabled={isErd} checked={visual.startFill} onChange={(event) => commit({ visual: { startFill: event.target.checked } })} />
           </PropertyRow>
           <PropertyRow label="End Fill">
-            <input type="checkbox" checked={visual.endFill} onChange={(event) => commit({ visual: { endFill: event.target.checked } })} />
+            <input type="checkbox" aria-label="End fill" disabled={isErd} checked={visual.endFill} onChange={(event) => commit({ visual: { endFill: event.target.checked } })} />
           </PropertyRow>
           <PropertyRow label="Terminal Spacing">
             <NumberStepper label="" value={arrange.terminalSpacing} onChange={(terminalSpacing) => commit({ arrange: { terminalSpacing } })} />
@@ -761,7 +777,7 @@ export function DiagramEdgePropertiesPanel({
           onColorChange={(borderColor) => commit({ textStyle: { borderColor, borderColorEnabled: true } })}
         />
         <CheckboxRow label="Formatted Text" checked={textStyle.formattedText} onChange={(formattedText) => commit({ textStyle: { formattedText } })} />
-        <CheckboxRow label="Word Wrap" checked={textStyle.wordWrap || textStyle.boxWidth > 0 || textStyle.boxHeight > 0} onChange={(wordWrap) => commit({ textStyle: { wordWrap } })} />
+        <CheckboxRow label="Word Wrap" checked={textStyle.wordWrap} onChange={(wordWrap) => commit({ textStyle: { wordWrap } })} />
         <div className="grid grid-cols-2 gap-2">
           <NumberStepper label="Box Width" suffix="px" value={Math.round(textStyle.boxWidth)} onChange={(boxWidth) => commit({ textStyle: { boxWidth: Math.max(0, boxWidth), wordWrap: boxWidth > 0 || textStyle.wordWrap } })} />
           <NumberStepper label="Box Height" suffix="px" value={Math.round(textStyle.boxHeight)} onChange={(boxHeight) => commit({ textStyle: { boxHeight: Math.max(0, boxHeight), wordWrap: boxHeight > 0 || textStyle.wordWrap } })} />
@@ -809,12 +825,7 @@ export function DiagramEdgePropertiesPanel({
       <button
         type="button"
         className={cn(PANEL_MINI_BUTTON_CLASS, 'w-full')}
-        onClick={() => onChange({
-          source: edge.target,
-          target: edge.source,
-          sourceHandle: swapEdgeHandleRole(edge.targetHandle),
-          targetHandle: swapEdgeHandleRole(edge.sourceHandle),
-        })}
+        onClick={() => onChange(reverseDiagramEdge(edge))}
       >
         Reverse
       </button>
@@ -850,7 +861,7 @@ export function DiagramEdgePropertiesPanel({
               onClearWaypoints()
               return
             }
-            onChange({ sourceHandle: undefined, targetHandle: undefined })
+            onChange(clearDiagramEdgeWaypoints(edge))
           }}
         >
           Clear Waypoints

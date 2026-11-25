@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none" role="img" aria-label="Tectona TC">
+  <defs>
+    <linearGradient id="surface" x1="24" y1="8" x2="236" y2="256" gradientUnits="userSpaceOnUse"><stop stop-color="#4B5563"/><stop offset="1" stop-color="#153E80"/></linearGradient>
+    <linearGradient id="accent" x1="28" y1="225" x2="231" y2="31" gradientUnits="userSpaceOnUse"><stop stop-color="#CBD5E1"/><stop offset="0.53" stop-color="#7AA7E8"/><stop offset="1" stop-color="#2563EB"/></linearGradient>
+    <linearGradient id="letter" x1="132" y1="84" x2="217" y2="185" gradientUnits="userSpaceOnUse"><stop stop-color="#E2E8F0"/><stop offset="1" stop-color="#93C5FD"/></linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#surface)"/>
+  <rect x="9" y="9" width="238" height="238" rx="47" stroke="white" stroke-opacity="0.12" stroke-width="2"/>
+  <path d="M180 8H200C226.51 8 248 29.49 248 56V76L180 8Z" fill="url(#accent)"/>
+  <path d="M42 82H128V106H98V180H72V106H42V82Z" fill="#F4F8FF"/>
+  <path d="M215 96L198 113C192 106 186 103 177 103C160 103 151 114 151 131C151 148 160 159 177 159C186 159 193 155 199 148L216 165C206 177 193 183 176 183C145 183 125 162 125 131C125 100 146 79 177 79C193 79 206 85 215 96Z" fill="url(#letter)"/>
+  <path d="M43 211H93" stroke="url(#accent)" stroke-width="6" stroke-linecap="round"/>
+</svg>

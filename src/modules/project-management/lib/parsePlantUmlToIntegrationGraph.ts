@@ -308,8 +308,8 @@ export type NodeGeometry = { x: number; y: number; width: number; height: number
 export const CONNECTION_HANDLE_POSITIONS = [17, 33, 50, 67, 83] as const
 export const CONNECTION_HANDLE_OFFSETS = CONNECTION_HANDLE_POSITIONS.filter((offset) => offset !== 50)
 
-const MIN_HANDLE_GAP_PX = 28
-const MAX_HANDLES_PER_SIDE = 9
+const MIN_HANDLE_GAP_PX = 20
+const MAX_HANDLES_PER_SIDE = 13
 
 export function connectionHandlePercentsForLength(length: number): number[] {
   if (!Number.isFinite(length) || length < 64) return [50]

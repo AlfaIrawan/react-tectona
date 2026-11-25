@@ -12,6 +12,9 @@ import {
   Lock,
   ShieldCheck,
   Users,
+  MoreHorizontal,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
@@ -110,6 +113,7 @@ export const REPOSITORY_HEADER_CELL_CLASS =
   'select-none border-b-[3px] border-double border-slate-300/90 bg-white/90 px-3 py-2 text-left font-semibold backdrop-blur dark:border-slate-600/80 dark:bg-slate-900/90'
 
 export type DocumentRepositoryPaginationProps = {
+  mobile?: boolean
   page: number
   pageSize: number
   totalCount: number
@@ -125,11 +129,21 @@ export function DocumentRepositoryPaginationControls({
   onPageChange,
   onPageSizeChange,
   loading = false,
+  mobile = false,
 }: DocumentRepositoryPaginationProps) {
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const pageSafe = Math.min(Math.max(1, page), totalPages)
   const start = totalCount === 0 ? 0 : (pageSafe - 1) * pageSize + 1
   const end = totalCount === 0 ? 0 : Math.min(pageSafe * pageSize, totalCount)
+
+  if (mobile) return <div className="flex w-full items-center justify-between gap-2 border-t border-border pt-3 text-xs text-muted-foreground" aria-label="Document pagination">
+    <span className="min-w-0">{start}-{end} of {totalCount}</span>
+    <div className="flex shrink-0 items-center gap-1">
+      <button type="button" title="Previous page" aria-label="Previous document page" disabled={loading || pageSafe <= 1} onClick={() => onPageChange(pageSafe - 1)} className="flex h-11 w-11 items-center justify-center rounded-md border bg-background disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
+      <span className="px-1 tabular-nums">{pageSafe}/{totalPages}</span>
+      <button type="button" title="Next page" aria-label="Next document page" disabled={loading || pageSafe >= totalPages} onClick={() => onPageChange(pageSafe + 1)} className="flex h-11 w-11 items-center justify-center rounded-md border bg-background disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
+    </div>
+  </div>
 
   return (
     <div className="flex items-center justify-end gap-3 overflow-x-auto py-1 whitespace-nowrap text-xs text-muted-foreground scrollbar-hide">
@@ -176,6 +190,8 @@ export function DocumentRepositoryPaginationControls({
 }
 
 type DocumentRepositoryTableViewProps = {
+  mobileCards?: boolean
+  onItemMenu?: (event: MouseEvent<HTMLButtonElement>, item: RepositoryItem) => void
   items: RepositoryItem[]
   showKbProgressColumn?: boolean
   loading?: boolean
@@ -212,6 +228,8 @@ export function DocumentRepositoryTableView({
   variant = 'repository',
   hiddenColumnKeys = [],
   kbLayout = 'compact',
+  mobileCards = false,
+  onItemMenu,
 }: DocumentRepositoryTableViewProps) {
   const isProjectListVariant = variant === 'project-list'
   const hidden = new Set(hiddenColumnKeys)
@@ -284,6 +302,21 @@ export function DocumentRepositoryTableView({
     )
   }
 
+  if (mobileCards) return <ul className="space-y-3" aria-label="Idea documents">
+    {repositoryRows.map((item) => <li key={item.id} className="min-w-0 rounded-lg border border-border bg-background p-3">
+      <div className="flex min-w-0 items-start gap-2">
+        <button type="button" onClick={() => onDocumentClick?.(item)} className="flex min-w-0 flex-1 items-start gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <FileTypeIconImg fileName={item.fileName} compact />
+          <span className="min-w-0 flex-1"><span className="block break-words text-sm font-semibold leading-5">{item.displayName || item.name}</span><span className="mt-1 block break-words text-xs text-muted-foreground">{item.fileName}</span></span>
+        </button>
+        {onItemMenu && <button type="button" aria-label={`Actions for ${item.displayName || item.name}`} title="Document actions" onClick={(event) => onItemMenu(event, item)} className="-mr-1 -mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted"><MoreHorizontal className="h-5 w-5" /></button>}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span>{item.type}</span><span className="rounded border border-border px-2 py-1">{item.status}</span>{onVersionClick ? <button type="button" onClick={() => onVersionClick(item)} className="inline-flex min-h-9 items-center gap-1 rounded-md border px-2" title="Version history"><GitBranch className="h-3.5 w-3.5" />{item.version}</button> : <span>{item.version}</span>}</div>
+      <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"><span className="min-w-0 break-words">{item.owner}</span><span>{item.updated}</span></div>
+      {rowAction && <div className="mt-2 min-w-0">{rowAction(item)}</div>}
+    </li>)}
+  </ul>
+
   const table = (
     <table
       ref={isProjectListVariant ? undefined : repositoryColumns.tableRef}
@@ -318,7 +351,7 @@ export function DocumentRepositoryTableView({
                 key={header.key}
                 className={cn(
                   PROJECT_LIST_TABLE_HEAD_CELL_CLASS,
-                  header.isFirst
+                  'isFirst' in header && header.isFirst
                     ? PROJECT_LIST_FIRST_COLUMN_TINT_HEADER_CLASS
                     : cn(PROJECT_LIST_OTHER_COLUMN_TINT_HEADER_CLASS, 'whitespace-nowrap'),
                 )}

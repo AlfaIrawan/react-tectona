@@ -120,7 +120,7 @@ function asUiAttachmentKind(kind: string): PeopleChatUiAttachment['kind'] {
 /** Decode a stored People-chat body so bubbles can render images even if mapping was skipped. */
 export function materializePeopleChatUiMessage<T extends { text: string; attachments?: PeopleChatUiAttachment[] }>(
   message: T,
-): T {
+): T & { attachments?: PeopleChatUiAttachment[] } {
   const decoded = decodePeopleChatBody(message.text)
   if (!decoded.attachments.length && decoded.text === message.text) return message
   const existing = message.attachments ?? []

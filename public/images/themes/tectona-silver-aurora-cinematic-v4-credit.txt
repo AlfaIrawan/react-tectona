@@ -1,0 +1,11 @@
+Aurora borealis timelapse (2013)
+Author: Harriniva Hotels&Safaris
+Source: https://commons.wikimedia.org/wiki/File:Aurora_borealis_timelapse.webm
+License: Creative Commons Attribution 3.0 Unported (CC BY 3.0)
+License URL: https://creativecommons.org/licenses/by/3.0/
+
+Changes: excerpt from 00:01:14 to 00:01:26, full-HD 1920x1080,
+Gray-Blue color grade (the original aurora is green), mild temporal denoising,
+sharpening and vignette; re-encoded to VP9/WebM at 30 fps, no audio.
+A PNG poster was extracted. Tectona adds a playback crossfade when repeating.
+The author does not endorse Tectona.

@@ -4,8 +4,17 @@ import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
+import { devCookieAuth } from './scripts/dev-cookie-auth'
 
 const stripGatewayRuntime = (p: string) => p.replace(/^\/api\/gateway-runtime/, '')
+
+function localDevHttps() {
+  if (process.env.TECTONA_DEV_HTTPS !== '1') return undefined
+  const key = process.env.TECTONA_DEV_TLS_KEY
+  const cert = process.env.TECTONA_DEV_TLS_CERT
+  if (!key || !cert) throw new Error('Local HTTPS requires TECTONA_DEV_TLS_KEY and TECTONA_DEV_TLS_CERT')
+  return { key: readFileSync(key), cert: readFileSync(cert) }
+}
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'))
 
@@ -19,12 +28,26 @@ function gitShortHash(): string {
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        // Keep the Recharts barrel and its internally referenced exports together.
+        manualChunks: { 'vendor-recharts': ['recharts'] },
+      },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version as string),
     __APP_BUILD_HASH__: JSON.stringify(gitShortHash()),
   },
   plugins: [
     react(),
+    devCookieAuth('tectona-spa', process.env.W06_LOCAL_SCOPED_AUTH === '1', {
+      identity: process.env.W06_LOCAL_IDENTITY_ORIGIN,
+      org: process.env.W06_LOCAL_ORG_ORIGIN,
+      wac: process.env.W06_LOCAL_WAC_ORIGIN,
+      idea: process.env.W06_LOCAL_IDEA_ORIGIN,
+    }),
     {
       name: 'tectona-cache-background-media-dev',
       configureServer(server) {
@@ -43,16 +66,17 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: null,
       includeAssets: [
-        'vite.svg',
+        'images/tectona-icon.svg',
+        'images/tectona-wordmark.svg',
         'images/logo.png',
         'images/logo-white.png',
         'ui-manifest.json',
       ],
       manifest: {
         id: '/',
-        name: 'Tectona — Project Management',
+        name: 'Tectona — AI Project Management',
         short_name: 'Tectona',
-        description: 'Tectona project management platform for Adira Dinamika Multifinance.',
+        description: 'Tectona — AI Project Management',
         theme_color: '#0f172a',
         background_color: '#ffffff',
         display: 'standalone',
@@ -62,21 +86,21 @@ export default defineConfig({
         categories: ['business', 'productivity'],
         icons: [
           {
-            src: '/images/logo.png',
-            sizes: '192x192',
-            type: 'image/png',
+            src: '/images/tectona-icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
             purpose: 'any',
           },
           {
-            src: '/images/logo.png',
-            sizes: '512x512',
-            type: 'image/png',
+            src: '/images/tectona-icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
             purpose: 'any',
           },
           {
-            src: '/images/logo.png',
-            sizes: '512x512',
-            type: 'image/png',
+            src: '/images/tectona-icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
             purpose: 'maskable',
           },
         ],
@@ -101,7 +125,7 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         navigateFallback: '/index.html',
         // Keep Vite/dev module graph and API off the SPA fallback.
-        navigateFallbackDenylist: [/^\/api\//, /^\/src\//, /^\/@/, /^\/node_modules\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/src\//, /^\/@/, /^\/node_modules\//, /^\/user-preferences(\/|$)/, /^\/api-catalog(\/|$)/],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
@@ -160,8 +184,9 @@ export default defineConfig({
     }),
   ],
   server: {
-    allowedHosts: ['host.docker.internal'],
-    host: true,
+    https: localDevHttps(),
+    allowedHosts: ['host.docker.internal', ...(process.env.TECTONA_DEV_HOST ? [process.env.TECTONA_DEV_HOST] : [])],
+    host: process.env.W06_LOCAL_SCOPED_AUTH === '1' ? '127.0.0.1' : true,
     port: 9411,
     strictPort: true,
     proxy: {

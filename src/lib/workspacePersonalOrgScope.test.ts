@@ -19,8 +19,11 @@ const IT_BP = 'ws-it-bp'
 const HENRY_PERSONAL = 'ws-henry-personal'
 const MANUEL_PERSONAL = 'ws-manuel-personal'
 
+type DirectoryRow = Parameters<typeof toDirectoryTreeWorkspace>[0]
+type DefaultedFields = 'primaryOrganizationId' | 'personalOrgScope' | 'parentWorkspaceId'
+
 function row(
-  partial: Parameters<typeof toDirectoryTreeWorkspace>[0],
+  partial: Omit<DirectoryRow, DefaultedFields> & Partial<Pick<DirectoryRow, DefaultedFields>>,
 ): ReturnType<typeof toDirectoryTreeWorkspace> {
   return toDirectoryTreeWorkspace({
     primaryOrganizationId: ORG_ID,

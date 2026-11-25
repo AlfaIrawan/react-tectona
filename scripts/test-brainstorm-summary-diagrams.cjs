@@ -1,10 +1,29 @@
 const assert = require('node:assert/strict')
 const path = require('node:path')
 const Module = require('node:module')
+const fs = require('node:fs')
+const ts = require('typescript')
 const esbuild = require('esbuild')
 const { JSDOM } = require('jsdom')
 
 async function main() {
+  const pagePath = 'src/modules/project-management/pages/IdeaBacklogManagementPage.tsx'
+  const page = ts.createSourceFile(pagePath, fs.readFileSync(pagePath, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const createPreviews = []
+  function visit(node) {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(page) === 'AssistantMermaidBlock') {
+      const attributes = node.attributes.properties.filter(ts.isJsxAttribute)
+      const source = attributes.find(attribute => attribute.name.getText(page) === 'source')
+      if (source?.initializer && ts.isJsxExpression(source.initializer) && source.initializer.expression?.getText(page) === 'diagram.source') {
+        const notation = attributes.find(attribute => attribute.name.getText(page) === 'notation')
+        assert.equal(notation?.initializer?.text, 'bpmn', 'Create Idea AS-IS/TO-BE previews must explicitly request BPMN')
+        createPreviews.push(node)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(page)
+  assert.equal(createPreviews.length, 1, 'Both Create Idea process previews use the shared diagram loop')
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
   global.window = dom.window
   global.document = dom.window.document

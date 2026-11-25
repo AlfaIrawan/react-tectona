@@ -5,7 +5,7 @@ export type BpmnParsedKind = 'activity' | 'decision' | 'start' | 'end'
 export type BpmnParsedNode = { id: string; label: string; kind: BpmnParsedKind; bpmnType: string; lane?: string }
 export type BpmnParsedGraph = {
   nodes: BpmnParsedNode[]
-  edges: Array<{ id: string; source: string; target: string; label?: string }>
+  edges: Array<{ id: string; source: string; target: string; label?: string; bpmnFlowType?: string }>
 }
 
 export function isBpmnXml(source: string): boolean {
@@ -181,11 +181,7 @@ export function parseBpmnXml(source: string): BpmnParsedGraph {
       edges.push({ id: `edge-${edges.length}`, source: sourceId, target: targetId, label })
     }
   }
-  if (!edges.length) {
-    nodes.slice(1).forEach((current, index) => {
-      edges.push({ id: `edge-${index}`, source: nodes[index].id, target: current.id })
-    })
-  }
+  // Disconnected or unsupported relationships are not evidence of sequence flow.
   return { nodes, edges }
 }
 
@@ -395,13 +391,31 @@ export function normalizeBpmnGraph(graph: BpmnParsedGraph): BpmnParsedGraph {
 export function parseBpmnSource(source: string): BpmnParsedGraph {
   if (isBpmnXml(source)) return normalizeBpmnGraph(parseBpmnXml(source))
   if (/^\s*(?:flowchart|graph)\s+(?:TD|LR|TB|RL)\b/im.test(source)) return normalizeBpmnGraph(parseMermaidFlowToBpmn(source))
-  return normalizeBpmnGraph(parseBpmnPlantUml(source))
+  const parsed = parseBpmnPlantUml(source)
+  // Editor metadata is valid PlantUML commentary, not executable BPMN XML.
+  // Declarations and arrows remain authoritative so source edits still take effect.
+  if (/^' tectona-bpmn: 1$/m.test(source)) {
+    const metadata = new Map<string, { bpmnType: string; kind: BpmnParsedKind }>()
+    for (const match of source.matchAll(/^' tectona-bpmn-node (\S+) (\w+) (activity|decision|start|end)$/gm)) {
+      metadata.set(match[1], { bpmnType: match[2], kind: match[3] as BpmnParsedKind })
+    }
+    const flowTypes = new Map<string, string[]>()
+    for (const match of source.matchAll(/^' tectona-bpmn-flow \d+ (\w+)\r?\n\s*([\w.-]+)\s*--?>\s*([\w.-]+)/gm)) {
+      const key = `${match[2]}\u0000${match[3]}`
+      flowTypes.set(key, [...(flowTypes.get(key) ?? []), match[1]])
+    }
+    const explicitEdges = /^\s*[\w.-]+\s*--?>\s*[\w.-]+/m.test(source)
+    return { nodes: parsed.nodes.map(node => ({ ...node, ...metadata.get(node.id) })),
+      edges: explicitEdges ? parsed.edges.map(edge => ({ ...edge, bpmnFlowType: flowTypes.get(`${edge.source}\u0000${edge.target}`)?.shift() ?? 'sequenceFlow' })) : [] }
+  }
+  return normalizeBpmnGraph(parsed)
 }
 
 export function bpmnGraphToPlantUml(graph: BpmnParsedGraph): string {
-  const normalized = normalizeBpmnGraph(graph)
+  const normalized = graph
   const lines = [
     '@startuml',
+    "' tectona-bpmn: 1",
     'skinparam shadowing false',
     'skinparam defaultFontName Arial',
     'skinparam roundcorner 8',
@@ -413,6 +427,7 @@ export function bpmnGraphToPlantUml(graph: BpmnParsedGraph): string {
   for (const node of normalized.nodes) {
     const id = aliasPlantUml(node.id)
     const title = quotePlantUml(node.label)
+    lines.push(`' tectona-bpmn-node ${id} ${node.bpmnType} ${node.kind}`)
     if (node.kind === 'start' || node.kind === 'end' || node.bpmnType === 'startEvent' || node.bpmnType === 'endEvent') {
       lines.push(`() "${title}" as ${id}`)
     } else if (node.kind === 'decision' || node.bpmnType.toLowerCase().includes('gateway')) {
@@ -425,7 +440,8 @@ export function bpmnGraphToPlantUml(graph: BpmnParsedGraph): string {
       lines.push(`rectangle "${title}" as ${id}`)
     }
   }
-  for (const edge of normalized.edges) {
+  for (const [index, edge] of normalized.edges.entries()) {
+    lines.push(`' tectona-bpmn-flow ${index} ${edge.bpmnFlowType ?? 'sequenceFlow'}`)
     const label = edge.label?.trim() ? ` : ${quotePlantUml(edge.label.trim())}` : ''
     lines.push(`${aliasPlantUml(edge.source)} --> ${aliasPlantUml(edge.target)}${label}`)
   }
@@ -459,16 +475,25 @@ function nodeTitle(node: Node<ArchimateNodeData>): string {
     : node.id
 }
 
-export function serializeBpmnCanvasToPlantUml(nodes: Node<ArchimateNodeData>[], edges: Edge[]): string {
+export function serializeBpmnCanvasToPlantUml(nodes: Node<ArchimateNodeData>[], edges: Edge[], originalSource = ''): string {
+  // Only explicit comments/XML membership are recovery evidence, not actor-label heuristics.
+  const originalIds = new Set(parseBpmnSource(originalSource).nodes.map(node => node.id))
+  const originalLanes = new Map<string, string>()
+  if (isBpmnXml(originalSource)) {
+    for (const node of parseBpmnXml(originalSource).nodes) if (node.lane) originalLanes.set(node.id, node.lane)
+  } else {
+    for (const match of originalSource.matchAll(/^\s*'\s*lane\s+([\w.-]+)\s*:\s*(.+)\s*$/gim)) originalLanes.set(match[1], match[2].trim())
+  }
   const elements = nodes.filter((node) => (
     node.type === 'bpmnElement'
     && node.data.kind === 'element'
-    && node.data.notationId !== 'lane'
-    && node.data.notationId !== 'pool'
+    && !(node.data.notationId === 'lane' && node.selectable === false)
   ))
+  // A legacy graph with explicit source lanes but no reliable binding must keep its source.
+  if (originalLanes.size && elements.some(node => node.data.kind === 'element' && node.data.bpmnLane === undefined && !originalIds.has(node.id))) return originalSource
   return bpmnGraphToPlantUml({
     nodes: elements.map((node) => {
-      const bpmnType = node.data.notationId || 'task'
+      const bpmnType = (node.data.kind === 'element' && node.data.notationId) || 'task'
       const kind: BpmnParsedKind = bpmnType.includes('Gateway')
         ? 'decision'
         : bpmnType === 'startEvent'
@@ -476,13 +501,16 @@ export function serializeBpmnCanvasToPlantUml(nodes: Node<ArchimateNodeData>[], 
           : bpmnType === 'endEvent'
             ? 'end'
             : 'activity'
-      return { id: node.id, label: nodeTitle(node), kind, bpmnType }
+      // Explicit source metadata survives geometry edits; lane backgrounds are not parents.
+      const lane = node.data.kind === 'element' && node.data.bpmnLane === null ? undefined : node.data.kind === 'element' && typeof node.data.bpmnLane === 'string' ? node.data.bpmnLane : originalLanes.get(node.id)
+      return { id: node.id, label: nodeTitle(node), kind, bpmnType, lane }
     }),
     edges: edges.map((edge, index) => ({
       id: edge.id || `edge-${index}`,
       source: edge.source,
       target: edge.target,
       label: typeof edge.label === 'string' ? edge.label : undefined,
+      bpmnFlowType: typeof edge.data?.bpmnFlowType === 'string' ? edge.data.bpmnFlowType : 'sequenceFlow',
     })),
   })
 }

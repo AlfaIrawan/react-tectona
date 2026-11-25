@@ -1,3 +1,4 @@
+import { WorkspaceApiError } from '@/lib/workspaceAccessWarning'
 /**
  * Workspace Org API — directory organizations/workspaces (port 8424) + onboarding P0 helpers.
  */
@@ -44,12 +45,14 @@ async function handleJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const raw = await res.text().catch(() => '')
     let detail = raw
+    let workspaceSlugNotFound = false
     if (raw) {
       try {
         const body = JSON.parse(raw) as {
           detail?: string | { msg?: string }[] | Record<string, unknown>
           error?: { message?: string } | string
         }
+        workspaceSlugNotFound = res.status === 404 && body.detail === 'workspace slug not found'
         if (typeof body.detail === 'string') detail = body.detail
         else if (Array.isArray(body.detail))
           detail = body.detail.map((x) => x?.msg ?? JSON.stringify(x)).join('; ')
@@ -61,7 +64,7 @@ async function handleJson<T>(res: Response): Promise<T> {
         /* use raw */
       }
     }
-    throw new Error(detail || `HTTP ${res.status}`)
+    throw new WorkspaceApiError(res.status, detail || `HTTP ${res.status}`, workspaceSlugNotFound)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>

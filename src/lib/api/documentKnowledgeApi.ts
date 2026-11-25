@@ -1451,6 +1451,7 @@ export interface ExplainerAssistant {
   chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
   fallback?: ExplainerFallback
+  mailbox?: ExplainerMailbox
   revision_no?: number
   last_publish_error?: string | null
   last_publish_failed_at?: string | null
@@ -1470,6 +1471,12 @@ export interface ExplainerAssistantListResponse {
   page_size: number
 }
 
+export interface ExplainerMailbox {
+  connector_id: string
+  from_address: string
+  from_name: string
+}
+
 export interface CreateExplainerAssistantPayload {
   display_name: string
   workspace_id: string
@@ -1484,6 +1491,7 @@ export interface CreateExplainerAssistantPayload {
   chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
   fallback?: ExplainerFallback
+  mailbox?: ExplainerMailbox
 }
 
 export interface PatchExplainerAssistantPayload {
@@ -1499,6 +1507,7 @@ export interface PatchExplainerAssistantPayload {
   chat_limit_scopes?: ExplainerChatLimitScope[]
   character?: ExplainerCharacter
   fallback?: ExplainerFallback
+  mailbox?: ExplainerMailbox
   /** Optimistic lock — send the version last read to detect concurrent edits. */
   version?: number
 }

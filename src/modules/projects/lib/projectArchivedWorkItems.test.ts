@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest'
+import type { WorkItemApiModel } from '@/lib/api/workApi'
 import {
   archiveWorkItemsManual,
   filterActiveWorkItems,
@@ -10,11 +11,12 @@ import {
 
 const PROJECT_ID = '43cced1c-0000-4000-8000-000000000001'
 
-function mockItem(idSuffix: string, status = 'Done') {
+function mockItem(idSuffix: string, status: WorkItemApiModel['status'] = 'Done'): WorkItemApiModel {
   const prefix = 'PT-43CCED1C'
   return {
     id: `${prefix}-${idSuffix}`,
     title: idSuffix,
+    description: '',
     type: 'Task' as const,
     project: 'Wakatobi',
     workspace: 'Tectona Workspace',
@@ -23,7 +25,7 @@ function mockItem(idSuffix: string, status = 'Done') {
     role: 'Contributor',
     team: 'Delivery Squad',
     priority: 'High' as const,
-    status: status as 'Done' | 'In Progress',
+    status,
     dueDate: '2026-08-01',
     dependencyStatus: 'Clear',
     progress: 100,

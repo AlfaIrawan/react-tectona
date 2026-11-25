@@ -18,7 +18,7 @@ const boundary = (containable?: boolean): Node<ArchimateNodeData> => ({
   },
 })
 
-const child = (parentNode?: string): Node<ArchimateNodeData> => ({
+const child = (parentNode?: string) => ({
   id: 'child',
   type: 'archimateElement',
   position: parentNode ? { x: 60, y: 70 } : { x: 160, y: 150 },
@@ -34,7 +34,7 @@ const child = (parentNode?: string): Node<ArchimateNodeData> => ({
     notationId: 'business-layer-actor',
     arrange: { containable: false },
   },
-})
+} satisfies Node<ArchimateNodeData>)
 
 describe('normalizeIntegrationNodesForCanvas', () => {
   it('keeps a non-containable node as a child of a containable parent', () => {

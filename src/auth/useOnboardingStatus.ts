@@ -19,6 +19,7 @@ function sessionRoles(): string[] {
 
 export type OnboardingStatusState = {
   loading: boolean
+  retrying: boolean
   enabled: boolean
   bypass: boolean
   status: OnboardingStatus | null
@@ -71,6 +72,7 @@ export function useOnboardingStatus(): OnboardingStatusState {
   if (!enabled || bypass) {
     return {
       loading: false,
+      retrying: false,
       enabled,
       bypass,
       status: 'active',
@@ -83,20 +85,24 @@ export function useOnboardingStatus(): OnboardingStatusState {
     }
   }
 
-  const statusUnavailable = query.isError || (query.isFetched && !query.data && !query.isLoading)
+  const knownStatuses: readonly string[] = ['none', 'personal_provisioning', 'corporate_setup_pending', 'active', 'join_pending', 'email_verify_pending', 'blocked']
+  const status = query.data?.onboarding_status
+  const statusValid = typeof status === 'string' && knownStatuses.includes(status)
+  const statusUnavailable = query.isError || (query.isFetched && !statusValid && !query.isLoading)
 
   return {
+    retrying: query.isFetching,
     loading: query.isLoading || (query.isFetching && !query.isFetched),
     enabled,
     bypass,
-    status: query.data?.onboarding_status ?? null,
+    status: statusValid ? status! : null,
     statusUnavailable,
     activeMembershipCount: query.data?.active_membership_count ?? 0,
     pendingRequestId: query.data?.pending_request_id ?? null,
     limitedShellAllowed: query.data?.limited_shell_allowed === true,
     activeWorkspaceId: query.data?.active_workspace_id ?? null,
     refetch: () => {
-      void query.refetch()
+      void query.refetch({ cancelRefetch: false })
     },
   }
 }
