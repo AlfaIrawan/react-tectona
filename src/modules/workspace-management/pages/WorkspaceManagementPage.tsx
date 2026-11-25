@@ -208,7 +208,10 @@ import {
   subscribeWorkspaceDirectoryRealtimeConnected,
 } from '@/lib/workspaceDirectoryRealtime'
 import {
-  countWorkspaceMemberships,
+  summarizeVisibleMembers,
+  WorkspaceGovernanceReadError,
+  readWorkspaceGovernanceResource,
+  workspaceStatusDistribution,
   createWorkspaceReadQueue,
   workspaceReadFailure,
   workspaceReadStatus,
@@ -693,7 +696,7 @@ function workspaceRiskFlags(w: WorkspaceRecord): {
 }
 
 type DirectoryChartFocus =
-  | { kind: 'health'; band: WorkspaceHealthBand }
+  | { kind: 'health'; band: WorkspaceStatus }
   | { kind: 'lifecycle'; stage: WorkspaceLifecycleStage }
   | { kind: 'purpose'; bucket: WorkspacePurposeBucket }
   | { kind: 'load'; code: string }
@@ -704,7 +707,7 @@ type DirectoryChartFocus =
 function workspaceMatchesDirectoryChartFocus(w: WorkspaceRecord, focus: DirectoryChartFocus): boolean {
   switch (focus.kind) {
     case 'health':
-      return workspaceHealthBand(w) === focus.band
+      return w.status === focus.band
     case 'lifecycle':
       return w.lifecycle === focus.stage
     case 'purpose':
@@ -4915,18 +4918,6 @@ export function WorkspaceHealthExecutiveDonut({
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const total = data.reduce((sum, d) => sum + d.value, 0)
-  const healthy = data.find((d) => d.name === 'Healthy')?.value ?? 0
-  const atRisk = data.find((d) => d.name === 'At Risk')?.value ?? 0
-  const critical = data.find((d) => d.name === 'Critical')?.value ?? 0
-  const healthIndex = total > 0 ? Math.round((((healthy * 1) + (atRisk * 0.55) + (critical * 0.2)) / total) * 100) : 0
-  const criticalPct = total > 0 ? Math.round((critical / total) * 100) : 0
-  const stabilityScore = Math.max(0, Math.min(100, healthIndex + Math.round((healthy / Math.max(1, total)) * 14) - Math.round((critical / Math.max(1, total)) * 18)))
-  const statusTrends: Record<string, number[]> = {
-    Healthy: [48, 51, 54, 56, 58, 60],
-    'At Risk': [26, 24, 23, 22, 21, 20],
-    Critical: [26, 25, 23, 22, 21, 20],
-  }
-
   if (total === 0) {
   return (
       <div className="flex h-60 items-center justify-center rounded-xl border border-dashed border-slate-200/80 bg-slate-50/60 px-4 text-center text-sm text-slate-500">
@@ -4939,7 +4930,7 @@ export function WorkspaceHealthExecutiveDonut({
     <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(200px,240px),1fr] lg:items-center">
       <div className="mx-auto flex w-full max-w-[240px] flex-col items-center gap-2">
         <div className="whitespace-nowrap rounded-full border border-emerald-200/80 bg-emerald-50/95 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 shadow-sm">
-          Portfolio Resilience
+          Workspace Status
         </div>
       <div className="relative aspect-square w-full max-w-[220px] overflow-hidden">
         <div data-theme-surface="chart-center" className="pointer-events-none absolute inset-[8%] rounded-full border border-white/80 bg-gradient-to-br from-slate-50/90 via-white/95 to-slate-100/85 shadow-[0_12px_28px_rgba(15,23,42,0.10)]" />
@@ -4956,8 +4947,8 @@ export function WorkspaceHealthExecutiveDonut({
                 <stop offset="100%" stopColor={palette.healthSegRiskEnd} />
               </linearGradient>
               <linearGradient id="health-seg-critical" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stopColor={palette.healthSegCritical} />
-                <stop offset="100%" stopColor={palette.healthSegCriticalEnd} />
+                <stop offset="0%" stopColor={'#94a3b8'} />
+                <stop offset="100%" stopColor={'#64748b'} />
               </linearGradient>
             </defs>
             <Pie
@@ -4981,7 +4972,7 @@ export function WorkspaceHealthExecutiveDonut({
             >
               {data.map((entry, index) => {
                 const gradientId =
-                  entry.name === 'Healthy'
+                  entry.name === 'Active'
                     ? 'health-seg-healthy'
                     : entry.name === 'At Risk'
                       ? 'health-seg-risk'
@@ -5014,33 +5005,11 @@ export function WorkspaceHealthExecutiveDonut({
           <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">Workspaces</div>
           </div>
         </div>
-        <div className="flex flex-wrap items-center justify-center gap-1.5">
-          <div data-theme-surface="chart-badge" className="rounded-full border border-slate-300 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-700 shadow-sm">
-            Executive Index {healthIndex}
-          </div>
-          <div data-theme-surface="chart-badge" className="rounded-full border border-slate-200/80 bg-white/95 px-2.5 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">
-          Stability Score {stabilityScore}
-          </div>
-        </div>
+
       </div>
 
       <div className="space-y-3">
-        <div className="grid gap-2 sm:grid-cols-3">
-          <div data-theme-surface="inset-card" className="rounded-xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/75 to-slate-100/80 px-3 py-2 shadow-[0_8px_24px_rgba(15,23,42,0.06)]">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Executive Signal</div>
-            <div className="mt-1 text-sm font-semibold text-slate-900">
-              {healthIndex >= 80 ? 'Stable Portfolio' : healthIndex >= 65 ? 'Watchlist Required' : 'Immediate Intervention'}
-            </div>
-          </div>
-          <div data-theme-surface="status-positive" className="rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(16,185,129,0.10)]">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-500">Healthy Coverage</div>
-            <div className="mt-1 text-sm font-semibold text-emerald-700">{total > 0 ? Math.round((healthy / total) * 100) : 0}% of portfolio</div>
-          </div>
-          <div data-theme-surface="status-negative" className="rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-white px-3 py-2 shadow-[0_8px_24px_rgba(244,63,94,0.10)]">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-500">Critical Exposure</div>
-            <div className="mt-1 text-sm font-semibold text-rose-700">{criticalPct}% of portfolio</div>
-          </div>
-        </div>
+
 
         <div className="space-y-1.5">
           {data.map((item, idx) => (
@@ -5075,37 +5044,16 @@ export function WorkspaceHealthExecutiveDonut({
                 <span
                   className="h-2.5 w-2.5 rounded-full"
                   style={{
-                    background: item.name === 'Healthy'
+                    background: item.name === 'Active'
                       ? `linear-gradient(135deg,${palette.healthSegHealthy},${palette.healthSegHealthyEnd})`
                       : item.name === 'At Risk'
                         ? `linear-gradient(135deg,${palette.healthSegRisk},${palette.healthSegRiskEnd})`
-                        : `linear-gradient(135deg,${palette.healthSegCritical},${palette.healthSegCriticalEnd})`,
+                        : `linear-gradient(135deg,${'#94a3b8'},${'#64748b'})`,
                   }}
                 />
                 <div className="min-w-0">
                   <span className="text-sm font-medium text-slate-700">{item.name}</span>
-                  <div className="mt-1 flex items-end gap-1">
-                    {(statusTrends[item.name] ?? [0, 0, 0, 0, 0, 0]).map((v, i, arr) => {
-                      const max = Math.max(...arr)
-                      const minH = 3
-                      const h = Math.round(minH + ((v / Math.max(1, max)) * 11))
-                      return (
-                        <span
-                          key={`${item.name}-${i}`}
-                          className="inline-block w-[4px] rounded-sm"
-                          style={{
-                            height: `${h}px`,
-                            background: item.name === 'Healthy'
-                              ? `linear-gradient(180deg,${palette.healthSegHealthy},${palette.healthSegHealthyEnd})`
-                              : item.name === 'At Risk'
-                                ? `linear-gradient(180deg,${palette.healthSegRisk},${palette.healthSegRiskEnd})`
-                                : `linear-gradient(180deg,${palette.healthSegCritical},${palette.healthSegCriticalEnd})`,
-                            opacity: 0.5 + (i / arr.length) * 0.5,
-                          }}
-                        />
-                      )
-                    })}
-                  </div>
+
                 </div>
               </div>
               <div className="flex items-center gap-4">
@@ -6560,7 +6508,10 @@ export function WorkspaceManagementPage() {
       const [[workspaceResult, governanceResult], , typeListResult] = await Promise.all([
         Promise.allSettled([
           fetchAllWorkspaceOrgWorkspaces(),
-          Promise.all([fetchGovernanceCatalogSnapshot(), fetchWorkspaceGovernanceAssignments()]),
+          Promise.all([
+            fetchGovernanceCatalogSnapshot(),
+            readWorkspaceGovernanceResource('Governance assignments', fetchWorkspaceGovernanceAssignments),
+          ]),
         ]),
         refreshOrganizationList(),
         fetchWorkspaceOrgWorkspaceTypes().catch(() => null),
@@ -6574,7 +6525,11 @@ export function WorkspaceManagementPage() {
       } else {
         setGovernanceCatalog(null)
         setGovernanceAssignments([])
-        setGovernanceRead(workspaceReadFailure('The governance service', governanceResult.reason))
+        const error: unknown = governanceResult.reason
+        setGovernanceRead(workspaceReadFailure(
+          error instanceof WorkspaceGovernanceReadError ? error.resource : 'The governance service',
+          error,
+        ))
       }
 
       if (typeListResult) {
@@ -10310,24 +10265,7 @@ export function WorkspaceManagementPage() {
     return sum
   }, [governanceRiskLevelCounts])
 
-  const governanceHealthDistribution = useMemo(() => {
-    let healthy = 0
-    let atRisk = 0
-    let critical = 0
-    for (const w of allWorkspacesForList) {
-      const b = workspaceHealthBand(w)
-      if (b === 'Healthy') healthy += 1
-      else if (b === 'At Risk') atRisk += 1
-      else critical += 1
-    }
-    const total = healthy + atRisk + critical
-    const pct = (n: number) => (total > 0 ? `${Math.round((n / total) * 100)}%` : '0%')
-    return [
-      { name: 'Healthy', value: healthy, color: '#10b981', pct: pct(healthy) },
-      { name: 'At Risk', value: atRisk, color: '#f59e0b', pct: pct(atRisk) },
-      { name: 'Critical', value: critical, color: '#f43f5e', pct: pct(critical) },
-    ]
-  }, [allWorkspacesForList])
+  const governanceHealthDistribution = useMemo(() => workspaceStatusDistribution(statusCounts), [statusCounts])
 
   const lifecycleDistributionData = useMemo(() => {
     const counts = new Map<WorkspaceLifecycleStage, number>()
@@ -12638,10 +12576,12 @@ export function WorkspaceManagementPage() {
 
   const metrics = useMemo(() => {
     const list = allWorkspacesForList
-    // Only count members for workspaces in the current tenant view (not leftover global counts).
-    const membershipTotal = countWorkspaceMemberships(list.map((workspace) => workspace.id), workspaceMemberCounts)
-    const totalMembers = membershipTotal == null ? null : aggregatedWorkspaceMembers.length
-    const membersStale = list.some((workspace) => staleWorkspaceMemberCounts.has(workspace.id))
+    const memberSummary = summarizeVisibleMembers(
+      aggregatedWorkspaceMembers.length,
+      workspacesEligibleForMemberListing.map((workspace) => workspace.id),
+      workspaceMemberCounts,
+      staleWorkspaceMemberCounts,
+    )
     const catalogUnavailable = list.length === 0 && directoryRead.status !== 'ready'
     const totalProjects = list.reduce((sum, workspace) => sum + workspace.projects, 0)
     const activeCount = list.filter((workspace) => workspace.lifecycle === 'Active').length
@@ -12651,12 +12591,13 @@ export function WorkspaceManagementPage() {
       totalWorkspaces: list.length,
       activeCount,
       atRiskCount,
-      totalMembers,
-      membersStale,
+      totalMembers: memberSummary.total,
+      membersStale: memberSummary.stale,
+      membersPartial: memberSummary.partial,
       catalogUnavailable,
       totalProjects,
     }
-  }, [aggregatedWorkspaceMembers.length, allWorkspacesForList, directoryRead.status, staleWorkspaceMemberCounts, statusCounts, workspaceMemberCounts])
+  }, [aggregatedWorkspaceMembers.length, allWorkspacesForList, directoryRead.status, staleWorkspaceMemberCounts, statusCounts, workspaceMemberCounts, workspacesEligibleForMemberListing])
 
   const kpiTrendSeries = useMemo(() => {
     const DAY_MS = 24 * 60 * 60 * 1000
@@ -12723,7 +12664,8 @@ export function WorkspaceManagementPage() {
       label: 'Total Members',
       value: metrics.catalogUnavailable || metrics.totalMembers == null ? '—' : String(metrics.totalMembers),
       subtitle: metrics.catalogUnavailable || metrics.totalMembers == null ? 'Member total unavailable'
-        : metrics.membersStale ? 'Last known member total' : 'Unique people · matches Workspace Members',
+        : metrics.membersPartial ? 'Visible unique people; some memberships could not be verified'
+        : metrics.membersStale ? 'Unique people; includes last-known memberships' : 'Unique people (matches Workspace Members)',
       trend: '',
       trendSeries: [],
       trendColor: '#6366f1',
@@ -14749,7 +14691,6 @@ export function WorkspaceManagementPage() {
               <WorkspaceManagementPageSkeleton className="min-h-[420px]" />
             ) : (() => {
               const pal = WORKSPACE_OVERVIEW_PALETTES[overviewPalette]
-              const healthyPct = governanceHealthDistribution.find((d) => d.name === 'Healthy')?.pct ?? '-'
               const overloadLoadCount = workspaceLoadDistributionData.filter(
                 (w) => w.tasks > WORKSPACE_LOAD_OVERLOAD_PROJECTS
               ).length
@@ -14798,7 +14739,7 @@ export function WorkspaceManagementPage() {
                     <div className="grid min-w-0 gap-4 xl:grid-cols-2">
                       <IntelligenceChartPanel
                         title="Workspace Health Distribution"
-                        description="Healthy vs at-risk vs critical posture from status and compliance signals."
+                        description="Active, at-risk, and archived workspaces, using the same statuses as Directory. Governance compliance is tracked separately."
                         icon={ShieldCheck}
                         accent={pal.healthAccent}
                         palette={pal}
@@ -14812,7 +14753,7 @@ export function WorkspaceManagementPage() {
                           selectedBand={overviewChartSelection?.chartId === 'health' ? overviewChartSelection.key : null}
                           onBandClick={(band) => {
                             setOverviewChartSelection({ chartId: 'health', key: band })
-                            navigateDirectoryWithChartFocus({ kind: 'health', band: band as WorkspaceHealthBand })
+                            navigateDirectoryWithChartFocus({ kind: 'health', band: band as WorkspaceStatus })
                           }}
                         />
                       </IntelligenceChartPanel>

@@ -1,3 +1,4 @@
+import { summarizeVisibleMembers, workspaceStatusDistribution } from './workspaceManagementReadState'
 import { describe, expect, it } from 'vitest'
 import {
   countWorkspaceMemberships,
@@ -52,5 +53,22 @@ describe('workspace management read state', () => {
     expect(calls).toEqual(['a', 'b', 'a'])
     releases.get('a')?.()
     await retryFailure
+  })
+})
+
+describe('Workspace Management overview parity', () => {
+  it('shows the visible people count when some membership reads could not be verified', () => {
+    expect(summarizeVisibleMembers(49, ['loaded', 'missing'], { loaded: 49 }, new Set()))
+      .toEqual({ total: 49, partial: true, stale: false })
+    expect(summarizeVisibleMembers(0, ['missing'], {}, new Set()).total).toBeNull()
+    expect(summarizeVisibleMembers(0, ['loaded'], { loaded: 0 }, new Set()).total).toBe(0)
+    expect(summarizeVisibleMembers(49, ['loaded'], { loaded: 49 }, new Set(['loaded'])))
+      .toEqual({ total: 49, partial: false, stale: true })
+  })
+
+  it('uses Directory status counts and does not promote unconfigured workspaces to At Risk', () => {
+    const distribution = workspaceStatusDistribution(new Map([['Active', 54], ['At Risk', 0]]))
+    expect(distribution.map(({ name, value }) => [name, value]))
+      .toEqual([['Active', 54], ['At Risk', 0], ['Archived', 0]])
   })
 })

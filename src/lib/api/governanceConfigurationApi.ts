@@ -4,6 +4,7 @@
  */
 
 import { WorkspaceApiError } from '@/lib/workspaceAccessWarning'
+import { readWorkspaceGovernanceResource } from '@/modules/workspace-management/lib/workspaceManagementReadState'
 import { serviceApiBase } from './gatewayBase'
 import { apiFetch, tectonaServiceHeaders } from './httpClient'
 
@@ -98,28 +99,15 @@ type PolicyCreatePayload = {
 }
 
 export async function fetchGovernanceCatalogSnapshot(): Promise<GovernanceCatalogSnapshot> {
-  const [
-    templatesRes,
-    wfRes,
-    slaRes,
-    namingRes,
-    apprRes,
-    rulesRes,
-  ] = await Promise.all([
-    apiFetch(url('/v1/templates')),
-    apiFetch(url('/v1/workflow-policies')),
-    apiFetch(url('/v1/sla-policies')),
-    apiFetch(url('/v1/naming-conventions')),
-    apiFetch(url('/v1/approval-policies')),
-    apiFetch(url('/v1/compliance-rules')),
-  ])
+  const read = <T>(path: string, resource: string) =>
+    readWorkspaceGovernanceResource(resource, async () => handleJson<T>(await apiFetch(url(path))))
   const [templatesBody, wfBody, slaBody, namingBody, apprBody, rulesBody] = await Promise.all([
-    handleJson<{ items: GovernanceTemplateDto[] }>(templatesRes),
-    handleJson<{ items: CatalogItemDto[] }>(wfRes),
-    handleJson<{ items: CatalogItemDto[] }>(slaRes),
-    handleJson<{ items: CatalogItemDto[] }>(namingRes),
-    handleJson<{ items: CatalogItemDto[] }>(apprRes),
-    handleJson<{ items: ComplianceRuleDto[] }>(rulesRes),
+    read<{ items: GovernanceTemplateDto[] }>('/v1/templates', 'Governance templates'),
+    read<{ items: CatalogItemDto[] }>('/v1/workflow-policies', 'Governance workflow policies'),
+    read<{ items: CatalogItemDto[] }>('/v1/sla-policies', 'Governance SLA policies'),
+    read<{ items: CatalogItemDto[] }>('/v1/naming-conventions', 'Governance naming conventions'),
+    read<{ items: CatalogItemDto[] }>('/v1/approval-policies', 'Governance approval policies'),
+    read<{ items: ComplianceRuleDto[] }>('/v1/compliance-rules', 'Governance compliance rules'),
   ])
   return {
     templates: templatesBody.items ?? [],

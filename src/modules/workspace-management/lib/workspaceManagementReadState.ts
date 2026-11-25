@@ -63,3 +63,51 @@ export function createWorkspaceReadQueue<T>(load: (id: string) => Promise<T>, li
     return pending
   }
 }
+
+export function summarizeVisibleMembers(
+  visiblePeople: number,
+  eligibleWorkspaceIds: readonly string[],
+  counts: Readonly<Record<string, number>>,
+  staleIds: ReadonlySet<string>,
+) {
+  const complete = countWorkspaceMemberships(eligibleWorkspaceIds, counts) !== null
+  const stale = eligibleWorkspaceIds.some((id) => staleIds.has(id))
+  return {
+    total: visiblePeople > 0 || (eligibleWorkspaceIds.length > 0 && complete) ? visiblePeople : null,
+    partial: !complete,
+    stale,
+  }
+}
+
+export function workspaceStatusDistribution(
+  counts: ReadonlyMap<'Active' | 'At Risk' | 'Archived', number>,
+) {
+  const bands = [
+    { name: 'Active', color: '#10b981' },
+    { name: 'At Risk', color: '#f59e0b' },
+    { name: 'Archived', color: '#94a3b8' },
+  ] as const
+  const total = bands.reduce((sum, { name }) => sum + (counts.get(name) ?? 0), 0)
+  return bands.map(({ name, color }) => {
+    const value = counts.get(name) ?? 0
+    return { name, value, color, pct: total > 0 ? Math.round(100 * value / total) + '%' : '0%' }
+  })
+}
+
+export class WorkspaceGovernanceReadError extends Error {
+  readonly status: number | undefined
+
+  constructor(readonly resource: string, error: unknown) {
+    super('Governance read failed')
+    this.status = workspaceReadStatus(error)
+  }
+}
+
+export async function readWorkspaceGovernanceResource<T>(resource: string, load: () => Promise<T>): Promise<T> {
+  try {
+    return await load()
+  } catch (error) {
+    // Keep the original error's status for UI classification, not its raw response body.
+    throw new WorkspaceGovernanceReadError(resource, error)
+  }
+}

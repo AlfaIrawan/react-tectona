@@ -25,7 +25,7 @@ describe('Workspace Management governance errors', () => {
         : response({ items: [] }),
     )
     const failure = await fetchGovernanceCatalogSnapshot().catch((error: unknown) => error)
-    expect(failure).toMatchObject({ status: 429, message: 'Rate Exceeded' })
+    expect(failure).toMatchObject({ status: 429, resource: 'Governance workflow policies' })
     expect(workspaceReadFailure('The governance service', failure).reason).toContain('HTTP 429')
     limited = false
     await expect(fetchGovernanceCatalogSnapshot()).resolves.toMatchObject({ workflowPolicies: [] })
@@ -38,4 +38,17 @@ describe('Workspace Management governance errors', () => {
     expect(failure).toMatchObject({ status: 403, message: 'Workspace access denied' })
     expect(workspaceReadFailure('The governance service', failure).reason).toContain('permission')
   })
+})
+
+it('identifies the failing governance read without exposing service error bodies', async () => {
+  fetchMock.mockImplementation(async (url) =>
+    String(url).endsWith('/sla-policies')
+      ? response({ detail: 'private backend detail' }, 500)
+      : response({ items: [] }),
+  )
+  const failure = await fetchGovernanceCatalogSnapshot().catch((error: unknown) => error)
+  expect(failure).toMatchObject({ status: 500, resource: 'Governance SLA policies' })
+  expect(workspaceReadFailure('Governance SLA policies', failure).reason)
+    .toBe('Governance SLA policies could not complete the request (HTTP 500).')
+  expect(String(failure)).not.toContain('private backend detail')
 })
